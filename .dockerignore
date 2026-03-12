@@ -1,0 +1,60 @@
+# === [ СИСТЕМНЫЙ МУСОР ] ===
+.git/
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.bak
+*.tmp
+
+# === [ ПИТОНОВСКИЙ ЖИР ] ===
+venv/
+env/
+ENV/
+pyvenv.cfg
+.python-version
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+htmlcov/
+
+# === [ ТЯЖЕЛЫЙ ИИ-КОНТЕНТ (Пробрасываем через Volumes) ] ===
+# Игнорим всё, что весит гигабайты и уже есть на диске ROG
+hf_cache/
+models_cache/
+images_cache/
+fns_rag_index/
+.cache/
+unsloth_compiled_cache/
+.nv/
+
+# === [ МОДЕЛИ И ВЕСА ] ===
+*.gguf
+*.safetensors
+*.bin
+*.pth
+*.onnx
+model_for_ollama*/
+lora_fns_adapter*/
+llama.cpp/
+
+# === [ ДАННЫЕ И ЛОГИ ] ===
+*.log
+*.pdf
+*.csv
+*.xlsx
+*.json
+!requirements.txt
+!package.json
+data/
+pdf/
+Лишнее/
+
+# === [ СЕКРЕТЫ ] ===
+.env
+.flaskenv

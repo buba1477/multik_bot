@@ -1,0 +1,41 @@
+# === СЕКРЕТЫ (САМОЕ ВАЖНОЕ) ===
+.env
+.bash_history
+.nv/
+
+# === ПАЙТОНОВСКИЙ МУСОР ===
+__pycache__/
+*.pyc
+venv/
+.ipynb_checkpoints/
+*.log
+bot.log
+
+# === ТЯЖЕЛЫЙ ВЕС (МОДЕЛИ И ИНДЕКСЫ) ===
+# Мы не пушим гигабайты, мы пушим код, который их создаст
+hf_cache/
+fns_rag_index/
+images_cache/
+.ollama/
+llama.cpp/
+
+# === ТРЕНИРОВКА И АДАПТЕРЫ (ЖИР) ===
+# Оставляем код обучения train_unsloth.py, но прячем результаты
+unsloth_compiled_cache/
+lora_fns_adapter_3b_v6/
+lora_model/
+checkpoint-*/
+
+# === ЛОКАЛЬНЫЕ ЧЕРНОВИКИ И МУСОР ===
+Лишнее/
+old_bot.py
+MyModelFile
+Modelfile.fixed
+Modelfile.test
+stress_test.py
+rag_fns.py
+
+# Скрываем системные файлы OS
+.DS_Store
+Thumbs.db
+v4.gguf

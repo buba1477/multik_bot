@@ -1,0 +1,79 @@
+services:
+  # 1. OLLAMA (Тут всё чётко, без изменений)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama_container
+    restart: always
+    volumes:
+      - /home/amlin04/.ollama:/root/.ollama
+    environment:
+      - OLLAMA_MAX_QUEUE=128
+      - OLLAMA_KEEP_ALIVE=-1
+      - OLLAMA_FLASH_ATTENTION=1
+      - OLLAMA_NUM_PARALLEL=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # 2. ОБЩИЙ ОБРАЗ (База для API и Бота)
+  # Мы описываем его здесь, чтобы Docker построил его ПЕРВЫМ
+  multik-app:
+    build: .
+    image: multik-core:latest # <--- Даем имя нашему золотому образу
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # 3. ТЕЛЕГРАМ БОТ
+  bot:
+    image: multik-core:latest # <--- Просто берем уже готовый образ
+    container_name: multik_bot
+    restart: always
+    depends_on:
+      ollama:
+        condition: service_healthy
+    command: python main.py
+    env_file: [.env]
+    volumes:
+      - ./:/app
+      - ./hf_cache:/root/.cache/huggingface
+      - ./images_cache:/app/images_cache
+    environment:
+      - HF_HUB_OFFLINE=1      
+      - TRANSFORMERS_OFFLINE=1
+      - OLLAMA_HOST=http://ollama_container:11434
+
+  # 4. FASTAPI
+  api:
+    image: multik-core:latest # <--- Берем тот же образ!
+    container_name: multik_api
+    restart: always
+    depends_on:
+      ollama:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    command: uvicorn main_api:app --host 0.0.0.0 --port 8000
+    env_file: [.env]
+    volumes:
+      - ./:/app
+      - ./hf_cache:/root/.cache/huggingface
+      - ./static:/app/static 
+      - ./images_cache:/app/images_cache
+    environment:
+      - HF_HUB_OFFLINE=1      
+      - TRANSFORMERS_OFFLINE=1
+      - OLLAMA_HOST=http://ollama_container:11434
