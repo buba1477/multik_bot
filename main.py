@@ -8,7 +8,9 @@ from typing import Optional
 from datetime import datetime
 import time
 
-
+from aiohttp import ClientTimeout, ClientSession
+from aiogram.client.bot import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession, BasicAuth
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -76,7 +78,7 @@ def escape_markdown(text):
 
 
 # --- ИНИЦИАЛИЗАЦИЯ БОТА ---
-bot = Bot(token=TOKEN)          # Создаем экземпляр бота с токеном
+bot = None         # Создаем экземпляр бота с токеном
 dp = Dispatcher()                # Создаем диспетчер для обработки сообщений
 
 # --- СИСТЕМНЫЙ ПРОМПТ ДЛЯ КАРТМАНА ---
@@ -400,7 +402,7 @@ async def handle_all_messages(message: Message):
     
     if found_coins:
         # Показываем индикатор "печатает"
-        await bot.send_chat_action(message.chat.id, "typing")
+        #await bot.send_chat_action(message.chat.id, "typing")
         
         # Создаем задачи для получения цен всех найденных монет
         tasks = [get_crypto_price(coin_id, user_name) for coin_id in found_coins]
@@ -424,9 +426,9 @@ async def handle_all_messages(message: Message):
             if len(final_response) > 4000:
                 for i in range(0, len(crypto_responses), 3):
                     part = "\n\n".join(crypto_responses[i:i+3])
-                    await message.reply(part)
+                    await message.reply(part, request_timeout=120)
             else:
-                await message.reply(final_response)
+                await message.reply(final_response, request_timeout=120)
         return
 
     # --- 3. ОБРАБОТКА ОБЫЧНЫХ СООБЩЕНИЙ ---
@@ -436,7 +438,7 @@ async def handle_all_messages(message: Message):
     
     if 'мультик' in text or 'наложик' in text or is_reply_to_bot:
         # 1. Показываем статус "печатает" (чтобы юзер видел: 80W GPU в деле)
-        await bot.send_chat_action(message.chat.id, "typing")
+        #await bot.send_chat_action(message.chat.id, "typing")
         
         # 2. Ждем ответ напрямую (без фоновых задач, чтобы не было вложенных циклов)
         # Это гарантирует, что 1660 Ti не захлебнется от очереди
@@ -494,7 +496,7 @@ async def handle_multik_response(message: Message, user_name: str):
                     full_res += data["content"]
                     now = asyncio.get_event_loop().time()
                     
-                    if now - last_update > 1.5:
+                    if now - last_update > 3:
                         curr = clean_markdown_for_html(full_res.strip())
                         if curr and curr != displayed_res:
                             try:
@@ -609,9 +611,37 @@ async def handle_multik_response(message: Message, user_name: str):
             )
             except: pass
 
+
+# В функции main():
 async def main():
-    """Главная функция запуска бота"""
-    logger.info("🤖 МУЛЬТИК С RAG-ПОДДЕРЖКОЙ ЗАПУЩЕН...")
+    global bot
+    
+    proxy_url = "http://WpmkYQ:vhGVky@196.19.5.79:8000"
+    
+    # 1. Явно создаем настройки таймаута
+    timeout = aiohttp.ClientTimeout(total=120, connect=30)
+    
+    # 2. Создаем сессию aiogram ПРАВИЛЬНО
+    # Мы НЕ передаем прокси в AiohttpSession, 
+    # мы передадим его ниже, чтобы избежать бага aiohttp
+    session = AiohttpSession()
+    
+    # 3. Инициализируем бота с прокси напрямую в объект Bot
+    # В aiogram 3.x это САМЫЙ стабильный способ
+    bot = Bot(
+        token=TOKEN, 
+        session=session, 
+        proxy=proxy_url  # Передаем сюда!
+    )
+    
+    try:
+        # Проверка связи
+        me = await bot.get_me()
+        logger.info(f"✅ УСПЕХ! Бот @{me.username} запущен через Британию")
+    except Exception as e:
+        logger.error(f"❌ Ошибка: {e}")
+        return
+
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

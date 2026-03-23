@@ -1,9 +1,11 @@
 services:
-  # 1. OLLAMA (Тут всё чётко, без изменений)
+  # 1. OLLAMA
   ollama:
     image: ollama/ollama:latest
     container_name: ollama_container
     restart: always
+    ports:
+      - "11434:11434"  # <--- ДОБАВЬ ЭТУ СТРОКУ ОБЯЗАТЕЛЬНО!
     volumes:
       - /home/amlin04/.ollama:/root/.ollama
     environment:
@@ -24,43 +26,53 @@ services:
       timeout: 5s
       retries: 10
 
-  # 2. ОБЩИЙ ОБРАЗ (База для API и Бота)
-  # Мы описываем его здесь, чтобы Docker построил его ПЕРВЫМ
-  multik-app:
-    build: .
-    image: multik-core:latest # <--- Даем имя нашему золотому образу
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+  # 2. ОБЩИЙ ОБРАЗ
+  # multik-app:
+  #   build: .
+  #   image: multik-core:latest
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
 
   # 3. ТЕЛЕГРАМ БОТ
-  bot:
-    image: multik-core:latest # <--- Просто берем уже готовый образ
-    container_name: multik_bot
-    restart: always
-    depends_on:
-      ollama:
-        condition: service_healthy
-    command: python main.py
-    env_file: [.env]
-    volumes:
-      - ./:/app
-      - ./hf_cache:/root/.cache/huggingface
-      - ./images_cache:/app/images_cache
-    environment:
-      - HF_HUB_OFFLINE=1      
-      - TRANSFORMERS_OFFLINE=1
-      - OLLAMA_HOST=http://ollama_container:11434
+  # bot:
+  #   image: multik-core:latest
+  #   container_name: multik_bot
+  #   restart: always
+  #   depends_on:
+  #     ollama:
+  #       condition: service_healthy
+  #   command: python main.py
+  #   env_file: [.env]
+  #   volumes:
+  #     - ./:/app
+  #     - ./hf_cache:/root/.cache/huggingface
+  #     - ./images_cache:/app/images_cache
+  #   environment:
+  #     - HF_HUB_OFFLINE=1      
+  #     - TRANSFORMERS_OFFLINE=1
+  #     - OLLAMA_HOST=http://ollama_container:11434
+  #     - HTTP_PROXY=http://WpmkYQ:vhGVky@196.19.5.79:8000
+  #     - HTTPS_PROXY=http://WpmkYQ:vhGVky@196.19.5.79:8000
+  #     - NO_PROXY=localhost,127.0.0.1,ollama_container,multik_api
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 120s
 
   # 4. FASTAPI
   api:
-    image: multik-core:latest # <--- Берем тот же образ!
+    image: multik-core:latest
     container_name: multik_api
     restart: always
+    extra_hosts:
+      - "host.docker.internal:host-gateway" 
     depends_on:
       ollama:
         condition: service_healthy
@@ -77,3 +89,4 @@ services:
       - HF_HUB_OFFLINE=1      
       - TRANSFORMERS_OFFLINE=1
       - OLLAMA_HOST=http://ollama_container:11434
+      - REDIS_HOST=172.17.0.1

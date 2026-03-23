@@ -3,19 +3,32 @@ import logging
 from fastapi.responses import HTMLResponse
 from fastapi import FastAPI
 from pydantic import BaseModel
-
+import re
+import asyncio
+import redis
+import json
+import os
 from fastapi.responses import StreamingResponse
 from engine_rag import get_ai_streaming_response
 
 from fastapi.staticfiles import StaticFiles
-
+from dotenv import load_dotenv
 
 # Настраиваем логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+load_dotenv()
+
 app = FastAPI(title="Мультик RAG API")
 
+redis_host = os.getenv("REDIS_HOST", "127.0.0.1") 
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+cache = redis.Redis(host=redis_host, 
+                    port=6379, 
+                    db=0, 
+                    password=REDIS_PASSWORD, 
+                    decode_responses=True)
 
 # Монтируем папку, для markdown
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -53,7 +66,28 @@ async def get_chat_page():
         body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; margin: 0; align-items: center; }
         #container { width: 100%; max-width: 800px; display: flex; flex-direction: column; height: 100%; padding: 20px; box-sizing: border-box; }
         #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 20px; scroll-behavior: smooth; }
+       
+        /* Кастомный скроллбар в стиле Dark ChatGPT */
+        #chat::-webkit-scrollbar {
+            width: 8px; /* Ширина полосы */
+        }
+        #chat::-webkit-scrollbar-track {
+            background: var(--bg); /* Цвет дорожки (совпадает с фоном) */
+        }
+        #chat::-webkit-scrollbar-thumb {
+            background: #45475a; /* Цвет ползунка (чуть светлее фона) */
+            border-radius: 10px; /* Скругление */
+            border: 2px solid var(--bg); /* Отступ, чтобы ползунок казался тоньше */
+        }
+        #chat::-webkit-scrollbar-thumb:hover {
+            background: var(--accent); /* При наведении подсвечиваем акцентом */
+        }
         
+        /* Для Firefox (у него свои правила) */
+        #chat {
+            scrollbar-width: thin;
+            scrollbar-color: #45475a var(--bg);
+        }
         /* Дизайн сообщений */
         .msg { padding: 14px 18px; border-radius: 18px; max-width: 85%; font-size: 15px; line-height: 1.6; box-shadow: 0 4px 15px rgba(0,0,0,0.1); position: relative; }
         .user { background: var(--user-msg); align-self: flex-end; border-bottom-right-radius: 4px; border: 1px solid #585b70; }
@@ -63,12 +97,18 @@ async def get_chat_page():
         .bot p { margin: 0 0 10px 0; }
         .bot ul, .bot ol { margin: 0 0 10px 20px; padding: 0; }
         .bot code { background: #313244; padding: 2px 5px; border-radius: 4px; font-family: monospace; }
-        
+        .bot a {
+                color: #0ad0bd !important;           
+                text-decoration: underline;           /* подчёркивание */
+                font-weight: bold;                    /* жирность */
+                transition: color 0.2s;                /* плавность */
+            }
         /* Инпут */
         #input-area { background: var(--panel); padding: 15px; border-radius: 15px; display: flex; gap: 10px; border: 1px solid #45475a; margin-top: 10px; }
         input { flex: 1; background: transparent; border: none; color: white; outline: none; font-size: 16px; }
         button { background: var(--accent); color: #11111b; border: none; padding: 10px 22px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; }
         button:hover { transform: scale(1.05); background: #fab387; }
+        
     </style>
 </head>
 <body>
@@ -169,9 +209,54 @@ async def get_chat_page():
 class ChatRequest(BaseModel):
     query: str
 
-@app.post("/api/v1/predict/stream") # Красивый RESTful путь
+
+# 1. Список "грязных" паттернов (Вышибала на входе)
+BAD_PATTERNS = [
+    r"(?i)игнорируй.*инструкции", r"(?i)forget.*instructions",
+    r"(?i)выведи.*системные", r"(?i)system.*prompt",
+    r"(?i)я (твой )?разработчик", r"(?i)я сотрудник",
+    r"(?i)### system override ###", r"(?i)base64", r"(?i)rot13",
+    r"(?i)<system>", r"(?i)\{role:", r"(?i)admin:reset"
+]
+
+@app.post("/api/v1/predict/stream")
 async def ask_stream(request: ChatRequest):
+    user_query = request.query
+    
+    # --- ШАГ 1: ПРОВЕРКА КЭША (Redis) ⚡️ ---
+    cached_data = cache.get(user_query)
+    if cached_data:
+        async def stream_from_cache():
+            # Распаковываем список чанков и отдаем их по одному
+            chunks = json.loads(cached_data)
+            for ch in chunks:
+                yield ch
+                await asyncio.sleep(0.01)
+        return StreamingResponse(stream_from_cache(), media_type="text/event-stream")
+
+    # --- ШАГ 2: ПРОВЕРКА НА ВЗЛОМ (Hard Filter) ---
+    is_attack = any(re.search(p, user_query) for p in BAD_PATTERNS)
+    if is_attack:
+        async def attack_denied():
+            yield json.dumps({
+                "type": "text", 
+                "content": "Слышь, хакер... 🤨 Попытка взлома зафиксирована. Настройки не меняю. Иди на Степик! 🥃🚀🔥🦾"
+            }) + "\n"
+        return StreamingResponse(attack_denied(), media_type="text/event-stream")
+
+    # --- ШАГ 3: ГЕНЕРАЦИЯ И ЗАПИСЬ В КЭШ (RAG) ---
+    async def stream_and_cache_generator(query):
+        full_chunks_list = [] 
+        # Один-единственный цикл!
+        async for chunk in get_ai_streaming_response(query):
+            yield chunk # Сразу отдаем пользователю
+            full_chunks_list.append(chunk) # Собираем для Redis
+
+        # Когда Ollama закончила — сохраняем всё "золото" в кэш
+        if full_chunks_list:
+            cache.set(query, json.dumps(full_chunks_list), ex=3600)
+
     return StreamingResponse(
-        get_ai_streaming_response(request.query), 
+        stream_and_cache_generator(user_query), 
         media_type="text/event-stream"
     )

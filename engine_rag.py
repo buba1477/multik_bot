@@ -1,8 +1,4 @@
-import os
-import glob
-import json
-import logging
-import asyncio
+import os, glob, json, logging, asyncio
 from llama_index.core import StorageContext, load_index_from_storage, Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.ollama import Ollama
@@ -59,10 +55,10 @@ qa_prompt = PromptTemplate(qa_prompt_str)
 # 3. ЕДИНЫЕ НАСТРОЙКИ
 Settings.embed_model = HuggingFaceEmbedding(
     model_name=MODEL_PATH, 
-    device="cpu", 
-    local_files_only=True)
+    device="cpu")
+    
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama_container:11434")
 
 Settings.llm = Ollama(
     model="engine_load:latest", 
@@ -73,7 +69,7 @@ Settings.llm = Ollama(
         "num_ctx": 2048, 
         "temperature": 0.1, 
         "num_gpu": 99, 
-        "num_predict": 600}
+        "num_predict":600}
 )
 
 # 4. ИНИЦИАЛИЗАЦИЯ (Загрузка в RAM)
@@ -87,15 +83,21 @@ query_engine = index.as_query_engine(
     text_qa_template=qa_prompt
 )
 
+async def run_in_thread(func, *args):
+    """Запускает функцию в отдельном потоке, не блокируя event loop"""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, func, *args)
+
 # 5. ГЛАВНАЯ ФУНКЦИЯ СТРИМИНГА (Без тормозов!)
 async def get_ai_streaming_response(query_text: str):
-    # Минимальный порог, чтобы вообще считать, что инфа есть в базе
     MIN_SCORE_THRESHOLD = 0.60 
     
     try:
-        # ШАГ А: Поиск в 32 ГБ RAM
-        response = await query_engine.aquery(query_text)
-        nodes = response.source_nodes
+        # ШАГ А: Используем обычный query (не aquery) для стриминга
+        # Потому что async стриминг сломан в llama_index
+      
+        response = await run_in_thread(query_engine.query, query_text)
+        nodes = response.source_nodes if hasattr(response, 'source_nodes') else []
         
         sources = []
         seen_urls = set()
@@ -104,45 +106,40 @@ async def get_ai_streaming_response(query_text: str):
 
         logger.info(f"🧩 Найдено чанков: {len(nodes)}")
         
-        # ШАГ Б: Анализ ТОП-3 чанков (без выноса мозга фильтрами)
+        # ШАГ Б: Анализ чанков
         for i, node in enumerate(nodes):
             score = node.score if hasattr(node, 'score') else 0.0
             title = node.node.metadata.get("title", "Инструкция")
             
-            logger.info(f"  [Node #{i+1}] {score:.4f} | {title}")
-
-            # Если скор нормальный - берем в оборот
             if score >= MIN_SCORE_THRESHOLD:
                 has_real_context = True
-                
-                # Картинка из самого сочного чанка
                 if not first_img:
                     first_img = node.node.metadata.get("local_img")
                 
-                # Собираем ссылки (LlamaIndex уже отсортировал их по релевантности)
                 u = node.node.metadata.get("source_url")
                 if u and u not in seen_urls:
                     sources.append({"url": u, "title": title})
                     seen_urls.add(u)
 
-        # ШАГ В: Моментальный выстрел метаданными
+        # ШАГ В: Метаданные
         yield json.dumps({
             "type": "metadata", 
             "sources": sources,
             "has_answer": has_real_context,
-            "image": first_img
-        }) + "\n"
+            "image": first_img,
+        }, ensure_ascii=False) + "\n"
 
-        # ШАГ Г: Стриминг текста из 80W GPU (Прямой проброс токенов)
-        if hasattr(response, "async_response_gen"):
-            gen_attr = response.async_response_gen
-            gen = gen_attr() if callable(gen_attr) else gen_attr
-            
-            async for text_chunk in gen:
-                if text_chunk:
-                    yield json.dumps({"type": "text", "content": text_chunk}) + "\n"
+        # ШАГ Г: Стриминг ответа
+        if hasattr(response, "response_gen"):
+            # Обычный стриминг (работает!)
+            for token in response.response_gen:
+                yield json.dumps({"type": "text", "content": token}, ensure_ascii=False) + "\n"
+                await asyncio.sleep(0)  # Позволяем другим задачам выполняться
         else:
-            yield json.dumps({"type": "text", "content": str(response)}) + "\n"
+            # Если стрим не завелся - отдаем всё, что есть
+            content = str(response).strip()
+            if content:
+                yield json.dumps({"type": "text", "content": content}) + "\n"
             
     except Exception as e:
         logger.error(f"❌ ОШИБКА ГЕНЕРАТОРА: {str(e)}")
@@ -152,7 +149,7 @@ async def get_ai_streaming_response(query_text: str):
 async def get_ai_response_full(query_text: str):
     """Специально для ТГ-бота: возвращает словарь для красивого вывода"""
     try:
-        response = await query_engine.aquery(query_text)
+        response = await query_engine.astream_query(query_text)
         nodes = response.source_nodes
         
         # Собираем ссылки (Score > 0.65)
