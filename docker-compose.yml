@@ -68,6 +68,7 @@ services:
 
   # 4. FASTAPI
   api:
+    build: .
     image: multik-core:latest
     container_name: multik_api
     restart: always
