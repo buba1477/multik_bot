@@ -70,34 +70,80 @@ async def get_chat_page():
         #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 20px; scroll-behavior: smooth; }
         #chat::-webkit-scrollbar { width: 8px; }
         #chat::-webkit-scrollbar-track { background: var(--bg); }
-        #chat::-webkit-scrollbar-thumb { background: #45475a; border-radius: 10px; border: 2px solid var(--bg); }
+        #chat::-webkit-scrollbar-thumb { background: #45475a; border-radius: 10px; }
         #chat::-webkit-scrollbar-thumb:hover { background: var(--accent); }
-        .msg { padding: 14px 18px; border-radius: 18px; max-width: 85%; font-size: 15px; line-height: 1.6; box-shadow: 0 4px 15px rgba(0,0,0,0.1); position: relative; word-wrap: break-word; }
+        .msg { padding: 14px 18px; border-radius: 18px; max-width: 85%; font-size: 15px; line-height: 1.6; box-shadow: 0 4px 15px rgba(0,0,0,0.1); word-wrap: break-word; }
         .user { background: var(--user-msg); align-self: flex-end; border-bottom-right-radius: 4px; border: 1px solid #585b70; }
         .bot {
-                background: var(--bot-msg);
-                align-self: flex-start;
-                border-bottom-left-radius: 4px;
-                border-left: 3px solid var(--accent);
-                width: 100%;  /* Добавить */
-                max-width: 100%;  /* Добавить */
-                box-sizing: border-box;  /* Добавить */
-            }
+            background: var(--bot-msg);
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+            border-left: 3px solid var(--accent);
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
+        }
         .bot a { color: #0ad0bd !important; font-weight: bold; }
         .chart-container { 
-                width: 100%;
-                min-width: 100%;  /* Добавить */
-                height: 400px;
-                margin-top: 15px;
-                background: #181825;
-                border-radius: 12px;
-                padding: 10px;
-                box-sizing: border-box;
-            }
-            /* Добавить класс для круговых */
+            width: 100%;
+            min-width: 100%;
+            height: 400px;
+            margin-top: 15px;
+            background: #181825;
+            border-radius: 12px;
+            padding: 10px;
+            box-sizing: border-box;
+        }
         .chart-container.pie-chart {
             height: 450px;
         }
+        
+        /* Красивый пульсирующий лоадер */
+        .loader-wrapper {
+            align-self: flex-start;
+            background: var(--bot-msg);
+            padding: 16px 24px;
+            border-radius: 18px;
+            border-bottom-left-radius: 4px;
+            border-left: 3px solid var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .pulse-dots {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .pulse-dots .dot {
+            width: 10px;
+            height: 10px;
+            background: var(--accent);
+            border-radius: 50%;
+            animation: pulseDot 1.2s ease-in-out infinite;
+        }
+        .pulse-dots .dot:nth-child(1) { animation-delay: 0s; }
+        .pulse-dots .dot:nth-child(2) { animation-delay: 0.2s; }
+        .pulse-dots .dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes pulseDot {
+            0%, 80%, 100% { transform: scale(0.6); opacity: 0.3; box-shadow: 0 0 0px var(--accent); }
+            40% { transform: scale(1.2); opacity: 1; box-shadow: 0 0 12px var(--accent); }
+        }
+        .loader-text {
+            font-size: 14px;
+            font-weight: 500;
+            background: linear-gradient(135deg, var(--text) 0%, #a6adc8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: 0.3px;
+        }
+        
         #input-area { background: var(--panel); padding: 15px; border-radius: 15px; display: flex; gap: 10px; border: 1px solid #45475a; margin-top: 10px; }
         input { flex: 1; background: transparent; border: none; color: white; outline: none; font-size: 16px; }
         button { background: var(--accent); color: #11111b; border: none; padding: 10px 22px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; }
@@ -132,6 +178,29 @@ async def get_chat_page():
         chat.scrollTop = chat.scrollHeight;
         return msgDiv;
     }
+    
+    function showLoader() {
+        const chat = document.getElementById("chat");
+        const loaderDiv = document.createElement("div");
+        loaderDiv.className = "loader-wrapper";
+        loaderDiv.id = "loading-indicator";
+        loaderDiv.innerHTML = `
+            <div class="pulse-dots">
+                <div class="dot"></div>
+                <div class="dot"></div>
+                <div class="dot"></div>
+            </div>
+            <div class="loader-text">⚡ Анализирую базу знаний ФНС</div>
+        `;
+        chat.appendChild(loaderDiv);
+        chat.scrollTop = chat.scrollHeight;
+        return loaderDiv;
+    }
+    
+    function removeLoader() {
+        const loader = document.getElementById("loading-indicator");
+        if (loader) loader.remove();
+    }
 
     function tryRenderChart(text, container) {
         const startTag = "[CHART_JSON]";
@@ -142,27 +211,29 @@ async def get_chat_page():
         let rawJson = text.substring(startIdx + startTag.length);
         const endIdx = rawJson.indexOf(endTag);
         if (endIdx !== -1) rawJson = rawJson.substring(0, endIdx);
+        
+        rawJson = rawJson.trim();
+        rawJson = rawJson.replace(/\/\/.*$/gm, '');
+        rawJson = rawJson.replace(/\/\*[\s\S]*?\*\//g, '');
+        rawJson = rawJson.replace(/,\s*}/g, '}');
+        rawJson = rawJson.replace(/,\s*\]/g, ']');
+        rawJson = rawJson.replace(/(\{|\,)\s*([a-zA-Z0-9_]+)\s*:/g, '$1"$2":');
 
         try {
-            let chartConfig = JSON.parse(rawJson.trim());
+            let chartConfig = JSON.parse(rawJson);
             
-            // Определяем тип графика
             let isPie = false;
             if (chartConfig.series) {
                 const seriesArr = Array.isArray(chartConfig.series) ? chartConfig.series : [chartConfig.series];
                 isPie = seriesArr[0] && seriesArr[0].type === 'pie';
             }
             
-            // Для круговой диаграммы: удаляем оси, добавляем легенду и тултип
             if (isPie) {
                 delete chartConfig.xAxis;
                 delete chartConfig.yAxis;
-
                 chartConfig.title = { show: false };
-                chartConfig.grid = { top: '10%', bottom: '15%', containLabel: true }; // Даем место подписям
-
+                chartConfig.grid = { top: '10%', bottom: '15%', containLabel: true };
                 
-                // Добавляем легенду если нет
                 if (!chartConfig.legend) {
                     chartConfig.legend = {
                         orient: 'vertical',
@@ -171,7 +242,6 @@ async def get_chat_page():
                     };
                 }
                 
-                // Добавляем тултип если нет
                 if (!chartConfig.tooltip) {
                     chartConfig.tooltip = {
                         trigger: 'item',
@@ -179,7 +249,6 @@ async def get_chat_page():
                     };
                 }
                 
-                // Настраиваем отображение для круговой
                 if (chartConfig.series) {
                     const series = Array.isArray(chartConfig.series) ? chartConfig.series[0] : chartConfig.series;
                     series.radius = series.radius || '55%';
@@ -192,14 +261,11 @@ async def get_chat_page():
                 }
             }
             
-            // Для bar/line: добавляем стили
             if (!isPie) {
-                // Добавляем тултип если нет
                 if (!chartConfig.tooltip) {
                     chartConfig.tooltip = { trigger: 'axis' };
                 }
                 
-                // Настраиваем цвета осей
                 if (chartConfig.xAxis && !chartConfig.xAxis.axisLabel) {
                     chartConfig.xAxis.axisLabel = { color: '#cdd6f4', rotate: chartConfig.xAxis.data && chartConfig.xAxis.data.length > 5 ? 45 : 0 };
                 }
@@ -207,7 +273,6 @@ async def get_chat_page():
                     chartConfig.yAxis.axisLabel = { color: '#cdd6f4' };
                 }
                 
-                // Стили для серий
                 if (chartConfig.series) {
                     const series = Array.isArray(chartConfig.series) ? chartConfig.series[0] : chartConfig.series;
                     if (series.type === 'bar' && !series.itemStyle) {
@@ -221,13 +286,12 @@ async def get_chat_page():
                         series.symbol = 'circle';
                         series.symbolSize = 8;
                     }
-                    if (!series.label) {
+                    if (!series.label && series.type !== 'pie') {
                         series.label = { show: true, position: 'top', color: '#f38ba8' };
                     }
                 }
             }
             
-            // Добавляем заголовок если нет
             if (!chartConfig.title) {
                 chartConfig.title = {
                     text: 'График',
@@ -241,7 +305,7 @@ async def get_chat_page():
             chartDiv.id = chartId;
             chartDiv.className = 'chart-container' + (isPie ? ' pie-chart' : '');
             chartDiv.style.width = '100%';
-            chartDiv.style.minWidth = '100%';  // Добавить
+            chartDiv.style.minWidth = '100%';
             chartDiv.style.height = isPie ? '450px' : '400px';
             container.appendChild(chartDiv);
 
@@ -251,7 +315,7 @@ async def get_chat_page():
                     if (chartDom) {
                         const myChart = echarts.init(chartDom, 'dark');
                         myChart.setOption(chartConfig);
-                        myChart.resize();  // Добавить эту строку
+                        myChart.resize();
                         window.addEventListener('resize', () => myChart.resize());
                         console.log("✅ График отрисован");
                     }
@@ -259,70 +323,95 @@ async def get_chat_page():
             }, 200);
             return true;
         } catch (e) { 
-            console.error("❌ Ошибка:", e.message);
+            console.error("❌ Ошибка парсинга JSON:", e.message);
             return false; 
         }
     }
 
     async function sendMessage() {
-        const input = document.getElementById("messageText");
-        if (!input || !input.value.trim()) return;
+    const input = document.getElementById("messageText");
+    if (!input || !input.value.trim()) return;
 
-        const query = input.value;
-        input.value = "";
+    const query = input.value;
+    input.value = "";
+    
+    appendMessage('user', query);
+    
+    // Показываем лоадер
+    showLoader();
+    let firstChunkReceived = false;
+    let currentBotMsgDiv = null;
+    let sHtml = '';
+
+    try {
+        const response = await fetch('/api/v1/predict/stream', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ query: query })
+        });
         
-        appendMessage('user', query);
-        let currentBotMsgDiv = appendMessage('bot', "<b>База знаний ФНС:</b> ⏳...");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        
+        let fullText = ""; 
 
-        try {
-            const response = await fetch('/api/v1/predict/stream', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ query: query })
-            });
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            
-            let sHtml = '';
-            let fullText = ""; 
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
 
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\\n');
 
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\\n');
-
-                for (let line of lines) {
-                    let trimmed = line.trim();
-                    if (!trimmed) continue;
+            for (let line of lines) {
+                let trimmed = line.trim();
+                if (!trimmed) continue;
+                
+                try {
+                    const data = JSON.parse(trimmed);
                     
-                    try {
-                        const data = JSON.parse(trimmed);
-                        if (data.type === "metadata") {
-                            if (data.sources) {
-                                sHtml = data.sources.map(s => 
-                                    '🔗 <a href="' + s.url + '" target="_blank" style="color:#89b4fa; font-size:0.85em; text-decoration:none;">' + s.title + '</a>'
-                                ).join('<br>');
-                            }
-                            if (data.image) {
-                                sHtml += '<div style="margin-top:15px; border-top: 1px solid #45475a; padding-top:10px;"><img src="/images/' + data.image + '" style="max-width:100%; border-radius:10px;"></div>';
-                            }
-                        } else if (data.type === "text") {
-                            fullText += data.content;
-                            
-                            // Скрываем JSON графиков из текста
-                            let cleanDisplay = fullText.replace(/\[CHART_JSON\][\s\S]*?\[\/CHART_JSON\]/g, '📊 **График построен**');
-                            cleanDisplay = cleanDisplay.replace(/\[CHART_JSON\][\s\S]*$/g, '📊 *Генерация графика...*');
+                    // Обработка метаданных (ссылки, картинки)
+                    if (data.type === "metadata") {
+                        if (data.sources) {
+                            sHtml = data.sources.map(s => 
+                                '🔗 <a href="' + s.url + '" target="_blank" style="color:#89b4fa; font-size:0.85em; text-decoration:none;">' + s.title + '</a>'
+                            ).join('<br>');
+                        }
+                        if (data.image) {
+                            sHtml += '<div style="margin-top:15px; border-top: 1px solid #45475a; padding-top:10px;"><img src="/images/' + data.image + '" style="max-width:100%; border-radius:10px;"></div>';
+                        }
+                    } 
+                    // Обработка текста
+                    else if (data.type === "text") {
+                        // Первый чанк — убираем лоадер и создаем сообщение бота
+                        if (!firstChunkReceived) {
+                            removeLoader();
+                            currentBotMsgDiv = appendMessage('bot', "<b>База знаний ФНС:</b> 📌 <br>");
+                            firstChunkReceived = true;
+                        }
+                        
+                        fullText += data.content;
+                        
+                        // Очищаем JSON графиков для отображения
+                        let cleanDisplay = fullText.replace(/\[CHART_JSON\][\s\S]*?\[\/CHART_JSON\]/g, '📊 **График построен**');
+                        cleanDisplay = cleanDisplay.replace(/\[CHART_JSON\][\s\S]*$/g, '📊 *Генерация графика...*');
 
+                        if (currentBotMsgDiv) {
                             currentBotMsgDiv.innerHTML = "<b>База знаний ФНС:</b> 📌 <br>" + marked.parse(cleanDisplay);
                         }
-                    } catch (e) {}
-                }
-                document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
+                    }
+                } catch (e) {}
             }
-          
-            // Финальная обработка
+            document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
+        }
+        
+        // Если так и не пришло ни одного текстового чанка — убираем лоадер и показываем ошибку
+        if (!firstChunkReceived) {
+            removeLoader();
+            currentBotMsgDiv = appendMessage('bot', "<b>База знаний ФНС:</b> 📌 <br>⚠️ Нет данных по вашему запросу");
+        }
+        
+        // ФИНАЛЬНАЯ ОБРАБОТКА
+        if (currentBotMsgDiv) {
             if (fullText.includes("БАЗА_ПУСТА") || fullText.includes("[CHART_JSON]")) {
                 tryRenderChart(fullText, currentBotMsgDiv);
             } else {
@@ -331,12 +420,18 @@ async def get_chat_page():
                 }
                 tryRenderChart(fullText, currentBotMsgDiv);
             }
+        }
 
-        } catch (err) { 
-            console.error(err);
+    } catch (err) { 
+        console.error(err);
+        removeLoader();
+        if (currentBotMsgDiv) {
             currentBotMsgDiv.innerHTML += '<br><span style="color:#f38ba8">🚨 Ошибка: ' + err.message + '</span>';
+        } else {
+            appendMessage('bot', '<b>База знаний ФНС:</b> 📌 <br>🚨 Ошибка: ' + err.message);
         }
     }
+}
 
     document.getElementById("messageText").addEventListener("keypress", (e) => {
         if (e.key === "Enter") sendMessage();
