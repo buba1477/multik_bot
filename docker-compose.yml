@@ -5,7 +5,7 @@ services:
     container_name: ollama_container
     restart: always
     ports:
-      - "11434:11434"  # <--- ДОБАВЬ ЭТУ СТРОКУ ОБЯЗАТЕЛЬНО!
+      - "11434:11434"  
     volumes:
       - /home/amlin04/.ollama:/root/.ollama
     environment:
