@@ -16,6 +16,8 @@ RUN pip install --no-cache-dir \
     "llama-index-core" \
     "llama-index-embeddings-huggingface" \
     "llama-index-llms-ollama" \
+    "llama-index-postprocessor-flag-embedding-reranker" \
+    "FlagEmbedding" \
     fastapi uvicorn
 
 COPY requirements.txt .

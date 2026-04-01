@@ -1,6 +1,6 @@
 FROM /root/.ollama/ygpt5.gguf
 PARAMETER num_gpu 33
-PARAMETER num_ctx 2048
+PARAMETER num_ctx 4096
 # Добавь эти две строки, чтобы бот вовремя затыкался:
 PARAMETER stop "<|im_end|>"
 PARAMETER stop "<|im_start|>"

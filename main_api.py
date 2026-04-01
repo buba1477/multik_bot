@@ -921,18 +921,18 @@ BAD_PATTERNS = [
 async def ask_stream(request: ChatRequest):
     user_query = request.query
     
-    # Валидация
     if not user_query or not user_query.strip():
         async def empty_response():
             yield json.dumps({"type": "text", "content": "Введите вопрос"}, ensure_ascii=False) + "\n"
         return StreamingResponse(empty_response(), media_type="text/event-stream")
+
+
+    # Пусть эмбеддинг-модель сама решит, что важно.
+    normalized_query = user_query.strip()
     
-    # Нормализация для проверки
-    clean_query = " ".join(user_query.split()).lower()
-    
-    # --- ШАГ 1: ПРОВЕРКА КЭША ---
+    # --- ШАГ 1: КЭШ (по сырому запросу) ---
     try:
-        cached_data = cache.get(user_query)
+        cached_data = cache.get(normalized_query.lower()) # Кэш всегда в нижнем для стабильности
         if cached_data:
             async def stream_from_cache():
                 chunks = json.loads(cached_data)
@@ -941,43 +941,30 @@ async def ask_stream(request: ChatRequest):
                     await asyncio.sleep(0.01)
             return StreamingResponse(stream_from_cache(), media_type="text/event-stream")
     except Exception as e:
-        print(f"Cache read error: {e}")
-    
-    # --- ШАГ 2: ПРОВЕРКА НА ВЗЛОМ ---
-    is_attack = any(re.search(p, user_query) or re.search(p, clean_query) for p in BAD_PATTERNS)
-    if is_attack:
-        async def attack_denied():
-            yield json.dumps({
-                "type": "text", 
-                "content": "Слышь, хакер... 🤨 Попытка взлома зафиксирована. Настройки не меняю. Иди на Степик! 🥃🚀🔥🦾"
-            }, ensure_ascii=False) + "\n"
-        return StreamingResponse(attack_denied(), media_type="text/event-stream")
+        print(f"Cache error: {e}")
 
-    # --- ШАГ 3: ГЕНЕРАЦИЯ ---
+    # --- ШАГ 2: ГЕНЕРАЦИЯ ---
     async def stream_and_cache_generator(query):
         full_chunks_list = [] 
         try:
+            # Передаем запрос КАК ЕСТЬ
             async for chunk in get_ai_streaming_response(query):
                 if isinstance(chunk, dict):
                     chunk = json.dumps(chunk, ensure_ascii=False) + "\n"
                 yield chunk
                 full_chunks_list.append(chunk)
         except Exception as e:
-            print(f"Generation error: {e}")
-            error_chunk = json.dumps({
-                "type": "text",
-                "content": "Ошибка генерации. Попробуйте позже."
-            }, ensure_ascii=False) + "\n"
-            yield error_chunk
+            print(f"Gen error: {e}")
+            yield json.dumps({"type": "text", "content": "Ошибка"}, ensure_ascii=False) + "\n"
             return
         
         if full_chunks_list:
             try:
-                cache.set(query, json.dumps(full_chunks_list, ensure_ascii=False), ex=3600)
+                cache.set(normalized_query.lower(), json.dumps(full_chunks_list, ensure_ascii=False), ex=3600)
             except Exception as e:
                 print(f"Cache write error: {e}")
 
     return StreamingResponse(
-        stream_and_cache_generator(user_query), 
+        stream_and_cache_generator(normalized_query), 
         media_type="text/event-stream"
     )

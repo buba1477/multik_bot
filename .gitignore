@@ -39,3 +39,11 @@ rag_fns.py
 .DS_Store
 Thumbs.db
 v4.gguf
+
+# === ТЯЖЕЛЫЙ ВЕС (МОДЕЛИ И ИНДЕКСЫ) ===
+reanker/
+fns_docs/
+fns_100_examples.jsonl
+*.safetensors
+*.bin
+*.gguf
