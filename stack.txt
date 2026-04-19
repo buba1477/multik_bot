@@ -1,0 +1,3 @@
+https://huggingface.co/BAAI/bge-reranker-v2-m3
+https://huggingface.co/yandex/YandexGPT-5-Lite-8B-instruct-GGUF
+https://huggingface.co/intfloat/multilingual-e5-large/blob/main/config.json
