@@ -12,14 +12,10 @@ import hashlib
 import unicodedata
 from fastapi.responses import StreamingResponse
 from engine_rag import get_ai_streaming_response
+from ollama import AsyncClient
 from fastapi import Request 
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
-
-
-
-
-
 
 # Настраиваем логирование
 logging.basicConfig(level=logging.INFO)
@@ -30,18 +26,15 @@ load_dotenv()
 app = FastAPI(title="Мультик RAG API")
 app.mount("/images", StaticFiles(directory="/app/images_cache"), name="images")
 
-
 redis_host = os.getenv("REDIS_HOST", "127.0.0.1") 
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
-cache = redis.Redis(host=redis_host, 
-                    port=6379, 
-                    db=0, 
-                    password=REDIS_PASSWORD, 
-                    decode_responses=True)
+cache = redis.Redis(host=redis_host, port=6379, db=0, password=REDIS_PASSWORD, decode_responses=True)
 
-# Монтируем папку, для markdown
+# Монтируем папку для markdown
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Ollama клиент для Мультика
+ollama_client = AsyncClient(host="http://localhost:11434")
 
 # Middleware для замера времени всех запросов
 @app.middleware("http")
@@ -58,7 +51,6 @@ async def add_process_time_header(request, call_next):
     response.headers["X-Process-Time"] = str(process_time)
     return response
 
-     
 @app.get("/", response_class=HTMLResponse)
 async def get_chat_page():
     return """
@@ -71,11 +63,10 @@ async def get_chat_page():
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="/static/js/marked.min.js"></script>
     <script src="/static/js/echarts.min.js"></script>
-    
 </head>
 <body>
 <div id="container">
-    <header style="text-align: center; padding-bottom: 10px; border-bottom: 1px solid #313244; margin-bottom: 10px;">
+    <header style="text-align: center; padding-bottom: 10px; border-bottom: 4px solid #e2e2e2; margin-bottom: 10px;">
         <h2 style="margin: 0; color: var(--accent);">🇷🇺 Tax AI <span style="font-weight: 200; color: #6c7086;">| ФНС России</span></h2>
     </header>
     <div id="chat"></div>
@@ -84,16 +75,15 @@ async def get_chat_page():
         <button id="sendButton" onclick="sendMessage()">➤</button>
     </div>
 </div>
- <script src="/static/js/script.js"></script>
+<script src="/static/js/script.js"></script>
 </body>
 </html>
 """
 
-
 class ChatRequest(BaseModel):
     query: str
 
-# ========== 1. ВЫШИБАЛА: ПОЛНЫЙ СПИСОК ПАТТЕРНОВ ==========
+# ========== ВЫШИБАЛА: ПОЛНЫЙ СПИСОК ПАТТЕРНОВ ==========
 BAD_PATTERNS = [
     # Оригинальные и системные
     r"(?i)игнорируй.*инструкции", r"(?i)forget.*instructions",
@@ -102,7 +92,7 @@ BAD_PATTERNS = [
     r"(?i)### system override ###", r"(?i)base64", r"(?i)rot13",
     r"(?i)<system>", r"(?i)\{role:", r"(?i)admin:reset",
     
-    # --- ВЗЛОМ И ИНСТРУКЦИИ ---
+    # Взлом и инструкции
     r"(?i)я.*(твой|ваш).*(создатель|разработчик|админ|author|creator)",
     r"(?i)выведи.*(системный|системные).*промт",
     r"(?i)покажи.*(системный|системные).*промт",
@@ -171,7 +161,7 @@ def normalize_text(text: str) -> str:
     """Нормализует текст: сжимает повторы, убирает лишние пробелы, нормализует Unicode"""
     text = unicodedata.normalize('NFKC', text.lower())
     text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'(.)\1{3,}', r'\1', text)  # сжимает "игнооооор" -> "игнор"
+    text = re.sub(r'(.)\1{3,}', r'\1', text)
     return text.strip()
 
 def is_malicious_query(query: str) -> bool:
@@ -186,7 +176,7 @@ def is_malicious_query(query: str) -> bool:
         if safe in q_norm:
             return False
     
-    # ⚡ 1. КОМБО-ФИЛЬТР
+    # Комбо-фильтр
     dangerous_combos = [
         ("системн", "промпт"), ("системн", "инструкц"), 
         ("выведи", "промпт"), ("покажи", "инструкц"),
@@ -203,7 +193,7 @@ def is_malicious_query(query: str) -> bool:
             print(f"🚨 КОМБО-БАН: {w1} + {w2}")
             return True
 
-    # ⚡ 2. АНТИ-ПРОБЕЛ (Ловит "п р о м п т")
+    # Анти-пробел
     no_spaces = re.sub(r'\s+', '', q_norm)
     dangerous_no_spaces = [
         "системныйпромпт", "systemprompt", "системныеинструкции",
@@ -214,7 +204,7 @@ def is_malicious_query(query: str) -> bool:
             print(f"🚨 АНТИ-ПРОБЕЛ БАН: {dangerous}")
             return True
 
-    # ⚡ 3. ПОЛНЫЙ REGEX СПИСОК (с явной передачей IGNORECASE)
+    # Полный regex список
     for pattern in BAD_PATTERNS:
         try:
             if re.search(pattern, query, re.IGNORECASE):
@@ -223,12 +213,12 @@ def is_malicious_query(query: str) -> bool:
         except re.error:
             continue
     
-    # ⚡ 4. ЗАЩИТА ОТ ДЛИННЫХ ЗАПРОСОВ
+    # Защита от длинных запросов
     if len(query) > 2000:
         print(f"🚨 ДЛИННЫЙ ЗАПРОС: {len(query)} символов")
         return True
     
-    # ⚡ 5. ЗАЩИТА ОТ Unicode-омофонов (латиница вместо кириллицы)
+    # Защита от Unicode-омофонов
     latin_cyrillic_confusable = [
         ('c', 'с'), ('e', 'е'), ('o', 'о'), ('p', 'р'), 
         ('a', 'а'), ('x', 'х'), ('k', 'к'), ('m', 'м')
@@ -237,7 +227,6 @@ def is_malicious_query(query: str) -> bool:
     for latin, cyrillic in latin_cyrillic_confusable:
         q_lower = q_lower.replace(latin, cyrillic)
     
-    # Проверяем снова с заменой
     for w1, w2 in dangerous_combos:
         if w1 in q_lower and w2 in q_lower:
             print(f"🚨 UNICODE-ОМОФОН БАН: {w1} + {w2}")
@@ -245,21 +234,49 @@ def is_malicious_query(query: str) -> bool:
     
     return False
 
-
-# 3. ЭНДПОИНТ
+# ========== ОСНОВНОЙ ЭНДПОИНТ ==========
 @app.post("/api/v1/predict/stream")
 async def ask_stream(request: ChatRequest):
     user_query = request.query
     
-    # 🔥 ПРОВЕРКА НА ВРЕДОНОСНОСТЬ
+    # Проверка на вредоносность
     if is_malicious_query(user_query):
         async def blocked_gen():
             yield json.dumps({"type": "text", "content": "БАЗА_ПУСТА: Я эксперт по вопросам ФНС России."}, ensure_ascii=False) + "\n"
         return StreamingResponse(blocked_gen(), media_type="text/event-stream")
     
     normalized_query = user_query.strip()
+    query_lower = normalized_query.lower()
     
-    # КЭШ (если есть)
+    # Определяем тип запроса
+    is_multik = 'мультик' in query_lower
+    is_fns = 'наложик' in query_lower or any(kw in query_lower for kw in ['ндс', 'фнс', 'налог', '79-фз', 'регламент', 'инструкция', 'документ'])
+    
+    # Если Мультик — идём в Ollama
+    if is_multik and not is_fns:
+        async def multik_stream():
+            try:
+                stream = await ollama_client.chat(
+                    model="yagpt5_fns:latest",
+                    messages=[{"role": "user", "content": normalized_query}],
+                    stream=True,
+                    options={
+                        'num_ctx': 4096,
+                        'temperature': 0.8,
+                        'num_predict': 250
+                    }
+                )
+                async for chunk in stream:
+                    content = chunk.get('message', {}).get('content', '')
+                    if content:
+                        yield json.dumps({"type": "text", "content": content}, ensure_ascii=False) + "\n"
+            except Exception as e:
+                logger.error(f"Ollama error: {e}")
+                yield json.dumps({"type": "text", "content": f"Ошибка связи с Мультиком: {e}"}, ensure_ascii=False) + "\n"
+        return StreamingResponse(multik_stream(), media_type="text/event-stream")
+    
+    # ФНС — через RAG
+    # Кэш
     cached_response = cache.get(normalized_query.lower())
     if cached_response:
         async def stream_from_cache():
@@ -267,8 +284,8 @@ async def ask_stream(request: ChatRequest):
                 yield chunk
                 await asyncio.sleep(0.01)
         return StreamingResponse(stream_from_cache(), media_type="text/event-stream")
-
-    # ГЕНЕРАЦИЯ
+    
+    # Генерация через RAG
     async def stream_and_cache_generator(query):
         full_chunks_list = [] 
         try:
@@ -282,9 +299,8 @@ async def ask_stream(request: ChatRequest):
         
         if full_chunks_list:
             cache.set(normalized_query.lower(), json.dumps(full_chunks_list, ensure_ascii=False))
-
+    
     return StreamingResponse(stream_and_cache_generator(normalized_query), media_type="text/event-stream")
-
 
 if __name__ == "__main__":
     import uvicorn

@@ -44,7 +44,7 @@ def process_pipeline():
         print(f"❌ Файл {INPUT_FILE} не найден!")
         return
 
-    print(f"🚀 Стартуем СТРОГУЮ экстракцию. Модель: {MODEL_NAME}")
+    print(f"🚀 Запуск ЭНЦИКЛОПЕДИЧЕСКОЙ экстракции. Модель: {MODEL_NAME}")
 
     with open(INPUT_FILE, 'r', encoding='utf-8') as f_in, \
          open(OUTPUT_FILE, 'w', encoding='utf-8') as f_out:
@@ -57,27 +57,32 @@ def process_pipeline():
                 data = json.loads(line)
                 chunk_text = data.get('text', '')
 
-                # ЖЕСТКИЙ ПРОМПТ: Указываем ключи и запрещаем списки в target
+                # НОВЫЙ ПРОМПТ ДЛЯ GRAPHRAG V2
                 prompt = (
-                    f"ИНСТРУКЦИЯ: Извлеки сущности и связи из текста.\n"
+                    f"ИНСТРУКЦИЯ: Извлеки из текста ФНС сущности и связи.\n"
+                    f"Для каждой сущности ОБЯЗАТЕЛЬНО напиши краткое описание (её роль в тексте).\n"
                     f"Верни ответ СТРОГО в формате JSON.\n"
-                    f"КЛЮЧИ: 'entities' (список строк), 'relationships' (список объектов).\n"
-                    f"ФОРМАТ СВЯЗИ: {{\"source\": \"A\", \"relation\": \"делает\", \"target\": \"B\"}}.\n"
-                    f"ПРАВИЛО: Если у одного source несколько target, создай ОТДЕЛЬНЫЙ объект для каждой связи.\n"
+                    f"СТРУКТУРА КЛЮЧЕЙ:\n"
+                    f"- 'entities': [ {{\"name\": \"Название\", \"description\": \"Краткая суть\"}}, ... ]\n"
+                    f"- 'relationships': [ {{\"source\": \"A\", \"relation\": \"связь\", \"target\": \"B\"}}, ... ]\n"
+                    f"ПРАВИЛО: Если у одного source несколько target, создай ОТДЕЛЬНЫЙ объект в relationships.\n\n"
                     f"ТЕКСТ ДЛЯ АНАЛИЗА:\n{chunk_text}\n\n"
                     f"JSON:"
                 )
 
                 raw_response = call_ollama_ai(prompt)
-                data['graph_data'] = clean_and_parse_json(raw_response)
+                extracted_data = clean_and_parse_json(raw_response)
                 
+                # Сохраняем результат
+                data['graph_data'] = extracted_data
                 f_out.write(json.dumps(data, ensure_ascii=False) + "\n")
-                print(f"✅ Чанк {i+1} (ID: {data.get('id', 'N/A')}) — OK")
+                
+                print(f"✅ Чанк {i+1} (ID: {data.get('id', 'N/A')}) — Обработан с описаниями.")
 
             except Exception as e:
                 print(f"⚠️ Ошибка на строке {i+1}: {e}")
 
-    print(f"🏁 Готово! Теперь ключи всегда: source, relation, target.")
-
+    print(f"🏁 Готово! Проверь файл {OUTPUT_FILE} — там теперь энциклопедия.")
+    
 if __name__ == "__main__":
     process_pipeline()

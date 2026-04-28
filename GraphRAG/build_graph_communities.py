@@ -3,55 +3,77 @@ import networkx as nx
 import community as community_louvain
 import os
 
+# Твой новый файл с экстракцией (где есть поле description)
 INPUT_FILE = "graph_nodes.jsonl"
 
 def build_and_partition():
     if not os.path.exists(INPUT_FILE):
-        print("❌ Сначала дождись финиша экстракции!")
+        print("❌ Сначала дождись финиша экстракции (graph_nodes.jsonl)!")
         return
 
     G = nx.Graph()
+    # Хранилище описаний для каждой сущности
+    descriptions = {}
 
-    print("🔄 Сборка глобальной паутины...")
+    print("🔄 Сборка энциклопедической паутины...")
     with open(INPUT_FILE, 'r', encoding='utf-8') as f:
-        for line in f:
-            data = json.loads(line)
-            graph = data.get('graph_data', {})
-            
-            if not isinstance(graph, dict): continue
+        for i, line in enumerate(f):
+            try:
+                data = json.loads(line)
+                graph = data.get('graph_data', {})
+                if not isinstance(graph, dict): continue
 
-            # Добавляем узлы
-            for entity in graph.get('entities', []):
-                G.add_node(entity)
+                # 1. Обрабатываем узлы и сохраняем описания
+                for entity in graph.get('entities', []):
+                    # Если ИИ вернул словарь (как мы договорились для v2)
+                    if isinstance(entity, dict):
+                        name = entity.get('name')
+                        desc = entity.get('description', '')
+                        if name:
+                            G.add_node(name)
+                            # Сохраняем самое длинное описание (чтобы было максимум инфы)
+                            if len(desc) > len(descriptions.get(name, '')):
+                                descriptions[name] = desc
+                    else:
+                        # На случай, если проскочила старая строка
+                        G.add_node(str(entity))
 
-            # Добавляем связи
-            for rel in graph.get('relationships', []):
-                src = rel.get('source')
-                tgt = rel.get('target')
-                if src and tgt:
-                    G.add_edge(src, tgt, relation=rel.get('relation'))
+                # 2. Добавляем связи
+                for rel in graph.get('relationships', []):
+                    src = rel.get('source')
+                    tgt = rel.get('target')
+                    if src and tgt:
+                        G.add_edge(src, tgt, relation=rel.get('relation', 'связан'))
+            except Exception as e:
+                print(f"⚠️ Ошибка на строке {i+1}: {e}")
+
+    if G.number_of_nodes() == 0:
+        print("❌ Граф пуст! Проверь содержимое graph_nodes.jsonl")
+        return
 
     print(f"📊 Граф собран: {G.number_of_nodes()} узлов, {G.number_of_edges()} связей.")
 
-    # КИЛЛЕР-ФИЧА: Алгоритм Лувена (Community Detection)
-    print("🧠 Ищем тематические сообщества (Louvain)...")
+    # 3. Алгоритм Лувена (Community Detection)
+    print("🧠 Группируем смыслы (Louvain)...")
+    # Нужно установить: pip install python-louvain
     partition = community_louvain.best_partition(G)
     
-    # Группируем узлы по сообществам для наглядности
+    # Собираем данные для каждой группы
     communities = {}
     for node, comm_id in partition.items():
-        communities.setdefault(comm_id, []).append(node)
+        node_info = {
+            "name": node,
+            "description": descriptions.get(node, "Описание не извлечено")
+        }
+        communities.setdefault(comm_id, []).append(node_info)
 
     print(f"✅ Найдено сообществ: {len(communities)}")
     
-    # Выведем топ-3 сообщества для теста
-    for i, (comm_id, nodes) in enumerate(list(communities.items())[:3]):
-        print(f"🔹 Сообщество {comm_id}: {', '.join(nodes[:5])}...")
-
-    # Сохраняем результат для следующего шага (Summarization)
+    # Сохраняем расширенные данные для нашего УМНОГО суммаризатора
     with open("communities.json", "w", encoding="utf-8") as f:
         json.dump(communities, f, ensure_ascii=False, indent=2)
     
+    print(f"💾 Данные сохранены в communities.json")
     return communities
 
 if __name__ == "__main__":

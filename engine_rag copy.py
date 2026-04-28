@@ -6,7 +6,6 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.ollama import Ollama
 from llama_index.core import PromptTemplate
 from pathlib import Path
-from sentence_transformers import CrossEncoder
 import urllib.parse
 
 # ========== ИМПОРТЫ ДЛЯ РЕРАНКЕРА ==========
@@ -32,11 +31,11 @@ if not os.path.exists(MODEL_PATH):
 else:
     print(f"🚀 ENGINE UPGRADE: Использую e5-base из {MODEL_PATH}")
 
-PERSIST_DIR = os.path.join(BASE_DIR, "fns_rag_index")
+PERSIST_DIR = os.path.join(BASE_DIR, "fns_rag_graph_final")
 
 # 2. ШАБЛОНЫ ПРОМПТОВ (Стиль "Строгий Аналитик")
 qa_prompt_str = (
-"Ты — эксперт ФНС России. Отвечай СТРОГО на русском языке.\n"
+"Ты — эксперт ФНС России.\n"
 "---------------------\n"
 "БАЗА ЗНАНИЙ:\n"
 "{context_str}\n"
@@ -55,6 +54,7 @@ qa_prompt_str = (
 "5. СТРОГОСТЬ: Используй ТОЛЬКО базу знаний. Отвечай уверенно, без 'вероятно' и 'предположительно'. Если инфы нет — 'БАЗА_ПУСТА: Информация отсутствует'.\n"
 "6. ТЕСТЫ: Если есть варианты ответов — выбери ОДИН самый точный по базе. Не обобщай!\n"
 "7. Если вопрос не по теме — 'БАЗА_ПУСТА: Я эксперт по вопросам ФНС'.\n"
+
 "\n"
 "ВОПРОС: {query_str}\n\n"
 "ОТВЕТ ЭКСПЕРТА:" 
@@ -88,7 +88,7 @@ Settings.llm = Ollama(
     additional_kwargs={
         "keep_alive": "-1", 
         "num_ctx": 4096, 
-        "temperature": 0, 
+        "temperature": 0.1, 
         "num_gpu": 33, 
         "num_predict": 1024,
         "seed": 42}
@@ -101,279 +101,166 @@ logger = logging.getLogger("engine_rag")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ========== 1. УСКОРЕННЫЙ РЕРАНКЕР (SENTENCE-TRANSFORMERS) ==========
+# ========== 1. УСКОРЕННЫЙ РЕРАНКЕР С УМНЫМ КЭШЕМ ==========
 class SimpleReranker:
     def __init__(self):
         model_path = os.path.join(BASE_DIR, "reanker")
         self.device = "cpu"
-        logger.info(f"🔄 Загрузка реранкера BGE-V2-M3 из {model_path} на {self.device.upper()}...")
+        logger.info(f"🔄 Загрузка реранкера из {model_path} на {self.device.upper()}...")
         
-        # CrossEncoder сам подгрузит tokenizer и model, используя указанный device
-        self.model = CrossEncoder(
-            model_path, 
-            device=self.device, 
-            max_length=256  # Оптимально для скорости на CPU
-        )
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_path, local_files_only=True)
+        self.model.to(self.device)
+        self.model.eval()
         
         self.cache = {}
         self.cache_maxsize = 200
-        logger.info("✅ Реранкер успешно загружен через CrossEncoder")
+        logger.info("✅ Реранкер успешно загружен")
 
-    def rerank(self, query, documents, top_k=3):
+    def rerank(self, query, documents, top_k=4):
         if not documents:
             return []
 
-        # 1. Дедупликация (чтобы не считать одно и то же дважды)
+        # Дедупликация входящих текстов
         unique_documents = list(dict.fromkeys(documents))
         
-        # 2. Проверка кэша
+        # Умный кэш (хэшируем всё)
         cache_key = hash(query + "".join(unique_documents))
         if cache_key in self.cache:
             logger.info("⚡ Использую кэш реранкера")
             return self.cache[cache_key]
         
-        # 3. Подготовка пар для модели
         pairs = [[query, doc] for doc in unique_documents]
+        scores = []
+        batch_size = 10 # Твой ROG съест это быстро
         
-        # 4. Предикт (predict сам делает батчинг и применяет активацию)
-        # batch_size=10-20 оптимально для ROG на CPU
-        scores = self.model.predict(
-            pairs, 
-            batch_size=20, 
-            show_progress_bar=False,
-            convert_to_numpy=True
-        )
+        for i in range(0, len(pairs), batch_size):
+            batch = pairs[i:i+batch_size]
+            # max_length=256 для ускорения на CPU (по совету)
+            inputs = self.tokenizer(batch, padding=True, truncation=True, 
+                                    max_length=256, return_tensors="pt").to(self.device)
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+                batch_scores = torch.sigmoid(outputs.logits).view(-1).cpu().tolist()
+                if isinstance(batch_scores, float):
+                    batch_scores = [batch_scores]
+                scores.extend(batch_scores)
         
-        # Если пришел один скор (float), превращаем в список
-        if isinstance(scores, (float, int)):
-            scores = [scores]
-
-        # 5. Ранжирование
         ranked = sorted(zip(unique_documents, scores), key=lambda x: x[1], reverse=True)
         result = ranked[:top_k]
         
-        # 6. Обновление кэша
         if len(self.cache) >= self.cache_maxsize:
             self.cache.clear()
         self.cache[cache_key] = result
         
         return result
-    
-# ========== 2. КАСТОМНЫЙ ДВИЖОК: ДИНАМИЧЕСКАЯ РАСПАКОВКА ТОП-1 И ТОП-2 ==========
+
+# ========== 2. КАСТОМНЫЙ ДВИЖОК: ВЕРСИЯ "ТОТАЛЬНЫЙ РЕРАНК" ==========
 class RerankedEngine:
-    def __init__(self, index, reranker, qa_prompt, initial_top_k=20, final_top_k=4):
+    def __init__(self, index, reranker, qa_prompt, initial_top_k=20, final_top_k=5):
         self.retriever = index.as_retriever(similarity_top_k=initial_top_k)
         self.reranker = reranker
         self.qa_prompt = qa_prompt
         self.initial_top_k = initial_top_k
         self.final_top_k = final_top_k
     
-    def _extract_art_root(self, node_id: str) -> str:
-        """Универсальное извлечение корня статьи"""
-        # Убираем суффиксы вида _p1, _p8¹, _part2, _st5
-        return re.sub(r'_(?:p|part|st)?\d+[¹²³⁰-⁹]*$', '', node_id)
-    
-    def _normalize_id(self, node_id: str) -> str:
-        """Нормализует ID для сравнения (убирает спецсимволы)"""
-        return re.sub(r'[¹²³⁰-⁹]', '', node_id)
-    
     def query(self, query_text):
-        # 1. Первичный поиск
+        # 1. Первичный поиск (Берем все 20 чанков)
         initial_nodes = self.retriever.retrieve(query_text)
         if not initial_nodes:
             return "Контекст не найден."
         
-        logger.info(f"🚀 Получено {len(initial_nodes)} чанков от ретривера")
+        # logger.info(f"🚀 Получено {initial_nodes} ")
+
+        # 2. РЕРАНКЕР: Теперь он видит всё, что нашел E5 без исключений
+        docs_for_rerank = [n.node.get_content() for n in initial_nodes]
+        reranked_results = self.reranker.rerank(query_text, docs_for_rerank, top_k=self.final_top_k)
         
-        # 2. Группируем по корням статей
-        from collections import defaultdict
-        articles = defaultdict(list)
         
-        for n in initial_nodes:
-            n_id = n.node.metadata.get('id', '')
-            art_root = self._extract_art_root(n_id)
-            articles[art_root].append(n)
-        
-        logger.info(f"📚 Найдено {len(articles)} уникальных статей")
-        
-        # 3. Для реранкера берем топ-2 чанка из каждой статьи
-        docs_for_rerank = []
-        nodes_for_rerank = []
-        
-        for art_root, nodes_list in articles.items():
-            nodes_list.sort(key=lambda x: x.score, reverse=True)
-            for node in nodes_list[:2]:
-                docs_for_rerank.append(node.node.get_content())
-                nodes_for_rerank.append(node)
-        
-        logger.info(f"🔄 Отправляем реранкеру {len(docs_for_rerank)} чанков")
-        
-        # 4. Реранкинг
-        reranked_results = self.reranker.rerank(query_text, docs_for_rerank, top_k=self.final_top_k * 2)
-        
-        # 5. СБОРКА КОНТЕКСТА С ЖЕСТКИМ ЛИМИТОМ
+
+        # 3. СБОРКА КОНТЕКСТА С ГЛУБОКОЙ СКЛЕЙКОЙ
         from llama_index.core.schema import NodeWithScore, TextNode
-        
         final_nodes = []
-        processed_articles = set()
-        
-        # 🔥 НОВЫЕ КОНСТАНТЫ ДЛЯ ОГРАНИЧЕНИЯ
-        MAX_CHUNKS_PER_ARTICLE = 2  # Максимум 2 чанка на статью (для не-топ1)
-        MAX_TOTAL_CHUNKS = 5        # Максимум 5 чанков ВСЕГО в контексте
-        total_chunks_used = 0       # Счетчик использованных чанков
-        
-        # Определяем тип вопроса
-        is_numeric_question = any(word in query_text.lower() for word in [
-            'срок', 'сколько', 'какое число', 'период', 'дней', 'часов', 
-            '21 день', '30 дней', '15 дней', '7 дней'
-        ])
+        final_seen_roots = set() 
         
         for i, (doc_text, score) in enumerate(reranked_results):
-            # 🔥 ПРОВЕРКА ЛИМИТА
-            if total_chunks_used >= MAX_TOTAL_CHUNKS:
-                logger.info(f"⏹️ Достигнут лимит чанков ({MAX_TOTAL_CHUNKS}), останавливаю сбор контекста")
-                break
-            
-            # Находим соответствующую ноду
-            matched_n = None
-            for n in nodes_for_rerank:
-                if n.node.get_content() == doc_text:
-                    matched_n = n
-                    break
-            
-            if not matched_n:
-                continue
+            # Ищем, какая именно нода из 20-ти соответствует этому тексту
+            matched_n = next((n for n in initial_nodes if n.node.get_content() == doc_text), None)
+            if not matched_n: continue
             
             n_id = matched_n.node.metadata.get('id', '')
-            art_root = self._extract_art_root(n_id)
-            
-            # Если статья уже обработана - пропускаем
-            if art_root in processed_articles:
-                continue
-            
-            # 🎯 Для числовых вопросов - берем ровно 1 чанк
-            if is_numeric_question:
-                if total_chunks_used + 1 <= MAX_TOTAL_CHUNKS:
-                    final_nodes.append(NodeWithScore(node=matched_n.node, score=score))
-                    processed_articles.add(art_root)
-                    total_chunks_used += 1
-                    logger.info(f"📊 ЧИСЛОВОЙ ВОПРОС: беру точный чанк {n_id} (всего {total_chunks_used}/{MAX_TOTAL_CHUNKS})")
-                else:
-                    logger.info(f"⏹️ Лимит достигнут, пропускаю {n_id}")
-                continue
-            
-            # Для остальных вопросов - склеиваем, но с ограничениями
-            all_related = articles.get(art_root, [])
-            all_related.sort(key=lambda x: x.node.metadata.get('id', ''))
-            
-            # 🔥 ГЛАВНОЕ ИЗМЕНЕНИЕ: Для топ-1 статьи берем ВСЕ чанки (до лимита)
-            if i == 0:  # Самая релевантная статья по версии реранкера
-                chunks_to_take = min(len(all_related), MAX_TOTAL_CHUNKS - total_chunks_used)
-                if chunks_to_take > 0:
-                    related = all_related[:chunks_to_take]
-                    logger.info(f"🏆 ТОП-1 СТАТЬЯ: беру {len(related)} из {len(all_related)} чанков (вся статья)")
-                else:
-                    continue
+            # Извлекаем корень (79фз_st46_p3 -> 79фз_st46)
+            # Надо сделать:
+            if "community" in str(n_id):
+                # Для обзоров корнем является сам ID — склейки с соседями не будет
+                art_root = str(n_id) 
             else:
-                # Для остальных статей - берем 1-2 чанка как раньше
-                if len(all_related) <= MAX_CHUNKS_PER_ARTICLE:
-                    related = all_related
-                else:
-                    # Пытаемся найти соседей
-                    current_id_normalized = self._normalize_id(n_id)
-                    current_idx = None
+                # Для законов оставляем старую логику склейки по статьям
+                art_root = re.sub(r'_(?:p|part|st)?\d+$', '', str(n_id))
+
+            # Если мы уже обработали эту статью (например, через другой её чанк) - скипаем
+            if art_root in final_seen_roots:
+                continue
+
+            # 🔥 ЛОГИКА РАСКРЫТИЯ (Для Топ-1 и Топ-2 результатов реранкера)
+            if i < 2:
+                # Берем все куски этой статьи, которые попали в изначальные 20
+                all_related = [n for n in initial_nodes if n.node.metadata.get('id', '').startswith(art_root)]
+                all_related.sort(key=lambda x: x.node.metadata.get('id', ''))
+                
+                try:
+                    # Находим индекс победителя в списке чанков этой статьи
+                    current_idx = next(idx for idx, n in enumerate(all_related) if n.node.metadata.get('id') == n_id)
+                    # Берем соседей вокруг него (-2 / +3)
+                    start_idx = max(0, current_idx - 2)
+                    end_idx = min(len(all_related), current_idx + 3)
+                    related = all_related[start_idx:end_idx]
                     
-                    for idx, n in enumerate(all_related):
-                        n_id_normalized = self._normalize_id(n.node.metadata.get('id', ''))
-                        if n_id_normalized == current_id_normalized:
-                            current_idx = idx
-                            break
-                    
-                    if current_idx is not None:
-                        # Берем 1 до и 1 после (всего до 3 чанков)
-                        start_idx = max(0, current_idx - 1)
-                        end_idx = min(len(all_related), current_idx + 2)
-                        related = all_related[start_idx:end_idx]
-                        # Обрезаем до MAX_CHUNKS_PER_ARTICLE
-                        if len(related) > MAX_CHUNKS_PER_ARTICLE:
-                            related = related[:MAX_CHUNKS_PER_ARTICLE]
-                        logger.info(f"🧱 СКЛЕЙКА: {art_root} (взято {len(related)} фрагм. вокруг {n_id})")
-                    else:
-                        # Не нашли - берем топ чанки
-                        related = all_related[:MAX_CHUNKS_PER_ARTICLE]
-                        logger.warning(f"⚠️ Не найден индекс для {n_id}, беру {len(related)} фрагм.")
+                    logger.info(f"🧱 ГЛУБОКАЯ СКЛЕЙКА: {art_root} (взято {len(related)} фрагм. вокруг {n_id})")
+                except StopIteration:
+                    related = [matched_n]
+
+                full_text = "\n\n".join([p.node.get_content() for p in related])
+                all_urls = list(set([p.node.metadata.get('url') for p in related if p.node.metadata.get('url')]))
+                
+                new_node = TextNode(text=full_text, metadata={**matched_n.node.metadata, 'combined_urls': all_urls})
+                final_nodes.append(NodeWithScore(node=new_node, score=score))
+                final_seen_roots.add(art_root)
             
-            # 🔥 ПРОВЕРЯЕМ ЛИМИТ ПЕРЕД ДОБАВЛЕНИЕМ
-            if total_chunks_used + len(related) > MAX_TOTAL_CHUNKS:
-                # Берем только то, что влезает
-                chunks_to_take = MAX_TOTAL_CHUNKS - total_chunks_used
-                if chunks_to_take <= 0:
-                    logger.info(f"⏹️ Лимит достигнут, пропускаю статью {art_root}")
-                    continue
-                related = related[:chunks_to_take]
-                logger.info(f"✂️ Обрезано до {chunks_to_take} чанков из-за лимита")
-            
-            # Собираем текст
-            full_text_parts = []
-            all_urls = set()
-            
-            for p in related:
-                full_text_parts.append(p.node.get_content())
-                if p.node.metadata.get('url'):
-                    all_urls.add(p.node.metadata.get('url'))
-            
-            full_text = "\n\n".join(full_text_parts)
-            
-            new_node = TextNode(
-                text=full_text,
-                metadata={
-                    **matched_n.node.metadata,
-                    'combined_urls': list(all_urls),
-                    'original_chunks': len(related)
-                }
-            )
-            final_nodes.append(NodeWithScore(node=new_node, score=score))
-            processed_articles.add(art_root)
-            total_chunks_used += len(related)
-            logger.info(f"🚀 СТАТЬЯ РАСКРЫТА: {art_root} ({len(related)} чанков, всего {total_chunks_used}/{MAX_TOTAL_CHUNKS})")
-        
-        # 6. Если ничего не собрали - берем топ от ретривера (но не больше 3 чанков)
-        if not final_nodes and initial_nodes:
-            final_nodes = [NodeWithScore(node=initial_nodes[i].node, score=initial_nodes[i].score) 
-                          for i in range(min(3, len(initial_nodes)))]
-            logger.info(f"⚠️ Фолбек: взял {len(final_nodes)} чанков из ретривера")
-        
-        # 7. ГЕНЕРАЦИЯ
+            # Для остальных (Топ-3) просто добавляем чанк как есть
+            else:
+                final_nodes.append(NodeWithScore(node=matched_n.node, score=score))
+                final_seen_roots.add(art_root)
+
+        # 4. ГЕНЕРАЦИЯ
         from llama_index.core.response_synthesizers import get_response_synthesizer, ResponseMode
         
-        # Для числовых вопросов используем COMPACT режим
-        numeric_keywords = ['срок', 'сколько', 'дней', 'часов', 'период', 'какое число']
-        is_numeric = any(word in query_text.lower() for word in numeric_keywords)
-        is_simple = is_numeric or any(word in query_text.lower() for word in ['график', 'диаграмма', 'таблица', 'кто', 'какой', 'фио'])
-        
-        selected_mode = ResponseMode.COMPACT if is_simple else ResponseMode.TREE_SUMMARIZE
-        logger.info(f"🚀 ТИП selected_mode: {selected_mode} (numeric={is_numeric})")
-        
+        # Определяем режим (для юридических тестов лучше оставить COMPACT, если чанков мало)
+        selected_mode = ResponseMode.COMPACT if len(final_nodes) <= 2 else ResponseMode.TREE_SUMMARIZE
+        logger.info(f"🚀 ResponseMode: {selected_mode}")
         synthesizer = get_response_synthesizer(
-            text_qa_template=self.qa_prompt,
+            text_qa_template=self.qa_prompt, 
             streaming=True,
-            response_mode=selected_mode,
-            use_async=True
+            response_mode=selected_mode
         )
         
+        # Порог 0.1, чтобы не потерять важные, но сложные ответы
+        final_nodes = [n for n in final_nodes if n.score > 0.1] 
+        
+        if not final_nodes:
+            final_nodes = [initial_nodes[0]]
+        
+        # logger.info(f"🚀 final_nodes: {final_nodes}")
+        
         forced_query = f"{query_text}\n\nОТВЕТЬ СТРОГО НА РУССКОМ ЯЗЫКЕ!"
-        
-        # Логируем что попало в контекст
-        logger.info(f"📊 В контексте {len(final_nodes)} нод, всего чанков: {total_chunks_used}")
-        for i, node in enumerate(final_nodes[:3]):
-            preview = node.node.text[:200].replace('\n', ' ')
-            logger.info(f"   Нода {i+1}: score={node.score:.3f}, preview={preview}...")
-        
+
+
         return synthesizer.synthesize(forced_query, final_nodes)
-    
+
     async def aquery(self, query_text):
         return await asyncio.to_thread(self.query, query_text)
-    
+
+
 # 4. ИНИЦИАЛИЗАЦИЯ (Загрузка в RAM)
 logger.info("🧠 Загрузка векторного индекса в 32 ГБ RAM...")
 storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
@@ -383,7 +270,7 @@ index = load_index_from_storage(storage_context)
 reranker = SimpleReranker()
 
 # Создаем query engine с реранкером
-query_engine = RerankedEngine(index, reranker, qa_prompt, initial_top_k=20, final_top_k=4)
+query_engine = RerankedEngine(index, reranker, qa_prompt, initial_top_k=15, final_top_k=5)
 print("✅ Query engine с реранкером готов")
 
 async def run_in_thread(func, *args):
@@ -420,7 +307,7 @@ async def get_ai_streaming_response(query_text: str):
         logger.info(f"🧩 После реранкинга: {len(nodes)} чанков")
         
         # 🔍 Отладочный вывод топ-3 score
-        for i, node in enumerate(nodes[:4]):
+        for i, node in enumerate(nodes[:5]):
             score = node.score if hasattr(node, 'score') else 0.0
             logger.info(f"   📊 Топ-{i+1}: score={score:.3f}")
             logger.info(f"      metadata: {node.node.metadata}")

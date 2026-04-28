@@ -41,7 +41,7 @@ Thumbs.db
 v4.gguf
 
 # === ТЯЖЕЛЫЙ ВЕС (МОДЕЛИ И ИНДЕКСЫ) ===
-reanker/
+reranker/
 fns_docs/
 fns_100_examples.jsonl
 *.safetensors
