@@ -4,7 +4,7 @@ import logging
 import shutil
 import torch
 
-# 1. СТРОГИЙ ОФФЛАЙН
+# 1. СТРОГИЙ ОФФЛАЙН (Чтобы не лез в инет в Сириусе)
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
@@ -13,11 +13,11 @@ from llama_index.core import VectorStoreIndex, Document, Settings, StorageContex
 from llama_index.core.node_parser import TokenTextSplitter
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("GraphRAG_Indexer")
+logger = logging.getLogger("GraphRAG_Indexer_V2")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# Путь на папку выше к модели
-MODEL_PATH = os.path.join(os.path.dirname(BASE_DIR), "././hf_cache/multilingual-e5-large")
+# Путь к модели (убедись, что папка hf_cache на месте)
+MODEL_PATH = os.path.join(os.path.dirname(BASE_DIR), "hf_cache/multilingual-e5-large")
 
 if not os.path.exists(MODEL_PATH):
     print(f"❌ МОДЕЛЬ НЕ НАЙДЕНА ПО ПУТИ: {MODEL_PATH}")
@@ -50,15 +50,14 @@ Settings.embed_model = PrefixedEmbedding(
     local_files_only=True
 )
 
-# Чтобы LlamaIndex не резала наши готовые объекты
-Settings.node_parser = TokenTextSplitter(chunk_size=4096, chunk_overlap=0)
+# Чанк 4096 чтобы не резать наши JSON-объекты
+Settings.node_parser = TokenTextSplitter(chunk_size=8192, chunk_overlap=0)
 
 # ========================================
-# 3. ЗАГРУЗКА ДАННЫХ (СТАТЬИ + САММАРИ)
+# 3. ЗАГРУЗКА И ПРЕДОБРАБОТКА (СТАТЬИ + САММАРИ)
 # ========================================
-print("🔄 Читаем файлы GraphRAG...")
+print("🔄 Читаем файлы GraphRAG v2...")
 
-# Читаем оба твоих файла
 dataset_files = ["graph_nodes.jsonl", "graph_summaries.jsonl"]
 documents = []
 
@@ -74,27 +73,49 @@ for filename in dataset_files:
             try:
                 data = json.loads(line)
                 
-                # Текст для поиска
                 doc_text = data.get('text', '')
-                title = data.get('title') or "Обзор раздела (Graph Summary)"
+                # Для Саммари берем кастомный заголовок
+                title = data.get('title') or data.get('id', 'Документ ФНС')
                 
-                # Собираем всё мясо в метаданные
-                # Если это саммари, берем nodes, если статья — graph_data
-                graph_info = data.get('graph_data') or data.get('metadata', {}).get('nodes', '')
+                # ЛОГИКА GRAPHRAG V2: Упаковываем сущности и их описания в читаемую строку
+                raw_graph = data.get('graph_data') or data.get('metadata', {}).get('nodes', '')
+                
+                if isinstance(raw_graph, dict):
+                    # Извлекаем сущности из структуры экстрактора
+                    entities = raw_graph.get('entities', [])
+                    nodes_list = []
+                    for e in entities:
+                        if isinstance(e, dict):
+                            nodes_list.append(f"{e.get('name')} ({e.get('description', '')})")
+                        else:
+                            nodes_list.append(str(e))
+                    graph_info = "СУЩНОСТИ И РОЛИ: " + "; ".join(nodes_list)
+                elif isinstance(raw_graph, list):
+                    # Извлекаем список из саммари сообществ
+                    graph_info = "КЛЮЧЕВЫЕ ТЕМЫ РАЗДЕЛА: " + ", ".join([str(n) for n in raw_graph])
+                else:
+                    graph_info = str(raw_graph)
 
                 metadata = {
-                    "id": data.get('id', ''),
-                    "source_url": data.get('url', 'URL отсутствует (глобальное знание)'),
-                    "title": title,
-                    "graph_structure": str(graph_info)
+                    "graph_structure": graph_info, # 1. Сначала КАРТА (Граф)
+                    "title": title,                # 2. Потом ЗАГОЛОВОК
+                    "source_url": data.get('url', ''), # 3. Ссылка
+                    "id": data.get('id', ''),      # 4. Тех. ID
+                    "local_img": data.get('local_img', ''), # 5. Картинка
                 }
 
-                # Формируем документ
+                # Текст для векторного поиска (только суть)
+               
+                if data.get('type') == 'person' or 'fns_' in data.get('id', ''):
+                    text_for_index = f"{title}\n{doc_text}"
+                else:
+                    text_for_index = doc_text  # Для законов — только текст
+
                 doc = Document(
-                    text=f"НАЗВАНИЕ: {title}\nСОДЕРЖАНИЕ: {doc_text}",
+                    text=text_for_index,
                     metadata=metadata,
-                    # ГРАФ ИСКЛЮЧАЕМ ИЗ ЭМБЕДДИНГА, чтобы влезть в 512 токенов
-                    excluded_embed_metadata_keys=["graph_structure", "source_url", "id"]
+                    # ГРАФ ИСКЛЮЧАЕМ ИЗ ЭМБЕДДИНГА (чтобы не засирать 512 токенов E5)
+                    excluded_embed_metadata_keys=["graph_structure", "source_url", "id", "local_img"]
                 )
                 documents.append(doc)
             except Exception as e:
@@ -106,9 +127,15 @@ for filename in dataset_files:
 print(f"🧠 Индексируем {len(documents)} объектов...")
 index = VectorStoreIndex.from_documents(documents, show_progress=True)
 
+# Сохраняем в финальную папку
 PERSIST_DIR = ".././fns_rag_graph_final"
 if os.path.exists(PERSIST_DIR):
     shutil.rmtree(PERSIST_DIR)
 
 index.storage_context.persist(persist_dir=PERSIST_DIR)
-print(f"✅ ФИНАЛ! Твой GraphRAG индекс собран в {PERSIST_DIR}")
+
+print("\n" + "="*40)
+print(f"✅ ФИНАЛ! Твой GraphRAG v2 индекс готов.")
+print(f"📍 Папка: {PERSIST_DIR}")
+print(f"📊 Всего документов в базе: {len(documents)}")
+print("="*40)

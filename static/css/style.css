@@ -1,287 +1,1015 @@
+/* ============================================
+   Tax AI Chat - Professional Government Portal
+   Enhanced with WOW animations & modern effects
+   Color Scheme: FNS Blue (#00509e) & Gold (#ffd700)
+   Style: Premium Banking/Government Portal + Modern UX
+   ============================================ */
 
-    :root { --bg: #11111b; --panel: #1e1e2e; --text: #cdd6f4; --accent: #f38ba8; --user-msg: #313244; --bot-msg: #45475a; }
-    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; margin: 0; align-items: center; }
-    #container { 
-        width: 100%; 
-        max-width: 1000px; 
-        display: flex; 
-        flex-direction: column; 
-        height: 100%; 
-        padding: 20px; 
-        padding-bottom: 30px;
-        box-sizing: border-box; 
+/* CSS Variables - Professional Design System */
+:root {
+    /* Primary Colors - FNS Professional */
+    --fns-blue: #00509e;
+    --deep-navy: #003366;
+    --blue-light: #0066cc;
+    --blue-hover: #004080;
+    
+    /* Modern Accent Colors - WOW Effects */
+    --accent-cyan: #00d4ff;
+    --accent-cyan-light: rgba(0, 212, 255, 0.1);
+    --accent-glow: rgba(0, 212, 255, 0.3);
+    --accent-purple: #7c3aed;
+    --accent-purple-light: rgba(124, 58, 237, 0.1);
+    
+    --gold: #ffd700;
+    --gold-light: rgba(255, 215, 0, 0.15);
+    --gold-dark: #e6c200;
+    --gold-glow: rgba(255, 215, 0, 0.3);
+    
+    /* Background Colors */
+    --bg-primary: #f4f7f9;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #e8edf2;
+    --bg-chat: #f0f4f8;
+    --bg-gradient-start: #f8fafc;
+    --bg-gradient-end: #e8edf2;
+    
+    /* Text Colors - High Contrast */
+    --text-primary: #1a2c3e;
+    --text-header: #003366;
+    --text-secondary: #2c4a6e;
+    --text-muted: #5a7a9a;
+    --text-light: #ffffff;
+    
+    /* Message Colors */
+    --user-msg-bg-start: #00509e;
+    --user-msg-bg-end: #003366;
+    --bot-msg-bg: #ffffff;
+    --bot-msg-border: #e0e6ed;
+    
+    /* UI Elements */
+    --border-color: #d1dce7;
+    --border-light: #e8edf2;
+    --shadow-light: rgba(0, 51, 102, 0.08);
+    --shadow-medium: rgba(0, 51, 102, 0.12);
+    --shadow-strong: rgba(0, 51, 102, 0.18);
+    --shadow-glow: 0 0 20px rgba(0, 212, 255, 0.15);
+    
+    /* Glassmorphism */
+    --glass-bg: rgba(255, 255, 255, 0.85);
+    --glass-border: rgba(255, 255, 255, 0.3);
+    --glass-shadow: 0 8px 32px rgba(0, 51, 102, 0.1);
+    
+    /* Spacing */
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --spacing-xl: 32px;
+    
+    /* Border Radius */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 20px;
+    --radius-2xl: 28px;
+    
+    /* Transitions */
+    --transition-fast: 0.15s ease;
+    --transition-normal: 0.25s ease;
+    --transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    
+    /* Typography */
+    --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    --font-display: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Import Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* Reset & Base */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+/* Body */
+body {
+    font-family: var(--font-family);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    margin: 0;
+    align-items: center;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Main Container */
+#container {
+    width: 100%;
+    max-width: 1000px;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: var(--spacing-lg);
+    padding-bottom: var(--spacing-md);
+    box-sizing: border-box;
+}
+
+/* Header */
+header {
+    text-align: center;
+    padding: var(--spacing-md) var(--spacing-lg);
+    margin-bottom: var(--spacing-md);
+    flex-shrink: 0;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow), 0 2px 8px var(--shadow-light);
+    border-bottom: 3px solid var(--gold);
+    position: relative;
+    overflow: hidden;
+}
+
+header h2 {
+    margin: 0;
+    font-weight: 700;
+    font-size: 1.35rem;
+    color: var(--text-header);
+    letter-spacing: -0.02em;
+    line-height: 1.3;
+}
+
+header h2 .accent {
+    color: var(--fns-blue);
+}
+
+header h2 .subtext {
+    font-weight: 500;
+    color: var(--text-muted);
+    font-size: 0.85em;
+}
+
+/* Chat Area */
+#chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-lg);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-md);
+    scroll-behavior: smooth;
+    min-height: 0;
+}
+
+#chat::-webkit-scrollbar {
+    width: 6px;
+}
+
+#chat::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#chat::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+#chat::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
+/* Message Bubbles */
+.msg {
+    padding: 16px 20px;
+    border-radius: var(--radius-lg);
+    font-size: 15px;
+    line-height: 1.65;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+    word-break: break-word;
+    hyphens: auto;
+    box-sizing: border-box;
+    animation: messageSlideIn 0.25s ease forwards;
+    opacity: 0;
+    transform: translateY(8px);
+    max-width: 85%;
+    position: relative;
+    /* Убрали overflow: hidden, чтобы контент не обрезался */
+    overflow: visible;
+}
+
+@keyframes messageSlideIn {
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* User Message */
+.user {
+    background: linear-gradient(135deg, var(--user-msg-bg-start) 0%, var(--user-msg-bg-end) 100%);
+    align-self: flex-end;
+    border-bottom-right-radius: 4px;
+    color: var(--text-light);
+    box-shadow: 0 2px 8px var(--shadow-medium);
+}
+
+.user p {
+    color: var(--text-light);
+    margin-bottom: 12px;
+}
+
+.user p:last-child {
+    margin-bottom: 0;
+}
+
+/* Bot Message */
+.bot {
+    background: var(--bot-msg-bg);
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+    border: 1px solid var(--bot-msg-border);
+    border-left: 4px solid var(--gold);
+    max-width: 95%;
+    width: 100%;
+    box-sizing: border-box;
+    box-shadow: 0 2px 8px var(--shadow-light);
+}
+
+/* Bot Message Links */
+.bot a {
+    color: var(--fns-blue) !important;
+    font-weight: 600;
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color var(--transition-fast);
+}
+
+.bot a:hover {
+    border-bottom-color: var(--fns-blue);
+}
+
+/* Code Blocks */
+.bot pre {
+    background: #f5f8fb !important;
+    padding: var(--spacing-md) !important;
+    margin: var(--spacing-sm) 0 !important;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-light);
+    overflow-x: auto;
+    white-space: normal;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.5;
+}
+
+.bot code {
+    background: #eef4f9 !important;
+    padding: 2px 6px !important;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+    color: var(--deep-navy);
+    border: none;
+}
+
+.bot pre code {
+    display: block;
+    background: transparent !important;
+    padding: 0 !important;
+    font-family: var(--font-mono);
+    font-size: inherit;
+    white-space: pre-wrap;
+    color: var(--text-primary);
+    border: none;
+}
+
+/* Typography in Bot Messages */
+.bot h1, .bot h2, .bot h3, .bot h4 {
+    margin: 16px 0 8px 0;
+    font-weight: 700;
+    color: var(--text-header);
+}
+
+.bot h1 { font-size: 1.4em; }
+.bot h2 { font-size: 1.25em; }
+.bot h3 { font-size: 1.1em; }
+.bot h4 { font-size: 1em; }
+
+.bot p {
+    margin: 0 0 12px 0;
+    line-height: 1.65;
+    color: var(--text-primary);
+}
+
+.bot p:last-child {
+    margin-bottom: 0;
+}
+
+.bot ul, .bot ol {
+    margin: 8px 0 12px 0;
+    padding-left: 24px;
+}
+
+.bot li {
+    margin: 4px 0;
+    line-height: 1.6;
+    color: var(--text-primary);
+}
+
+.bot strong, .bot b {
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.bot em, .bot i {
+    font-style: italic;
+    color: var(--text-secondary);
+}
+
+/* Tables */
+.bot table {
+    display: table !important;
+    width: 100%;
+    border-collapse: collapse;
+    margin: 15px 0;
+    font-size: 14px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    box-shadow: 0 1px 4px var(--shadow-light);
+    border: 1px solid var(--border-light);
+}
+
+.bot th,
+.bot td {
+    border: 1px solid var(--border-light);
+    padding: 12px 14px;
+    text-align: left;
+}
+
+.bot th {
+    background: var(--fns-blue);
+    color: var(--text-light);
+    font-weight: 600;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.bot td {
+    color: var(--text-primary);
+}
+
+.bot tr:nth-child(even) {
+    background: var(--bg-chat);
+}
+
+.bot tr:hover {
+    background: var(--bg-tertiary);
+    transition: background var(--transition-fast);
+}
+
+/* Умный контейнер для графиков */
+.chart-container {
+    width: 100% !important;
+    margin: 20px 0;
+    background: #ffffff !important; /* Всегда белый фон для контраста */
+    border-radius: 16px;
+    padding: 20px;
+    box-sizing: border-box;
+    min-height: 400px; /* Оптимальная высота */
+    border: 1px solid var(--fns-border);
+    box-shadow: 0 4px 12px rgba(0, 51, 102, 0.05);
+    display: block;
+}
+
+/* Фикс для круговых диаграмм */
+.chart-container.pie-chart {
+    min-height: 400px; /* Выравниваем с остальными */
+}
+
+/* Смерть багам с размерами канваса */
+.chart-container canvas {
+    border-radius: 0 !important; /* Убираем лишние скругления внутри */
+}
+
+/* Loading Indicator - Enhanced with Glassmorphism */
+.loader-wrapper {
+    align-self: flex-start;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 14px 20px;
+    border-radius: var(--radius-lg);
+    border-bottom-left-radius: 4px;
+    border: 1px solid var(--glass-border);
+    border-left: 4px solid var(--accent-cyan);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    animation: loaderBreathe 2s ease-in-out infinite;
+    box-shadow: var(--glass-shadow), 0 0 20px var(--accent-cyan-light);
+}
+
+@keyframes fadeIn {
+    from { 
+        opacity: 0; 
+        transform: translateY(5px); 
+    }
+    to { 
+        opacity: 1; 
+        transform: translateY(0); 
+    }
+}
+
+/* Pulse Dots Animation */
+.pulse-dots {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.pulse-dots .dot {
+    width: 8px;
+    height: 8px;
+    background: var(--gold);
+    border-radius: 50%;
+    animation: pulseDot 1.2s ease-in-out infinite;
+}
+
+.pulse-dots .dot:nth-child(1) { animation-delay: 0s; }
+.pulse-dots .dot:nth-child(2) { animation-delay: 0.2s; }
+.pulse-dots .dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes pulseDot {
+    0%, 80%, 100% { 
+        transform: scale(0.6); 
+        opacity: 0.4;
+    }
+    40% { 
+        transform: scale(1.1); 
+        opacity: 1;
+    }
+}
+
+/* Loader Text */
+.loader-text {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    letter-spacing: 0.3px;
+}
+
+#input-area { 
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 10px 14px; 
+    border-radius: 30px; 
+    display: flex; 
+    align-items: center;
+    gap: 12px; 
+    border: 1px solid var(--glass-border);
+    margin-top: 20px;
+    box-shadow: var(--glass-shadow), 0 4px 20px rgba(0, 51, 102, 0.1);
+    transition: all var(--transition-normal);
+}
+
+#input-area:focus-within {
+    box-shadow: var(--glass-shadow), 0 4px 20px rgba(0, 51, 102, 0.15), 0 0 0 2px var(--accent-cyan-light);
+    border-color: var(--accent-cyan);
+}
+
+input { 
+    flex: 1; 
+    background: #ffffff !important; /* Такой же цвет как у родителя */
+    border: none !important; 
+    outline: none !important; 
+    box-shadow: none !important; /* Убираем любые тени самого инпута */
+    color: var(--fns-text); 
+    font-size: 16px; 
+    padding: 10px;
+}
+
+/* Финальный удар по фокусу браузера */
+input:focus {
+    background: #ffffff !important;
+    outline: none !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* Send Button - Premium Gradient */
+button {
+    background: linear-gradient(135deg, var(--fns-blue) 0%, var(--deep-navy) 100%);
+    color: var(--text-light);
+    border: none;
+    padding: 12px 24px;
+    border-radius: var(--radius-md);
+    font-weight: 600;
+    font-size: 15px;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 48px;
+    font-family: var(--font-family);
+    box-shadow: 0 2px 8px rgba(0, 80, 158, 0.3);
+}
+
+button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(0, 80, 158, 0.4);
+    background: linear-gradient(135deg, var(--blue-hover) 0%, var(--fns-blue) 100%);
+}
+
+button:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Images in Bot Messages */
+.bot img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 15px 0;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-light);
+    box-shadow: 0 2px 8px var(--shadow-light);
+}
+
+/* Blockquotes */
+.bot blockquote {
+    border-left: 3px solid var(--gold);
+    margin: 12px 0;
+    padding: 10px 16px;
+    background: var(--bg-chat);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    color: var(--text-secondary);
+}
+
+/* Horizontal Rule */
+.bot hr {
+    border: none;
+    height: 1px;
+    background: var(--border-light);
+    margin: 16px 0;
+}
+
+/* Signature */
+.bot .signature {
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-light);
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: right;
+    font-style: italic;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    #container {
+        padding: var(--spacing-md);
+        padding-bottom: 0;
+        height: 100vh;
     }
     
-    #chat { 
-        flex: 1; 
-        overflow-y: auto; 
-        padding: 20px; 
-        display: flex; 
-        flex-direction: column; 
-        align-items: flex-start;
-        gap: 20px; 
-        scroll-behavior: smooth;
-        min-height: 0;
-    }
-    #chat::-webkit-scrollbar { width: 8px; }
-    #chat::-webkit-scrollbar-track { background: var(--bg); }
-    #chat::-webkit-scrollbar-thumb { background: #45475a; border-radius: 10px; }
-    #chat::-webkit-scrollbar-thumb:hover { background: var(--accent); }
-    
-    .msg { 
-        padding: 14px 18px; 
-        border-radius: 18px; 
-        font-size: 15px; 
-        line-height: 1.6; 
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1); 
-        overflow-wrap: break-word; 
-        word-wrap: break-word;
-        word-break: break-word;
-        hyphens: auto;
-        box-sizing: border-box;
+    header {
+        padding: var(--spacing-md);
+        margin-bottom: var(--spacing-sm);
     }
     
-    .user { 
-        background: var(--user-msg); 
-        align-self: flex-end; 
-        border-bottom-right-radius: 4px; 
-        border: 1px solid #585b70;
-        max-width: 85%;
+    header h2 {
+        font-size: 1.15rem;
+    }
+    
+    .msg {
+        max-width: 90%;
+        padding: 14px 16px;
+        font-size: 14px;
     }
     
     .bot {
-        background: var(--bot-msg);
-        align-self: flex-start;
-        border-bottom-left-radius: 4px;
-        border-left: 3px solid var(--accent);
         max-width: 100%;
-        width: 100%;
-        box-sizing: border-box;
     }
-
-    .bot a { 
-        color: #0ad0bd !important; 
-        font-weight: bold; 
+    
+    #input-area {
+        padding: var(--spacing-sm);
+        border-radius: var(--radius-lg);
     }
-
-    /* ИСПРАВЛЕНИЕ ДЛЯ ТАБЛИЦ: pre и code не ломаем, а нормально показываем */
-    .bot pre {
-        background: transparent !important;
-        padding: 0 !important;
-        margin: 0 !important;
-        border: none !important;
-        overflow-x: auto !important;
-        white-space: normal !important;
-    }
-
-    .bot code {
-        background: transparent !important;
-        padding: 0 !important;
-        font-family: inherit !important;
-        font-size: inherit !important;
-        color: inherit !important;
-        border: none !important;
-    }
-
-    .bot pre code {
-        display: block !important;
-        background: transparent !important;
-        padding: 0 !important;
-        font-family: inherit !important;
-        font-size: inherit !important;
-        white-space: normal !important;
-        overflow-x: auto !important;
-    }
-
-    /* Стили для заголовков, списков */
-    .bot h1, .bot h2, .bot h3, .bot h4 {
-        margin: 16px 0 8px 0;
-        font-weight: 600;
-    }
-
-    .bot p {
-        margin: 0 0 12px 0;
-        line-height: 1.6;
-    }
-
-    .bot ul, .bot ol {
-        margin: 8px 0 12px 0;
-        padding-left: 24px;
-    }
-
-    .bot li {
-        margin: 4px 0;
-        line-height: 1.5;
-    }
-
-    .bot strong, .bot b {
-        font-weight: 700;
-    }
-
-    /* СТИЛИ ДЛЯ ТАБЛИЦ - РАБОТАЮТ! */
-    .bot table {
-        display: table !important;
-        width: 100%;
-        border-collapse: collapse;
-        margin: 15px 0;
+    
+    input {
         font-size: 14px;
-        background: #1e1e2e;
-        border-radius: 12px;
-        overflow: hidden;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    }
-
-    .bot th,
-    .bot td {
-        border: 1px solid #45475a;
         padding: 10px 12px;
-        text-align: left;
-    }
-
-    .bot th {
-        background: #313244;
-        color: #f38ba8;
-        font-weight: 600;
-    }
-
-    .bot td {
-        color: #cdd6f4;
-    }
-
-    .bot tr:hover {
-        background: #313244;
-        transition: background 0.2s ease;
     }
     
-    .chart-container { 
-        width: 100%;
-        margin-top: 15px;
-        background: #181825;
-        border-radius: 12px;
-        padding: 10px;
-        box-sizing: border-box;
-        overflow-x: auto;
-        overflow-y: visible;
-        min-height: 450px;
-    }
-
-    .chart-container.pie-chart {
-        min-height: 550px;
-    }
-
-    .chart-container canvas {
-        width: 100% !important;
-        height: auto !important;
-    }
-    
-    /* Лоадер контейнер */
-    .loader-wrapper {
-        align-self: flex-start;
-        background: var(--bot-msg);
-        padding: 16px 24px;
-        border-radius: 18px;
-        border-bottom-left-radius: 4px;
-        border-left: 3px solid var(--accent);
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        animation: fadeIn 0.3s ease;
-    }
-
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(5px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-
-    .pulse-dots {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-    }
-
-    .pulse-dots .dot {
-        width: 10px;
-        height: 10px;
-        background: var(--accent);
-        border-radius: 50%;
-        animation: pulseDot 1.2s ease-in-out infinite;
-    }
-
-    .pulse-dots .dot:nth-child(1) { animation-delay: 0s; }
-    .pulse-dots .dot:nth-child(2) { animation-delay: 0.2s; }
-    .pulse-dots .dot:nth-child(3) { animation-delay: 0.4s; }
-
-    @keyframes pulseDot {
-        0%, 80%, 100% { 
-            transform: scale(0.6); 
-            opacity: 0.3;
-        }
-        40% { 
-            transform: scale(1.2); 
-            opacity: 1;
-        }
-    }
-
-    .loader-text {
+    button {
+        padding: 10px 18px;
         font-size: 14px;
-        font-weight: 400 !important;
-        background: linear-gradient(
-            90deg,
-            #b0b0b0 0%,
-            #e8e8e8 20%,
-            #ffffff 40%,
-            #c0c0c0 60%,
-            #e0e0e0 80%,
-            #a8a8a8 100%
-        );
-        background-size: 200% auto;
-        -webkit-background-clip: text;
-        background-clip: text;
-        -webkit-text-fill-color: transparent;
-        animation: metalShine 1.8s linear infinite;
-        letter-spacing: 1px;
-        font-weight: 600;
-    }
-
-    @keyframes metalShine {
-        0% {
-            background-position: 0% center;
-        }
-        100% {
-            background-position: 200% center;
-        }
     }
     
-    #input-area { 
-        background: var(--panel); 
-        padding: 15px; 
-        border-radius: 15px; 
-        display: flex; 
-        gap: 10px; 
-        border: 1px solid #45475a; 
-        margin-top: 10px;
-        margin-bottom: 10px;
-        flex-shrink: 0;
+     .chart-container {
+        min-height: 300px;
+        padding: 10px;
     }
-
-    input { flex: 1; background: transparent; border: none; color: white; outline: none; font-size: 16px; }
-    input:disabled { opacity: 0.5; cursor: not-allowed; }
-    button { background: var(--accent); color: #11111b; border: none; padding: 10px 22px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; }
-    button:hover:not(:disabled) { transform: scale(1.05); background: #fab387; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-
-    /* Фикс для картинок */
-    .bot img {
-        max-width: 100%;
-        height: auto;
-        display: block;
-        margin: 15px 0;
-        border-radius: 12px;
-        border: 1px solid #45475a;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    .chart-container.pie-chart {
+        min-height: 350px;
     }
+}
 
-    .bot a img {
-        border-color: var(--accent);
+@media (max-width: 480px) {
+    #container {
+        padding: var(--spacing-sm);
+        padding-bottom: 0;
+        height: 100vh;
     }
-   
+    
+    header {
+        padding: var(--spacing-sm) var(--spacing-md);
+        margin-bottom: var(--spacing-sm);
+        border-radius: var(--radius-md);
+    }
+    
+    header h2 {
+        font-size: 1rem;
+    }
+    
+    #chat {
+        padding: var(--spacing-sm);
+        gap: var(--spacing-sm);
+    }
+    
+    .msg {
+        padding: 12px 14px;
+        font-size: 13px;
+        border-radius: var(--radius-md);
+    }
+    
+    .loader-wrapper {
+        padding: 12px 16px;
+    }
+    
+    .loader-text {
+        font-size: 13px;
+    }
+}
+
+/* Focus visible for accessibility */
+*:focus-visible {
+    outline: 2px solid var(--fns-blue);
+    outline-offset: 2px;
+}
+
+/* Selection color */
+::selection {
+    background: rgba(0, 80, 158, 0.15);
+    color: var(--text-primary);
+}
+
+input:focus {
+    outline: none !important; /* Убирает тот самый дефолтный бордер */
+    border: none !important;  /* На всякий случай, если Cline добавил свой */
+    box-shadow: 0 4px 15px rgba(0, 51, 102, 0.15); /* Вместо бордера даем мягкую тень, чтобы юзер видел фокус */
+    
+}
+
+/* ============================================
+   WOW ANIMATIONS & MODERN EFFECTS
+   ============================================ */
+
+/* Animated Background with Gradient Waves */
+body::before {
+    content: '';
+    position: fixed;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: 
+        radial-gradient(ellipse at 20% 50%, var(--accent-cyan-light) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, var(--accent-purple-light) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 80%, var(--gold-light) 0%, transparent 50%);
+    animation: gradientWave 20s ease-in-out infinite;
+    z-index: -1;
+    pointer-events: none;
+}
+
+@keyframes gradientWave {
+    0%, 100% {
+        transform: translate(0, 0) rotate(0deg);
+    }
+    25% {
+        transform: translate(2%, -2%) rotate(1deg);
+    }
+    50% {
+        transform: translate(-1%, 1%) rotate(-1deg);
+    }
+    75% {
+        transform: translate(-2%, -1%) rotate(0.5deg);
+    }
+}
+
+/* Enhanced Header with Glassmorphism */
+header {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow), 0 2px 8px var(--shadow-light);
+    position: relative;
+    overflow: hidden;
+}
+
+header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--fns-blue), var(--accent-cyan), var(--gold), var(--accent-cyan), var(--fns-blue));
+    background-size: 200% 100%;
+    animation: shimmerLine 3s linear infinite;
+}
+
+@keyframes shimmerLine {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Enhanced Message Animations */
+.msg {
+    animation: messageSlideIn 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    position: relative;
+    /* overflow: hidden убран для корректного отображения контента */
+}
+
+/* Subtle shine effect on messages - only for user messages */
+.user::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: var(--radius-lg);
+    background: linear-gradient(
+        135deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.05) 50%,
+        transparent 100%
+    );
+    animation: userMessageShine 8s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.user > * {
+    position: relative;
+    z-index: 1;
+}
+
+@keyframes userMessageShine {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 0.7; }
+}
+
+@keyframes messageShine {
+    0%, 100% { transform: translateX(-100%) rotate(30deg); }
+    50% { transform: translateX(100%) rotate(30deg); }
+}
+
+/* Enhanced Bot Message with Glow */
+.bot {
+    border-left: 4px solid var(--gold);
+    box-shadow: 0 2px 8px var(--shadow-light), 0 0 0 1px rgba(255, 215, 0, 0.05);
+    transition: box-shadow var(--transition-normal), transform var(--transition-normal);
+}
+
+.bot:hover {
+    box-shadow: 0 4px 16px var(--shadow-medium), 0 0 0 1px rgba(255, 215, 0, 0.1), var(--shadow-glow);
+    transform: translateY(-1px);
+}
+
+/* Enhanced User Message */
+.user {
+    box-shadow: 0 2px 8px var(--shadow-medium), 0 0 0 1px rgba(0, 80, 158, 0.1);
+    transition: box-shadow var(--transition-normal), transform var(--transition-normal);
+    position: relative;
+}
+
+.user:hover {
+    box-shadow: 0 4px 16px rgba(0, 80, 158, 0.3), 0 0 0 1px rgba(0, 80, 158, 0.2);
+    transform: translateY(-1px);
+}
+
+/* Enhanced Input Area with Glassmorphism */
+#input-area {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow), 0 4px 20px rgba(0, 51, 102, 0.1);
+    transition: all var(--transition-normal);
+}
+
+#input-area:focus-within {
+    box-shadow: var(--glass-shadow), 0 4px 20px rgba(0, 51, 102, 0.15), 0 0 0 2px var(--accent-cyan-light);
+    border-color: var(--accent-cyan);
+}
+
+/* Enhanced Button with Ripple Effect */
+button {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, var(--fns-blue) 0%, var(--deep-navy) 100%);
+    box-shadow: 0 2px 8px rgba(0, 80, 158, 0.3), 0 0 0 1px rgba(0, 80, 158, 0.1);
+    transition: all var(--transition-normal);
+}
+
+button::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s ease, height 0.6s ease;
+}
+
+button:active::before {
+    width: 300px;
+    height: 300px;
+}
+
+button:hover:not(:disabled) {
+    box-shadow: 0 4px 16px rgba(0, 80, 158, 0.4), 0 0 0 1px rgba(0, 80, 158, 0.2), var(--shadow-glow);
+    background: linear-gradient(135deg, var(--blue-hover) 0%, var(--fns-blue) 100%);
+}
+
+
+@keyframes loaderBreathe {
+    0%, 100% { 
+        box-shadow: 0 2px 8px var(--shadow-light), 0 0 20px var(--accent-cyan-light);
+    }
+    50% { 
+        box-shadow: 0 2px 8px var(--shadow-light), 0 0 30px var(--accent-cyan-light), 0 0 40px var(--accent-purple-light);
+    }
+}
+
+/* Enhanced Pulse Dots */
+.pulse-dots .dot {
+    background: var(--accent-cyan);
+    box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* Typing Indicator Enhancement */
+.loader-text {
+    background: linear-gradient(90deg, var(--text-secondary), var(--fns-blue), var(--text-secondary));
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: textShimmer 3s linear infinite;
+}
+
+@keyframes textShimmer {
+    0% { background-position: 0% center; }
+    100% { background-position: 200% center; }
+}
+
+/* Chart Container Enhancement */
+.chart-container {
+    box-shadow: 0 4px 12px rgba(0, 51, 102, 0.05), 0 0 0 1px rgba(0, 212, 255, 0.05);
+    transition: box-shadow var(--transition-normal);
+    animation: chartFadeIn 0.5s ease forwards;
+}
+
+.chart-container:hover {
+    box-shadow: 0 8px 24px rgba(0, 51, 102, 0.1), 0 0 0 1px rgba(0, 212, 255, 0.1);
+}
+
+@keyframes chartFadeIn {
+    from { 
+        opacity: 0; 
+        transform: scale(0.95) translateY(10px);
+    }
+    to { 
+        opacity: 1; 
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* Table Enhancement */
+.bot table {
+    box-shadow: 0 1px 4px var(--shadow-light), 0 0 0 1px rgba(0, 80, 158, 0.05);
+    transition: box-shadow var(--transition-fast);
+}
+
+.bot table:hover {
+    box-shadow: 0 4px 12px var(--shadow-medium), 0 0 0 1px rgba(0, 80, 158, 0.1);
+}
+
+/* Code Block Enhancement */
+.bot pre {
+    box-shadow: inset 0 2px 4px rgba(0, 51, 102, 0.05);
+    border: 1px solid var(--border-light);
+}
+
+/* Link Hover Enhancement */
+.bot a {
+    position: relative;
+    transition: all var(--transition-fast);
+}
+
+.bot a::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    width: 0;
+    height: 1px;
+    background: var(--fns-blue);
+    transition: width var(--transition-normal);
+}
+
+.bot a:hover::after {
+    width: 100%;
+}
+
+/* Scrollbar Enhancement */
+#chat::-webkit-scrollbar-track {
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+}
+
+#chat::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--fns-blue), var(--deep-navy));
+    border-radius: 3px;
+}
+
+/* Floating Animation for Special Elements */
+@keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+}
+
+/* Signature Enhancement */
+.bot .signature {
+    background: linear-gradient(90deg, transparent, var(--accent-cyan-light), transparent);
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    animation: signatureGlow 4s ease-in-out infinite;
+}
+
+@keyframes signatureGlow {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+}
+
+/* Responsive Adjustments for WOW Effects */
+@media (max-width: 768px) {
+    body::before {
+        animation-duration: 30s;
+    }
+    
+    .msg {
+        animation-duration: 0.3s;
+    }
+    
+    .user::after {
+        animation-duration: 8s;
+    }
+}
+
+/* Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
