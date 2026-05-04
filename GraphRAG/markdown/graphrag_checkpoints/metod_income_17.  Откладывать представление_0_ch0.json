@@ -1,0 +1,15 @@
+{
+  "entities": [
+    {
+      "name": "metod_income",
+      "description": "источник"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "metod_income",
+      "relation": "содержит информацию",
+      "target": "Сведения"
+    }
+  ]
+}

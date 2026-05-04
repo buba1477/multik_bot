@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "name": "статья",
+      "description": "19"
+    },
+    {
+      "name": "закон",
+      "description": "79-FZ_markdown"
+    },
+    {
+      "name": "тема",
+      "description": "Урегулирование конфликта интересов на гражданской службе"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "статья",
+      "relation": "описана в",
+      "target": "закон"
+    },
+    {
+      "source": "закон",
+      "relation": "регулирует",
+      "target": "тема"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "name": "metod_income",
+      "description": "источник"
+    },
+    {
+      "name": "Земельные участки",
+      "description": "категория имущества"
+    },
+    {
+      "name": "Иное недвижимое имущество",
+      "description": "категория имущества"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "metod_income",
+      "relation": "содержит информацию о",
+      "target": "Земельные участки"
+    },
+    {
+      "source": "metod_income",
+      "relation": "содержит информацию о",
+      "target": "Иное недвижимое имущество"
+    }
+  ]
+}

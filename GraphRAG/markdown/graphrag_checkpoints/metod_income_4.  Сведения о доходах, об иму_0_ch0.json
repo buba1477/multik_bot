@@ -1,0 +1,15 @@
+{
+  "entities": [
+    {
+      "name": "metod_income",
+      "description": "источник сведений"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "metod_income",
+      "relation": "содержит сведения",
+      "target": "о доходах, об имуществе и обязательствах имущественного характера"
+    }
+  ]
+}

@@ -124,27 +124,28 @@ body {
 /* Header */
 header {
     text-align: center;
-    padding: var(--spacing-md) var(--spacing-lg);
-    margin-bottom: var(--spacing-md);
+    padding: 20px var(--spacing-xl);
+    margin-bottom: var(--spacing-lg);
     flex-shrink: 0;
     background: var(--glass-bg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-radius: var(--radius-lg);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border-radius: 30px;
     border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow), 0 2px 8px var(--shadow-light);
-    border-bottom: 3px solid var(--gold);
+    box-shadow: var(--glass-shadow), 0 4px 20px rgba(0, 51, 102, 0.1);
+    border-bottom: 3px solid var(--fns-blue);
     position: relative;
     overflow: hidden;
+    transition: all var(--transition-normal);
 }
 
 header h2 {
     margin: 0;
     font-weight: 700;
-    font-size: 1.35rem;
+    font-size: 1.5rem;
     color: var(--text-header);
     letter-spacing: -0.02em;
-    line-height: 1.3;
+    line-height: 1.4;
 }
 
 header h2 .accent {
@@ -466,7 +467,7 @@ header h2 .subtext {
 /* Loader Text */
 .loader-text {
     font-size: 14px;
-    font-weight: 500;
+    font-weight: 700;
     color: var(--text-secondary);
     letter-spacing: 0.3px;
 }
@@ -552,9 +553,15 @@ button:disabled {
     height: auto;
     display: block;
     margin: 15px 0;
-    border-radius: var(--radius-sm);
+    border-radius: 16px;
     border: 1px solid var(--border-light);
-    box-shadow: 0 2px 8px var(--shadow-light);
+    box-shadow: 0 4px 16px var(--shadow-light);
+    transition: all var(--transition-normal);
+}
+
+.bot img:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px var(--shadow-medium);
 }
 
 /* Blockquotes */
@@ -729,15 +736,17 @@ body::before {
     }
 }
 
-/* Enhanced Header with Glassmorphism */
+/* Enhanced Header with Glassmorphism - Default Blue */
 header {
     background: var(--glass-bg);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--glass-border);
     box-shadow: var(--glass-shadow), 0 2px 8px var(--shadow-light);
+    border-bottom: 3px solid var(--fns-blue);
     position: relative;
     overflow: hidden;
+    transition: border-bottom-color var(--transition-normal), box-shadow var(--transition-normal);
 }
 
 header::before {
@@ -747,14 +756,25 @@ header::before {
     left: 0;
     right: 0;
     height: 3px;
-    background: linear-gradient(90deg, var(--fns-blue), var(--accent-cyan), var(--gold), var(--accent-cyan), var(--fns-blue));
-    background-size: 200% 100%;
-    animation: shimmerLine 3s linear infinite;
+    background: var(--fns-blue);
+    transition: background var(--transition-slow);
 }
 
-@keyframes shimmerLine {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+/* Header animation during search - multicolor shimmer */
+header.searching {
+    border-bottom-color: var(--accent-cyan);
+    box-shadow: var(--glass-shadow), 0 2px 8px var(--shadow-light), 0 0 30px var(--accent-cyan-light), 0 0 60px var(--accent-purple-light);
+}
+
+header.searching::before {
+    background: linear-gradient(90deg, var(--fns-blue), var(--accent-cyan), var(--gold), var(--accent-purple), var(--fns-blue));
+    background-size: 300% 100%;
+    animation: shimmerLineSearch 2s linear infinite;
+}
+
+@keyframes shimmerLineSearch {
+    0% { background-position: 0% 0; }
+    100% { background-position: 300% 0; }
 }
 
 /* Enhanced Message Animations */
@@ -880,25 +900,57 @@ button:hover:not(:disabled) {
     }
 }
 
-/* Enhanced Pulse Dots */
+/* ✨ Pulse Dots в едином стиле с текстом */
 .pulse-dots .dot {
-    background: var(--accent-cyan);
-    box-shadow: 0 0 8px var(--accent-glow);
+    background: linear-gradient(135deg, #00509e, #0077cc);
+    box-shadow: 
+        0 0 6px rgba(0, 119, 204, 0.4),
+        0 0 12px rgba(0, 80, 158, 0.2);
 }
 
-/* Typing Indicator Enhancement */
+/* ✨ PREMIUM METALLIC SHIMMER EFFECT FOR LOADER TEXT */
 .loader-text {
-    background: linear-gradient(90deg, var(--text-secondary), var(--fns-blue), var(--text-secondary));
-    background-size: 200% auto;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    position: relative;
+    
+    /* Основной градиент синий + металлический белый */
+    background: linear-gradient(
+        120deg,
+        #003366 0%,
+        #00509e 15%,
+        #0077cc 30%,
+        #ffffff 45%,
+        #e8f0ff 50%,
+        #ffffff 55%,
+        #0077cc 70%,
+        #00509e 85%,
+        #003366 100%
+    );
+    
+    background-size: 400% 100%;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
-    animation: textShimmer 3s linear infinite;
+    
+    animation: premiumMetallicShine 2.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) infinite;
+    
+    /* Добавляем легкое свечение */
+    filter: drop-shadow(0 0 8px rgba(0, 119, 204, 0.3));
 }
 
-@keyframes textShimmer {
-    0% { background-position: 0% center; }
-    100% { background-position: 200% center; }
+@keyframes premiumMetallicShine {
+    0% {
+        background-position: 100% 50%;
+        filter: drop-shadow(0 0 4px rgba(0, 119, 204, 0.15));
+    }
+    40% {
+        filter: drop-shadow(0 0 12px rgba(0, 119, 204, 0.5));
+    }
+    100% {
+        background-position: 0% 50%;
+        filter: drop-shadow(0 0 4px rgba(0, 119, 204, 0.15));
+    }
 }
 
 /* Chart Container Enhancement */

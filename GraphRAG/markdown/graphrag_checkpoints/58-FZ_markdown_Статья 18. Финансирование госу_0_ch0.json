@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "name": "58-FZ_markdown",
+      "description": "ИСТОЧНИК"
+    },
+    {
+      "name": "Статья 18",
+      "description": "Финансирование государственной службы и программы ее реформирования и развития"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "58-FZ_markdown",
+      "relation": "ИСТОЧНИК",
+      "target": "Статья 18"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "entities": [
+    {
+      "name": "metod_income",
+      "description": "источник"
+    },
+    {
+      "name": "регистрационные данные",
+      "description": "тип данных"
+    },
+    {
+      "name": "собственник",
+      "description": "участник сделки"
+    },
+    {
+      "name": "сделки",
+      "description": "действия, направленные на отчуждение"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "metod_income",
+      "relation": "ИСТОЧНИК",
+      "target": "130"
+    },
+    {
+      "source": "регистрационные данные",
+      "relation": "относятся к",
+      "target": "собственнику"
+    },
+    {
+      "source": "сделки",
+      "relation": "направлены на",
+      "target": "отчуждение"
+    }
+  ]
+}

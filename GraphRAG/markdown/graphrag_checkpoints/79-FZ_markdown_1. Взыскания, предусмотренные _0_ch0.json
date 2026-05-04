@@ -1,0 +1,15 @@
+{
+  "entities": [
+    {
+      "name": "79-FZ_markdown",
+      "description": "источник"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит",
+      "target": "статьи 591 и 592 настоящего Федерального закона"
+    }
+  ]
+}

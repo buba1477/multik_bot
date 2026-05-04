@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "name": "статья",
+      "description": "58"
+    },
+    {
+      "name": "закон",
+      "description": "79-FZ_markdown"
+    },
+    {
+      "name": "порядок",
+      "description": "применения и снятия дисциплинарного взыскания"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "статья 58",
+      "relation": "описывает",
+      "target": "порядок применения и снятия дисциплинарного взыскания"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит",
+      "target": "статья 58"
+    }
+  ]
+}

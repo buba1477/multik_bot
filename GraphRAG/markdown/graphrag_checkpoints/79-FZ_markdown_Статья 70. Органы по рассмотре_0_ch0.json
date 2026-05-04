@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "name": "статья 70",
+      "description": "Органы по рассмотрению индивидуальных служебных споров"
+    },
+    {
+      "name": "79-FZ_markdown",
+      "description": "источник"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "79-FZ_markdown",
+      "relation": "ИСТОЧНИК",
+      "target": "статья 70"
+    }
+  ]
+}

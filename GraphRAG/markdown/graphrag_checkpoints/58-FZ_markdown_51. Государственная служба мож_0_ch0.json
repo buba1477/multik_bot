@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "name": "58-FZ_markdown",
+      "description": "источник документа"
+    },
+    {
+      "name": "51",
+      "description": "номер статьи или раздела"
+    },
+    {
+      "name": "Государственная служба",
+      "description": "объект, о котором идёт речь в тексте"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "58-FZ_markdown",
+      "relation": "содержит информацию",
+      "target": "51"
+    },
+    {
+      "source": "51",
+      "relation": "регулирует",
+      "target": "Государственная служба"
+    }
+  ]
+}

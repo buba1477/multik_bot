@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "name": "metod_income",
+      "description": "источник документа"
+    },
+    {
+      "name": "справка",
+      "description": "форма документа"
+    },
+    {
+      "name": "товары, услуги",
+      "description": "элементы, не указанные в форме справки"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "metod_income",
+      "relation": "содержит информацию о",
+      "target": "справка"
+    },
+    {
+      "source": "справка",
+      "relation": "не предусматривает указание",
+      "target": "товары, услуги"
+    }
+  ]
+}

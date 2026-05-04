@@ -1,0 +1,9 @@
+{
+  "entities": [
+    {
+      "name": "Год, число и месяц рождения",
+      "description": "дата рождения"
+    }
+  ],
+  "relationships": []
+}

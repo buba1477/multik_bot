@@ -1,0 +1,276 @@
+{
+  "entities": [
+    {
+      "name": "231-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "295-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "327-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "57-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "99-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "102-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "116-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "149-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "170-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "185-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "284-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "317-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "396-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "53-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "431-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "509-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "510-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "147-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "262-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "285-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "395-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "418-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "143-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "176-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "224-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "276-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "505-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "64-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "132-ФЗ",
+      "description": "федеральный закон"
+    },
+    {
+      "name": "133-ФЗ",
+      "description": "федеральный закон"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "231-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "295-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "327-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "57-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "99-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "102-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "116-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "149-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "170-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "185-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "284-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "317-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "396-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "53-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "431-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "509-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "510-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "147-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "262-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "285-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "395-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "418-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "143-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "176-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "224-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "276-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "505-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "64-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "132-ФЗ"
+    },
+    {
+      "source": "79-FZ_markdown",
+      "relation": "содержит ссылки на законы",
+      "target": "133-ФЗ"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "name": "79-FZ_markdown",
+      "description": "Источник документа"
+    },
+    {
+      "name": "конкурсная комиссия",
+      "description": "Группа лиц, формируемая для проведения конкурса"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "79-FZ_markdown",
+      "relation": "описывает",
+      "target": "состав конкурсной комиссии"
+    }
+  ]
+}

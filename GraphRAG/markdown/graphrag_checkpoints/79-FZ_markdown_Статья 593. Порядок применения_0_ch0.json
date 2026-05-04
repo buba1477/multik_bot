@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "name": "79-FZ_markdown",
+      "description": "ИСТОЧНИК"
+    },
+    {
+      "name": "Статья 593",
+      "description": "Порядок применения взысканий за коррупционные правонарушения"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "79-FZ_markdown",
+      "relation": "ИСТОЧНИК содержит",
+      "target": "Статья 593"
+    }
+  ]
+}
