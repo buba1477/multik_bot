@@ -2,31 +2,89 @@
 .env
 .bash_history
 .nv/
+*.key
+*.pem
+*.crt
 
 # === ПАЙТОНОВСКИЙ МУСОР ===
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 venv/
+.venv/
+env/
+.env/
 .ipynb_checkpoints/
 *.log
 bot.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# === РЕДАКТОРЫ И ИДЕ ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
 
 # === ТЯЖЕЛЫЙ ВЕС (МОДЕЛИ И ИНДЕКСЫ) ===
-# Мы не пушим гигабайты, мы пушим код, который их создаст
 hf_cache/
 fns_rag_index/
+fns_rag_graph_final/
+fns_rag_graph_final_old_stab/
+fns_rag_graph_final_new/
+fns_rag_graph_final_new_e5/
+fns_rag_graph_final_new_sber/
+fns_rag_graph_final_sber/
 images_cache/
 .ollama/
 llama.cpp/
+reranker/
+fns_docs/
 
-# === ТРЕНИРОВКА И АДАПТЕРЫ (ЖИР) ===
-# Оставляем код обучения train_unsloth.py, но прячем результаты
+# === ВЕКТОРНЫЕ ИНДЕКСЫ (JSON) ===
+# Запрещаем все JSON, кроме requirements и конфигов
+*.json
+!requirements*.json
+!package*.json
+!tsconfig*.json
+!.prettierrc.json
+!launch.json
+
+# === GraphRAG и экспорты ===
+GraphRAG/fns_rag_graph_final_new/
+GraphRAG/*.json
+GraphRAG/*.jsonl
+GraphRAG/*.gexf
+communities.json
+test*.jsonl
+
+# === ТРЕНИРОВКА И АДАПТЕРЫ ===
 unsloth_compiled_cache/
 lora_fns_adapter_3b_v6/
+lora_fns_adapter_*/
 lora_model/
 checkpoint-*/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.gguf
+*.onnx
 
-# === ЛОКАЛЬНЫЕ ЧЕРНОВИКИ И МУСОР ===
+# === АРХИВЫ ===
+*.tar.gz
+*.tgz
+*.zip
+*.rar
+*.7z
+fns_index.tar.gz
+
+# === ЛОКАЛЬНЫЕ ЧЕРНОВИКИ ===
 Лишнее/
 old_bot.py
 MyModelFile
@@ -34,16 +92,48 @@ Modelfile.fixed
 Modelfile.test
 stress_test.py
 rag_fns.py
+test_*.py
+temp_*.py
+tmp_*.py
+*_backup.py
+*.bak
 
-# Скрываем системные файлы OS
+# === ТЕСТОВЫЕ ДАННЫЕ ===
+fns_100_examples.jsonl
+*.jsonl
+!test_*.jsonl
+
+# === ЛОГИ И КЭШИ ===
+*.log
+*.db
+*.sqlite
+*.sqlite3
+.cache/
+.cursor/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# === DOCKER ===
+*.pid
+docker-compose.override.yml
+.containerenv
+
+# === ОС И БИНАРНИКИ ===
 .DS_Store
 Thumbs.db
-v4.gguf
+desktop.ini
+*.exe
+*.msi
+*.dmg
+*.iso
 
-# === ТЯЖЕЛЫЙ ВЕС (МОДЕЛИ И ИНДЕКСЫ) ===
-reranker/
-fns_docs/
-fns_100_examples.jsonl
-*.safetensors
-*.bin
-*.gguf
+# === v4 специфичные ===
+v4.gguf
+v4.bin
+
+# === ФАЙЛЫ ИНДЕКСОВ (все версии) ===
+default__vector_store.json
+docstore.json
+graph_store.json
+image__vector_store.json
+index_store.json
