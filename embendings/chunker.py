@@ -87,21 +87,21 @@ def process_law_v25_atomic(input_file, output_jsonl, doc_metadata):
 
 if __name__ == "__main__":
     docs = [
-        # {
-        #     "file": "79-FZ_markdown.md", 
-        #     "out": "79fz_final.jsonl", 
-        #     "meta": {"doc_id_prefix": "79фз", "doc_display_name": "79-ФЗ", "url": "http://www.kremlin.ru/acts/bank/21210"}
-        # },
+        {
+            "file": "79-FZ.md", 
+            "out": "79fz_final.jsonl", 
+            "meta": {"doc_id_prefix": "79фз", "doc_display_name": "79-ФЗ", "url": "http://www.kremlin.ru/acts/bank/21210"}
+        },
         # {
         #     "file": "58-FZ_markdown.md", 
         #     "out": "58fz_final.jsonl", 
         #     "meta": {"doc_id_prefix": "58фз", "doc_display_name": "58-ФЗ", "url": "http://www.kremlin.ru/acts/bank/19524"}
         # },
-        {
-            "file": "1574_fixed.md", 
-            "out": "ukaz_1574_final.jsonl", 
-            "meta": {"doc_id_prefix": "указ1574", "doc_display_name": "Указ №1574", "url": "http://www.kremlin.ru/acts/bank/23342"}
-        }
+        # {
+        #     "file": "1574_fixed.md", 
+        #     "out": "ukaz_1574_final.jsonl", 
+        #     "meta": {"doc_id_prefix": "указ1574", "doc_display_name": "Указ №1574", "url": "http://www.kremlin.ru/acts/bank/23342"}
+        # }
     ]
     
     for d in docs:

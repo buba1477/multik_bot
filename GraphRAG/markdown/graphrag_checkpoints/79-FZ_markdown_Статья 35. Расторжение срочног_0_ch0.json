@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "name": "статья",
+      "description": "35"
+    },
+    {
+      "name": "закон",
+      "description": "79-FZ_markdown"
+    },
+    {
+      "name": "тип контракта",
+      "description": "срочный служебный контракт"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "статья",
+      "relation": "описывает",
+      "target": "расторжение срочного служебного контракта"
+    },
+    {
+      "source": "закон",
+      "relation": "содержит",
+      "target": "статья 35"
+    }
+  ]
+}

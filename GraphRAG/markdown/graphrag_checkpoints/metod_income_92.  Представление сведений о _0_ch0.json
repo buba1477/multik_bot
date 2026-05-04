@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "name": "metod_income",
+      "description": "источник информации"
+    },
+    {
+      "name": "пункт 89",
+      "description": "ссылка на пункт методических указаний"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "metod_income",
+      "relation": "содержит информацию о",
+      "target": "пункте 89"
+    }
+  ]
+}

@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir \
     "llama-index-llms-ollama" \
     "llama-index-postprocessor-flag-embedding-reranker" \
     "FlagEmbedding" \
+    "rank-bm25" \
+    "numpy" \
+    "nltk" \
     fastapi uvicorn
 
 COPY requirements.txt .

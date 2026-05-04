@@ -26,7 +26,7 @@ os.environ["TRANSFORMERS_OFFLINE"] = "0"
 
 # ==================== ИМПОРТЫ ДЛЯ RAG ====================
 import json
-from engine_rag import get_ai_response_full, get_ai_streaming_response
+from engine_rag_bm25_e5 import get_ai_response_full, get_ai_streaming_response
 
 
 

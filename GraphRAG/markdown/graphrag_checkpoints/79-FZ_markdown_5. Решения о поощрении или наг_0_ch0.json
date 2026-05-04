@@ -1,0 +1,15 @@
+{
+  "entities": [
+    {
+      "name": "79-FZ_markdown",
+      "description": "источник"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "5",
+      "relation": "Решения о поощрении или награждении",
+      "target": "пункты 1 - 4 части 1 настоящей статьи"
+    }
+  ]
+}

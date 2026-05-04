@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "name": "жилой дом",
+      "description": "тип недвижимости"
+    },
+    {
+      "name": "садовый дом",
+      "description": "тип недвижимости"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "metod_income",
+      "relation": "указывает на",
+      "target": "жилой или садовый дом"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "name": "Цифровая валюта",
+      "description": "Наименование цифровой валюты в соответствии с примечанием."
+    },
+    {
+      "name": "metod_income",
+      "description": "Источник информации."
+    }
+  ],
+  "relationships": [
+    {
+      "source": "metod_income",
+      "relation": "содержит информацию о",
+      "target": "Цифровая валюта"
+    }
+  ]
+}

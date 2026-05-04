@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "name": "79-FZ_markdown",
+      "description": "ИСТОЧНИК"
+    },
+    {
+      "name": "Статья 592",
+      "description": "Увольнение в связи с утратой доверия"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "79-FZ_markdown",
+      "relation": "ИСТОЧНИК",
+      "target": "Статья 592"
+    }
+  ]
+}

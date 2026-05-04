@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "name": "статья",
+      "description": "50"
+    },
+    {
+      "name": "закон",
+      "description": "79-FZ_markdown"
+    },
+    {
+      "name": "объект регулирования",
+      "description": "оплата труда гражданского служащего"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "статья",
+      "relation": "описана в",
+      "target": "закон"
+    },
+    {
+      "source": "закон",
+      "relation": "регулирует",
+      "target": "объект регулирования"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "entities": [
+    {
+      "name": "подраздел",
+      "description": "5.2"
+    },
+    {
+      "name": "раздел",
+      "description": "5"
+    },
+    {
+      "name": "справка",
+      "description": ""
+    },
+    {
+      "name": "ценные бумаги",
+      "description": "облигации, векселя"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "подраздел",
+      "relation": "указывается в",
+      "target": "справка"
+    },
+    {
+      "source": "раздел",
+      "relation": "содержит",
+      "target": "подраздел"
+    },
+    {
+      "source": "ценные бумаги",
+      "relation": "перечисляются по видам",
+      "target": "подраздел"
+    }
+  ]
+}

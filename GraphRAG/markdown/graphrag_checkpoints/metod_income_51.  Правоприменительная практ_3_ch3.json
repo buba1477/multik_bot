@@ -1,0 +1,24 @@
+{
+  "entities": [
+    {
+      "name": "metod_income",
+      "description": "источник методических рекомендаций"
+    },
+    {
+      "name": "https://www.gosuslugi.ru/",
+      "description": "портал государственных услуг Российской Федерации"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "metod_income",
+      "relation": "содержит информацию о",
+      "target": "применимых положениях настоящих Методических рекомендаций"
+    },
+    {
+      "source": "https://www.gosuslugi.ru/",
+      "relation": "указан в",
+      "target": "применимых положениях настоящих Методических рекомендаций"
+    }
+  ]
+}

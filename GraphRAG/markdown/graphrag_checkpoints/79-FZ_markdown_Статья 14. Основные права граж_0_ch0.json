@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "name": "статья",
+      "description": "14"
+    },
+    {
+      "name": "закон",
+      "description": "79-FZ_markdown"
+    },
+    {
+      "name": "права",
+      "description": "основные права гражданского служащего"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "статья",
+      "relation": "описывает",
+      "target": "права"
+    },
+    {
+      "source": "закон",
+      "relation": "содержит",
+      "target": "статья"
+    }
+  ]
+}

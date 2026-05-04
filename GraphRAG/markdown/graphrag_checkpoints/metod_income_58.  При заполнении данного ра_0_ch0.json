@@ -1,0 +1,15 @@
+{
+  "entities": [
+    {
+      "name": "metod_income",
+      "description": "источник для заполнения раздела справки"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "metod_income",
+      "relation": "используется для",
+      "target": "заполнения раздела справки"
+    }
+  ]
+}

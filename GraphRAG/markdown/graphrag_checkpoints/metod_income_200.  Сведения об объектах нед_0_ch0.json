@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {
+      "name": "metod_income",
+      "description": "источник сведений"
+    },
+    {
+      "name": "объекты недвижимого имущества",
+      "description": "имущество, находящееся в пользовании"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "metod_income",
+      "relation": "содержит сведения об",
+      "target": "объектах недвижимого имущества"
+    }
+  ]
+}

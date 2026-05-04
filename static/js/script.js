@@ -44,7 +44,7 @@ function showLoader() {
             <div class="dot"></div>
             <div class="dot"></div>
         </div>
-        <div class="loader-text">🤖 Нейроинспектор ищет по базе ФНС</div>
+        <div class="loader-text">Нейроинспектор ищет по базе ФНС</div>
     `;
     chat.appendChild(loaderDiv);
     scrollToBottom();
@@ -160,6 +160,7 @@ function tryRenderChart(text, container) {
                     ])
                 ];
 
+                
                 const baseOption = {
                     backgroundColor: 'transparent',
                     textStyle: {
@@ -368,6 +369,12 @@ async function sendMessage() {
     isGenerating = true;
     blockInput(true);
     
+    // Добавляем класс searching к header для анимации
+    const header = document.querySelector('header');
+    if (header) {
+        header.classList.add('searching');
+    }
+    
     appendMessage('user', query);
     showLoader();
     
@@ -489,6 +496,13 @@ async function sendMessage() {
     } finally {
         isGenerating = false;
         blockInput(false);
+        
+        // Убираем класс searching с header
+        const header = document.querySelector('header');
+        if (header) {
+            header.classList.remove('searching');
+        }
+        
         forceScrollToBottom(100);
     }
 }
