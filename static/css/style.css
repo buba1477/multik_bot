@@ -473,17 +473,15 @@ header h2 .subtext {
 }
 
 #input-area { 
-    background: var(--glass-bg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    background: #ffffff;
     padding: 10px 14px; 
     border-radius: 30px; 
     display: flex; 
     align-items: center;
     gap: 12px; 
-    border: 1px solid var(--glass-border);
+    border: 1px solid var(--border-color);
     margin-top: 20px;
-    box-shadow: var(--glass-shadow), 0 4px 20px rgba(0, 51, 102, 0.1);
+    box-shadow: 0 4px 20px rgba(0, 51, 102, 0.08);
     transition: all var(--transition-normal);
 }
 
@@ -494,11 +492,11 @@ header h2 .subtext {
 
 input { 
     flex: 1; 
-    background: #ffffff !important; /* Такой же цвет как у родителя */
+    background: transparent !important;
     border: none !important; 
     outline: none !important; 
     box-shadow: none !important; /* Убираем любые тени самого инпута */
-    color: var(--fns-text); 
+    color: var(--text-primary); 
     font-size: 16px; 
     padding: 10px;
 }
@@ -843,18 +841,16 @@ header.searching::before {
     transform: translateY(-1px);
 }
 
-/* Enhanced Input Area with Glassmorphism */
+/* Enhanced Input Area */
 #input-area {
-    background: var(--glass-bg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow), 0 4px 20px rgba(0, 51, 102, 0.1);
+    background: #ffffff;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 4px 20px rgba(0, 51, 102, 0.08);
     transition: all var(--transition-normal);
 }
 
 #input-area:focus-within {
-    box-shadow: var(--glass-shadow), 0 4px 20px rgba(0, 51, 102, 0.15), 0 0 0 2px var(--accent-cyan-light);
+    box-shadow: 0 4px 20px rgba(0, 51, 102, 0.15), 0 0 0 2px var(--accent-cyan-light);
     border-color: var(--accent-cyan);
 }
 

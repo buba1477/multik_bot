@@ -144,7 +144,7 @@ Settings.llm = Ollama(
         "num_ctx": 4096,
         "temperature": 0,
         "num_gpu": 33,
-        "num_predict": 1024,
+        "num_predict": 512,
         "seed": 42,
     }
 )
@@ -194,9 +194,9 @@ _EMPTY_RESPONSE_RE = re.compile(
 
 _TITLE_PREFIXES = ("Указ №", "ФЗ №", "Приказ №", "Письмо №")
 
-
 class RerankedEngine:
     def __init__(self, index: Any, qa_prompt: Any, initial_top_k: int = 30, final_top_k: int = 5):
+        # 1. Сначала базовые атрибуты
         self.retriever = index.as_retriever(similarity_top_k=initial_top_k)
         self.qa_prompt = qa_prompt
         self.final_top_k = final_top_k
@@ -205,42 +205,56 @@ class RerankedEngine:
         self.bm25 = None
         self.all_nodes = []
         self.node_map = {} 
+        self.reranker = None
         
+        # 2. Инициализация BM25 (выгружаем из Qdrant в память для гибрида)
         try:
-            logger.info("🔧 Инициализация гибридного движка...")
-            for doc_id in index.docstore.docs:
-                doc = index.docstore.docs[doc_id]
-                if hasattr(doc, 'get_content'):
-                    self.all_nodes.append(doc)
-                    self.node_map[doc.node_id] = doc
+            logger.info("🔧 Инициализация гибридного движка (Qdrant Mode)...")
             
-            logger.info(f"📚 База знаний: {len(self.all_nodes)} нод загружено")
-            
-            start_time = time.time()
-            tokenized_corpus = [self._tokenize(n.get_content()) for n in self.all_nodes]
-            self.bm25 = BM25Okapi(tokenized_corpus)
-            logger.info(f"✅ Индекс BM25 готов за {time.time() - start_time:.2f} сек")
+            # В Qdrant ноды не лежат в docstore.docs, их надо достать через vector_store
+            if hasattr(index, "vector_store") and hasattr(index.vector_store, "get_nodes"):
+                # Вытягиваем все ноды из базы в память для работы BM25
+                self.all_nodes = index.vector_store.get_nodes()
+            else:
+                # Fallback на случай, если что-то пошло не так
+                docs_dict = getattr(index.docstore, "docs", {})
+                for doc_id in docs_dict:
+                    doc = docs_dict[doc_id]
+                    if hasattr(doc, 'get_content'):
+                        self.all_nodes.append(doc)
+
+            if self.all_nodes:
+                self.node_map = {n.node_id: n for n in self.all_nodes}
+                logger.info(f"📚 База знаний: {len(self.all_nodes)} нод загружено из Qdrant")
+                
+                start_time = time.time()
+                tokenized_corpus = [self._tokenize(n.get_content()) for n in self.all_nodes]
+                self.bm25 = BM25Okapi(tokenized_corpus)
+                logger.info(f"✅ Индекс BM25 готов за {time.time() - start_time:.2f} сек")
+            else:
+                logger.warning("⚠️ База знаний пуста. Гибридный поиск невозможен.")
+                
         except Exception as e:
             logger.error(f"❌ Ошибка BM25: {e}", exc_info=True)
         
+        # 3. Реранкер (загрузка)
         try:
             reranker_path = str(Path("/app/reranker"))
-            logger.info(f"🧠 Загрузка BGE-Reranker из {reranker_path}...")
-            self.reranker = SentenceTransformerRerank(
-                model=reranker_path, 
-                top_n=self.final_top_k,
-                device="cpu"
-            )
-            logger.info("✅ Реранкер готов (CPU)")
+            if Path(reranker_path).exists():
+                logger.info(f"🧠 Загрузка BGE-Reranker из {reranker_path}...")
+                from llama_index.postprocessor.sentencetransformers_rerank import SentenceTransformerRerank
+                self.reranker = SentenceTransformerRerank(
+                    model=reranker_path, 
+                    top_n=self.final_top_k,
+                    device="cpu"
+                )
+                logger.info("✅ Реранкер готов (CPU)")
+            else:
+                self.reranker = None
+                logger.warning("⚠️ Реранкер не найден по пути /app/reranker")
         except Exception as e:
             logger.error(f"⚠️ Реранкер OFF: {e}")
             self.reranker = None
-
-        self.synthesizer = get_response_synthesizer(
-            text_qa_template=self.qa_prompt,
-            streaming=True,
-            response_mode=ResponseMode.COMPACT
-        )
 
     def _tokenize(self, text: str) -> List[str]:
         if not text: return []
@@ -279,7 +293,7 @@ class RerankedEngine:
             if np.any(bm25_scores > 0): 
                 initial_nodes = self._reciprocal_rank_fusion(initial_nodes, bm25_scores)
         
-        # ЛОГИ ТОП-10 ПОСЛЕ ПОИСКА
+        # ЛОГИ ТОП-10
         print("\n" + "="*20 + " HYBRID TOP-10 " + "="*20)
         for i, n in enumerate(initial_nodes[:10]):
             nid = n.node.metadata.get('id', 'N/A')
@@ -305,17 +319,31 @@ class RerankedEngine:
         print("\n" + "!"*20 + " FINAL TOP-5 FOR LLM " + "!"*20)
         for i, n in enumerate(final_nodes):
             nid = n.node.metadata.get('id', 'N/A')
-            # Считаем примерное кол-во слов для оценки объема
             words = len(n.node.get_content().split())
             print(f"TOP-{i+1}: [{n.score:.4f}] ID: {nid} (~{words} слов)")
         print("!"*61 + "\n")
 
         # 4. Генерация
+        q_low = query_text.lower()
+        visual_keywords = ["граф", "диагр", "кругов", "столбчат", "гистогр", "табл", "схем", "покаж", "вывед", "рисуй", "иллюстр", "центральн", "ца фнс", " ца ", "кто такой"]
+        is_visual = any(kw in q_low for kw in visual_keywords)
+        
+        current_mode = ResponseMode.COMPACT if is_visual else ResponseMode.SIMPLE_SUMMARIZE
+        logger.info(f"🌲 Выбран режим: {current_mode}")
+
+        synthesizer = get_response_synthesizer(
+            text_qa_template=self.qa_prompt,
+            streaming=True,
+            response_mode=current_mode
+        )
+        
         final_nodes.sort(key=lambda x: x.score, reverse=True)
-        forced_query = f"{query_text}\n\nВАЖНО: ОТВЕТЬ НА РУССКОМ ЯЗЫКЕ, ИСПОЛЬЗУЯ ТОЛЬКО БАЗУ ЗНАНИЙ."
+        instruction = "ОТВЕТЬ НА РУССКОМ ЯЗЫКЕ, ИСПОЛЬЗУЯ ТОЛЬКО БАЗУ ЗНАНИЙ. "
+        latex_fix = "Пиши дроби простыми цифрами (1/4). ЗАПРЕЩЕНО использовать LaTeX и символы '$'."
+        forced_query = f"{query_text}\n\nВАЖНО: {instruction} {latex_fix}"
         
         logger.info("🚀 Отправка в Ollama...")
-        response = self.synthesizer.synthesize(forced_query, final_nodes)
+        response = synthesizer.synthesize(forced_query, final_nodes)
         
         total_time = time.time() - overall_start
         logger.info(f"🏁 [DONE] Итоговое время: {total_time:.2f} сек")
@@ -324,7 +352,7 @@ class RerankedEngine:
 
     async def aquery(self, query_text: str):
         return await asyncio.to_thread(self._sync_query, query_text)
-           
+          
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
 logger.info("🧠 Загрузка векторного индекса...")
 storage_context = StorageContext.from_defaults(persist_dir=str(PERSIST_DIR))

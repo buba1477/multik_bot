@@ -13,6 +13,7 @@ services:
       - OLLAMA_KEEP_ALIVE=-1
       - OLLAMA_FLASH_ATTENTION=1
       - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_KV_CACHE_TYPE=q8_0
     deploy:
       resources:
         reservations:
@@ -26,47 +27,18 @@ services:
       timeout: 5s
       retries: 10
 
-  # 2. ОБЩИЙ ОБРАЗ
-  # multik-app:
-  #   build: .
-  #   image: multik-core:latest
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: 1
-  #             capabilities: [gpu]
+  # 2. QDRANT (Векторная база данных) 🚀
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant_db
+    restart: always
+    ports:
+      - "6333:6333" # HTTP API
+      - "6334:6334" # gRPC (для быстрой работы)
+    volumes:
+      - ./qdrant_storage:/qdrant/storage # Тут будут лежать ноды
 
-  # 3. ТЕЛЕГРАМ БОТ
-  # bot:
-  #   image: multik-core:latest
-  #   container_name: multik_bot
-  #   restart: always
-  #   depends_on:
-  #     ollama:
-  #       condition: service_healthy
-  #   command: python main.py
-  #   env_file: [.env]
-  #   volumes:
-  #     - ./:/app
-  #     - ./hf_cache:/root/.cache/huggingface
-  #     - ./images_cache:/app/images_cache
-  #   environment:
-  #     - HF_HUB_OFFLINE=1      
-  #     - TRANSFORMERS_OFFLINE=1
-  #     - OLLAMA_HOST=http://ollama_container:11434
-  #     - HTTP_PROXY=http://WpmkYQ:vhGVky@196.19.5.79:8000
-  #     - HTTPS_PROXY=http://WpmkYQ:vhGVky@196.19.5.79:8000
-  #     - NO_PROXY=localhost,127.0.0.1,ollama_container,multik_api
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:8000"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 120s
-
-  # 4. FASTAPI
+  # 3. FASTAPI
   api:
     build: .
     image: multik-core:latest
@@ -75,17 +47,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway" 
     depends_on:
-      ollama:
-        condition: service_healthy
+      - ollama
+      - qdrant
     ports:
       - "8000:8000"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     command: uvicorn main_api:app --host 0.0.0.0 --port 8000 
     env_file: [.env]
     volumes:
@@ -97,4 +62,6 @@ services:
       - HF_HUB_OFFLINE=1      
       - TRANSFORMERS_OFFLINE=1
       - OLLAMA_HOST=http://ollama_container:11434
+      - QDRANT_HOST=qdrant # Подключаемся по имени сервиса
+      - QDRANT_PORT=6333
       - REDIS_HOST=172.17.0.1

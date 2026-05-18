@@ -1,0 +1,46 @@
+FROM python:3.11-slim
+
+# 1. Системные зависимости
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 2. Установка PyTorch CPU (Бетонная ссылка)
+RUN pip install --no-cache-dir torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+
+# 3. Установка стабильной связки библиотек
+RUN pip install --no-cache-dir \
+    "transformers>=4.44.0" \
+    "sentence-transformers>=3.1.0" \
+    "llama-index-core" \
+    "llama-index-llms-ollama" \
+    "llama-index-embeddings-huggingface" \
+    "llama-index-vector-stores-qdrant" \
+    "llama-index-postprocessor-sbert-rerank" \
+    "qdrant-client" \
+    "FlagEmbedding" \
+    "peft" \
+    "rank-bm25" \
+    "numpy" \
+    "nltk" \
+    "fastapi" \
+    "uvicorn"
+
+# 4. 🔥 КРИТИЧНО: Предзагрузка словарей NLTK
+# Сначала копируем только скрипт настройки
+COPY setup_nltk.py .
+# Запускаем его нормально
+RUN python setup_nltk.py
+
+# 5. Копируем требования (если есть доп. либы)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt || true
+
+# 6. Копируем код
+# Благодаря твоему новому .dockerignore сюда попадет только код!
+COPY . .
+
+CMD ["python", "main.py"]

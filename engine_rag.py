@@ -26,9 +26,44 @@ from llama_index.llms.ollama import Ollama
 from llama_index.core.postprocessor import SentenceTransformerRerank
 
 # Гибридный поиск и лингвистика
-from rank_bm25 import BM25Okapi
+
 from nltk.stem import SnowballStemmer
 from sentence_transformers import SentenceTransformer, models
+
+from ollama import ChatResponse
+from datetime import datetime
+import pickle
+
+from llama_index.core.schema import MetadataMode # <--- ДОБАВЬ MetadataMode
+
+
+from qdrant_client import QdrantClient # СТРОГО ТАК
+from llama_index.vector_stores.qdrant import QdrantVectorStore
+
+from llama_index.core import (
+    VectorStoreIndex, 
+    StorageContext, 
+    load_index_from_storage, 
+    Settings,
+    PromptTemplate, 
+    QueryBundle
+)
+
+from pydantic.v1 import PrivateAttr 
+# FIXME: Временный патч для исправления несовместимости Ollama SDK 0.4.x и LlamaIndex.
+# LlamaIndex пытается записать 'usage' в ChatResponse, который это запрещает.
+# Удалить, когда в llama-index-llms-ollama выйдет фикс.
+
+def patched_setitem(self, key, value):
+    try:
+        # Пытаемся записать нормально
+        object.__setattr__(self, key, value)
+    except Exception:
+        # Если Pydantic орет — просто забиваем болт на это поле
+        pass
+
+# Подменяем метод записи во всей библиотеке на лету
+ChatResponse.__setitem__ = patched_setitem
 
 
 # ========== BM25 ==========
@@ -59,35 +94,45 @@ if not MODEL_PATH.exists():
     logger.warning(f"⚠️ Папка модели не найдена: {MODEL_PATH}")
 else:
     logger.info(f"🚀 Использую RoSBERTa из {MODEL_PATH}")
+ 
+_QA_PROMPT_STR = """
+Ты — система точного поиска по законодательству РФ.
 
-# ========== ПРОМПТ ==========
-_QA_PROMPT_STR = (
-    "Ты — ведущий эксперт ФНС России. Отвечай СТРОГО на русском языке.\n"
-    "---------------------\n"
-    "БАЗА ЗНАНИЙ:\n"
-    "{context_str}\n"
-    "---------------------\n"
-    "ПРАВИЛА:\n"
-    "1. ЧИСТЫЙ ТЕКСТ: ЗАПРЕЩЕНО выводить техническую информацию (ID, ЧАНК, СОДЕРЖАНИЕ, ТЕКСТ) и служебные заголовки (Указ №1574 и т.д.). НИКОГДА не начинай ответ со слов 'ОТВЕТ', 'ИНФОРМАЦИЯ' или аналогичных. Пиши как живой эксперт.\n"
-    "2. Форматирование: заголовки через ###, списки: 1. для инструкций, • для перечислений, **жирный** для терминов и ФИО.\n"
-    "3. Тип ответа:\n"
-    "   - ИНСТРУКЦИЯ (как, инструкция, регистрация) → заголовок + список. Без таблиц и графиков.\n"
-    "   - ГРАФИК (график, диаграмма, круговая, круг, доли, столбчатая, гистограмма, динамика) → [CHART_JSON] с валидным JSON. Если в базе знаний нет числовых данных — напиши 'БАЗА_ПУСТА: Нет данных для визуализации'.\n"
-    "   - ТАБЛИЦА (таблица, топ, рейтинг) → заголовок + Markdown-таблица.\n"
-    "   - ТЕКСТ → во всех остальных случаях.\n"
-    "4. Форматы графиков (одинарные скобки {}):\n"
-    "   bar/line: [CHART_JSON]{\"title\":{\"text\":\"Название\"},\"xAxis\":{\"type\":\"category\",\"data\":[\"А\",\"Б\"]},\"yAxis\":{\"type\":\"value\"},\"series\":[{\"type\":\"bar\",\"data\":[45678,38234]}]}[/CHART_JSON]\n"
-    "   pie: [CHART_JSON]{\"title\":{\"text\":\"Название\"},\"series\":[{\"type\":\"pie\",\"data\":[{\"value\":45678,\"name\":\"Категория 1\"}]}]}[/CHART_JSON]\n"
-    "5. СТРОГОСТЬ: Используй ТОЛЬКО базу знаний. Отвечай уверенно, без 'вероятно' и 'предположительно'. Если инфы нет — 'БАЗА_ПУСТА: Информация отсутствует'.\n"
-    "6. ТЕСТЫ: Если есть варианты ответов — выбери ОДИН самый точный по базе. Не обобщай!\n"
-    "7. Если вопрос не по теме — 'БАЗА_ПУСТА: Я эксперт по вопросам ФНС'.\n"
-    "8. ТОТАЛЬНЫЙ СИНТЕЗ: Если информация по вопросу разбросана по разным чанкам, объедини в один ответ.\n"
-    "9. ССЫЛКИ: В конце ответа укажи статьи закона.\n\n"
-    "ВОПРОС: {query_str}\n\n"
-    "ОТВЕТ ЭКСПЕРТА:"
-)
+Отвечай только на основе контекста.
+
+Запрещено:
+- придумывать информацию;
+
+Если вопрос содержит:
+- график
+- диаграмма
+- круговая
+- столбчатая
+- гистограмма
+- динамика
+
+то:
+- верни ТОЛЬКО блок [CHART_JSON]...[/CHART_JSON];
+- JSON должен быть валидным;
+- внутри только JSON;
+- никаких пояснений вне блока.
+
+Пример:
+[CHART_JSON]{{"title":{{"text":"Название"}},"xAxis":{{"type":"category","data":["A","B"]}},"yAxis":{{"type":"value"}},"series":[{{"type":"bar","data":[1,2]}}]}}[/CHART_JSON]
+
+------------------------
+КОНТЕКСТ:
+{context_str}
+------------------------
+
+ВОПРОС:
+{query_str}
+
+ОТВЕТ:
+"""
 
 qa_prompt = PromptTemplate(_QA_PROMPT_STR)
+
 
 _FORCED_QUERY_SUFFIX = "\n\nВАЖНО: ОТВЕТЬ НА РУССКОМ ЯЗЫКЕ, ИСПОЛЬЗУЯ ТОЛЬКО БАЗУ ЗНАНИЙ."
 
@@ -95,27 +140,23 @@ _FORCED_QUERY_SUFFIX = "\n\nВАЖНО: ОТВЕТЬ НА РУССКОМ ЯЗЫ�
 # ========== ЭМБЕДДЕР ==========
 logger.info(f"✨ Загрузка эмбеддера RoSBERTa на CPU: {MODEL_PATH}")
 
-
 class SberRoSBERTaEmbedding(BaseEmbedding):
+    _model: Any = PrivateAttr()
+
     def __init__(self, model_path: str, device: str = "cpu", **kwargs):
         super().__init__(**kwargs)
-        # Собираем модель вручную, чтобы ЖЕСТКО задать CLS pooling
+        logger.info(f"✨ Загрузка эмбеддера RoSBERTa на {device}")
         word_embedding_model = models.Transformer(model_path)
         pooling_model = models.Pooling(
             word_embedding_model.get_word_embedding_dimension(), 
-            pooling_mode='cls' # 🔥 Вот твоя заветная строчка, теперь она тут
+            pooling_mode='cls'
         )
-        self._model = SentenceTransformer(
-            modules=[word_embedding_model, pooling_model], 
-            device=device
-        )
+        self._model = SentenceTransformer(modules=[word_embedding_model, pooling_model], device=device)
 
     def _get_query_embedding(self, query: str) -> List[float]:
-        # Твои префиксы Сбера
         return self._model.encode(f"search_query: {query}").tolist()
 
     def _get_text_embedding(self, text: str) -> List[float]:
-        # Твои префиксы Сбера
         return self._model.encode(f"search_document: {text}").tolist()
 
     async def _aget_query_embedding(self, query: str) -> List[float]:
@@ -139,15 +180,26 @@ Settings.llm = Ollama(
     model="yagpt5_fns:latest",
     base_url=OLLAMA_HOST,
     request_timeout=300.0,
-    additional_kwargs={
-        "keep_alive": "-1",
-        "num_ctx": 4096,
-        "temperature": 0,
-        "num_gpu": 33,
-        "num_predict": 1024,
+    temperature=0.0,        
+    context_window=6144,    # 🔥 Срезаем до безопасных 6К токенов для 6 ГБ VRAM
+    
+    options={
         "seed": 42,
+        "num_ctx": 6144,     # 🔥 Жестко фиксируем 6К внутри движка Ollama
+        "num_predict": 512,
+        "repeat_penalty": 1.05,
+        
+        # Спасатели памяти (Оставляем!)
+        "f16_kv": False,       
+        "flash_attn": True,    
+        # "num_thread": 4,     
+    },
+    
+    additional_kwargs={
+        "keep_alive": -1   
     }
 )
+
 
 # ========== СОТРУДНИКИ (загружаем один раз при старте) ==========
 _DEFAULT_EMPLOYEES = [
@@ -194,176 +246,786 @@ _EMPTY_RESPONSE_RE = re.compile(
 
 _TITLE_PREFIXES = ("Указ №", "ФЗ №", "Приказ №", "Письмо №")
 
-
 class RerankedEngine:
-    def __init__(self, index: Any, qa_prompt: Any, initial_top_k: int = 30, final_top_k: int = 5):
-        self.retriever = index.as_retriever(similarity_top_k=initial_top_k)
+    
+    # =========================================================
+    # CONFIG
+    # =========================================================
+
+    VECTOR_WEIGHT = 0.45
+    BM25_WEIGHT = 0.55
+
+    BM25_TOP_K = 30
+    RERANK_TOP_K = 10
+
+    ENTITY_BONUS = 0.02
+    MAX_ENTITY_BONUS = 0.08
+
+    NEGATIVE_PATTERNS = [
+        "не относится",
+        "не является",
+        "кроме",
+        "не подлежит",
+        "не подлежат",
+        "не включается",
+        "не включаются",
+        "не входит",
+        "не входят",
+        "исключением",
+        "за исключением",
+    ]
+
+    QUERY_REPLACEMENTS = {
+        "госслужащему": "гражданскому служащему",
+        "госслужащий": "гражданский служащий",
+        "госслужба": "гражданская служба",
+        "на госслужбе": "на гражданской службе",
+
+        "иноагент": "иностранный агент",
+        "инагент": "иностранный агент",
+
+        "работать": "проходить гражданскую службу",
+        "увольнение": "прекращение служебного контракта",
+
+        "начальник": "представитель нанимателя",
+        "зарплата": "денежное содержание",
+        "взятка": "коррупционное правонарушение",
+        "отпуск": "ежегодный оплачиваемый отпуск",
+        "коррупция": "коррупционное правонарушение",
+        "коррупционный": "коррупционное правонарушение",
+    }
+
+    BASE_ENTITIES = [
+        "конкурс",
+        "документы",
+        "комиссия",
+        "госслужащий",
+        "отпуск",
+        "контракт",
+        "фнс",
+        "коррупция",
+        "служебная проверка",
+    ]
+
+    # =========================================================
+    # INIT
+    # =========================================================
+
+    def __init__(
+        self,
+        index: Any,
+        qa_prompt: Any,
+        initial_top_k: int = 30,
+        final_top_k: int = 5,
+    ):
+
+        self.retriever = index.as_retriever(
+            similarity_top_k=initial_top_k
+        )
+
         self.qa_prompt = qa_prompt
         self.final_top_k = final_top_k
+
         self.stemmer = SnowballStemmer("russian")
-        
+
+        self.debug_dir = Path("debug")
+        self.debug_dir.mkdir(exist_ok=True)
+
+        self.cache_path = Path("bm25_cache.pkl")
+
         self.bm25 = None
         self.all_nodes = []
-        self.node_map = {} 
-        
-        try:
-            logger.info("🔧 Инициализация гибридного движка...")
-            for doc_id in index.docstore.docs:
-                doc = index.docstore.docs[doc_id]
-                if hasattr(doc, 'get_content'):
-                    self.all_nodes.append(doc)
-                    self.node_map[doc.node_id] = doc
-            
-            logger.info(f"📚 База знаний: {len(self.all_nodes)} нод загружено")
-            
-            start_time = time.time()
-            tokenized_corpus = [self._tokenize(n.get_content()) for n in self.all_nodes]
-            self.bm25 = BM25Okapi(tokenized_corpus)
-            logger.info(f"✅ Индекс BM25 готов за {time.time() - start_time:.2f} сек")
-        except Exception as e:
-            logger.error(f"❌ Ошибка BM25: {e}", exc_info=True)
-        
-        try:
-            reranker_path = str(Path("/app/reranker"))
-            logger.info(f"🧠 Загрузка BGE-Reranker из {reranker_path}...")
-            self.reranker = SentenceTransformerRerank(
-                model=reranker_path, 
-                top_n=self.final_top_k,
-                device="cpu"
-            )
-            logger.info("✅ Реранкер готов (CPU)")
-        except Exception as e:
-            logger.error(f"⚠️ Реранкер OFF: {e}")
-            self.reranker = None
+        self.node_map = {}
 
-        # 🔥 УДАЛИЛ self.synthesizer — теперь создаём в _sync_query динамически
+        # 🔥 КЕШ ТОКЕНОВ
+        self.node_tokens_cache = {}
 
-    def _tokenize(self, text: str) -> List[str]:
-        if not text: return []
-        clean_text = re.sub(r'[^а-яА-Яa-zA-Z0-9\s]', ' ', text.lower())
-        return [self.stemmer.stem(word) for word in clean_text.split() if len(word) > 2]
-    
-    def _reciprocal_rank_fusion(self, vector_nodes, bm25_scores, k=60):
-        scores = {}
-        for rank, node in enumerate(vector_nodes):
-            scores[node.node_id] = scores.get(node.node_id, 0) + 1.0 / (k + rank + 1)
-        
-        bm25_indices = np.argsort(bm25_scores)[::-1][:30]
-        valid_bm25_count = 0
-        for rank, idx in enumerate(bm25_indices):
-            if bm25_scores[idx] <= 0: continue
-            node_id = self.all_nodes[idx].node_id
-            scores[node_id] = scores.get(node_id, 0) + 1.0 / (k + rank + 1)
-            valid_bm25_count += 1
-        
-        sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
-        result = [NodeWithScore(node=self.node_map[nid], score=scores[nid]) for nid in sorted_ids if nid in self.node_map]
-        
-        logger.info(f"📊 RRF Hybrid: Vector({len(vector_nodes)}) + BM25({valid_bm25_count}) -> Total({len(result)})")
-        return result
-    
-    def _sync_query(self, query_text: str):
-        overall_start = time.time()
-        logger.info(f"🔎 [QUERY START]: {query_text}")
-        
-        # 1. Вектор
-        initial_nodes = self.retriever.retrieve(query_text)
-        
-        # 2. Гибрид
-        if self.bm25 is not None and initial_nodes:
-            bm25_scores = self.bm25.get_scores(self._tokenize(query_text))
-            if np.any(bm25_scores > 0): 
-                initial_nodes = self._reciprocal_rank_fusion(initial_nodes, bm25_scores)
-        
-        # ЛОГИ ТОП-10 ПОСЛЕ ПОИСКА
-        print("\n" + "="*20 + " HYBRID TOP-10 " + "="*20)
-        for i, n in enumerate(initial_nodes[:10]):
-            nid = n.node.metadata.get('id', 'N/A')
-            print(f"Rank {i+1}: [{n.score:.4f}] ID: {nid}")
-        print("="*55 + "\n")
+        self.reranker = None
+        self.known_entities = set()
 
-        if not initial_nodes:
-            logger.warning("‼️ Ничего не найдено")
-            return None
+        logger.info("🛠 Init synthesizers...")
 
-        # 3. Реранкинг
-        if self.reranker and initial_nodes:
-            logger.info("🧪 Запуск реранкинга (CPU)...")
-            rt_start = time.time()
-            nodes_to_rerank = initial_nodes[:10]
-            final_nodes = self.reranker.postprocess_nodes(nodes_to_rerank, query_bundle=QueryBundle(query_text))
-            logger.info(f"⏱ Реранкинг 10 нод -> {len(final_nodes)} занял {time.time() - rt_start:.2f} сек")
-        else:
-            final_nodes = initial_nodes[:self.final_top_k]
-            logger.info("⚠️ Реранкер пропущен")
-
-        # ФИНАЛЬНЫЙ СПИСОК ПЕРЕД LLM
-        print("\n" + "!"*20 + " FINAL TOP-5 FOR LLM " + "!"*20)
-        for i, n in enumerate(final_nodes):
-            nid = n.node.metadata.get('id', 'N/A')
-            words = len(n.node.get_content().split())
-            print(f"TOP-{i+1}: [{n.score:.4f}] ID: {nid} (~{words} слов)")
-        print("!"*61 + "\n")
-
-        # 🔥 ДИНАМИЧЕСКИЙ ВЫБОР РЕЖИМА
-        q_low = query_text.lower()
-        visual_keywords = [
-    "граф", "диагр", "кругов", "столбчат", "гистогр", 
-    "табл", "схем", "покаж", "вывед", "рисуй", "иллюстр",
-    "центральн", "ца фнс", " ца ", "кто такой" # пробелы вокруг "ца", чтобы не ловить слово "цапля"
-]
-
-        is_visual = any(kw in q_low for kw in visual_keywords)
-        
-        if is_visual:
-            current_mode = ResponseMode.COMPACT
-            logger.info("⚡ Выбран режим: COMPACT (графики/таблицы)")
-        else:
-            current_mode = ResponseMode.TREE_SUMMARIZE
-            logger.info("🌲 Выбран режим: TREE_SUMMARIZE (синтез)")
-        
-        # Создаём синтезатор под выбранный режим
-        synthesizer = get_response_synthesizer(
+        self.compact_synthesizer = get_response_synthesizer(
             text_qa_template=self.qa_prompt,
             streaming=True,
-            response_mode=current_mode
+            response_mode=ResponseMode.COMPACT,
+            use_async=False,
         )
-        
+
+        self.tree_synthesizer = get_response_synthesizer(
+            text_qa_template=self.qa_prompt,
+            streaming=True,
+            response_mode=ResponseMode.TREE_SUMMARIZE,
+            use_async=False,
+        )
+
+        self.refine_synthesizer = get_response_synthesizer(
+            text_qa_template=self.qa_prompt,
+            streaming=True,
+            response_mode=ResponseMode.REFINE,
+            use_async=False,
+        )
+
+        # =====================================================
+        # RERANKER
+        # =====================================================
+
+        try:
+
+            reranker_path = Path("/app/reranker")
+
+            if reranker_path.exists():
+
+                self.reranker = SentenceTransformerRerank(
+                    model=str(reranker_path),
+                    top_n=self.RERANK_TOP_K,
+                )
+
+                logger.info("✅ Reranker READY")
+
+        except Exception as e:
+
+            logger.error(f"⚠️ Reranker error: {e}")
+
+        # =====================================================
+        # BM25 + NODES
+        # =====================================================
+
+        try:
+
+            self._init_bm25(index)
+            self._load_graph_entities()
+
+        except Exception as e:
+
+            logger.error(
+                f"❌ Init error: {e}",
+                exc_info=True,
+            )
+
+    # =========================================================
+    # BM25 INIT
+    # =========================================================
+
+    def _init_bm25(self, index):
+
+        loaded_from_cache = False
+
+        if self.cache_path.exists():
+
+            try:
+
+                logger.info("📂 Loading BM25 cache...")
+
+                with open(self.cache_path, "rb") as f:
+
+                    cache_data = pickle.load(f)
+
+                    self.all_nodes = cache_data["nodes"]
+                    self.bm25 = cache_data["bm25"]
+
+                    loaded_from_cache = True
+
+            except Exception:
+
+                logger.warning(
+                    "⚠️ BM25 cache invalid, rebuilding..."
+                )
+
+        if not loaded_from_cache:
+
+            logger.info("📡 Loading Qdrant nodes...")
+
+            q_client = index.vector_store.client
+            coll_name = index.vector_store.collection_name
+
+            all_points = []
+            next_page_offset = None
+
+            while True:
+
+                points, next_page_offset = q_client.scroll(
+                    collection_name=coll_name,
+                    limit=1000,
+                    offset=next_page_offset,
+                    with_payload=True,
+                )
+
+                all_points.extend(points)
+
+                if next_page_offset is None:
+                    break
+
+            self.all_nodes = []
+
+            for p in all_points:
+
+                payload = p.payload or {}
+
+                node_id = str(
+                    payload.get("id") or p.id
+                )
+
+                raw_content = payload.get(
+                    "_node_content",
+                    "",
+                )
+
+                node_text = ""
+
+                if (
+                    isinstance(raw_content, str)
+                    and raw_content.startswith("{")
+                ):
+
+                    try:
+                        node_text = json.loads(
+                            raw_content
+                        ).get("text", "")
+
+                    except:
+                        node_text = raw_content
+
+                if not node_text:
+                    node_text = str(
+                        payload.get("text", "")
+                    )
+
+                meta = {
+                    "id": node_id,
+                    "title": payload.get(
+                        "title",
+                        "Документ",
+                    ),
+                    "source_url": payload.get(
+                        "source_url",
+                        "http://kremlin.ru",
+                    ),
+                    "local_img": payload.get(
+                        "local_img",
+                        "",
+                    ),
+                }
+
+                node = TextNode(
+                    text=node_text,
+                    id_=node_id,
+                    metadata=meta,
+                    excluded_embed_metadata_keys=[
+                        "id",
+                        "source_url",
+                        "local_img",
+                    ],
+                    excluded_llm_metadata_keys=[
+                        "id",
+                        "source_url",
+                        "local_img",
+                        "graph_structure",
+                    ],
+                )
+
+                node.metadata_template = (
+                    "{key}: {value}"
+                )
+
+                node.text_template = (
+                    "РАЗДЕЛ: {metadata_str}\n"
+                    "ТЕКСТ:\n{content}"
+                )
+
+                self.all_nodes.append(node)
+
+            if self.all_nodes:
+
+                tokenized_corpus = []
+
+                for node in self.all_nodes:
+
+                    content = node.get_content(
+                        metadata_mode=MetadataMode.LLM
+                    )
+
+                    tokens = self._tokenize(content)
+
+                    tokenized_corpus.append(tokens)
+
+                    # 🔥 КЕШ ТОКЕНОВ
+                    self.node_tokens_cache[
+                        node.node_id
+                    ] = set(tokens)
+
+                self.bm25 = BM25Okapi(
+                    tokenized_corpus
+                )
+
+                with open(self.cache_path, "wb") as f:
+
+                    pickle.dump(
+                        {
+                            "nodes": self.all_nodes,
+                            "bm25": self.bm25,
+                        },
+                        f,
+                    )
+
+                logger.info("✅ BM25 cached")
+
+        self.node_map = {
+            n.node_id: n
+            for n in self.all_nodes
+        }
+
+    # =========================================================
+    # GRAPH ENTITIES
+    # =========================================================
+
+    def _load_graph_entities(self):
+
+        try:
+
+            if not os.path.exists(
+                "graph_global.json"
+            ):
+
+                logger.warning(
+                    "⚠️ graph_global.json not found"
+                )
+
+                return
+
+            with open(
+                "graph_global.json",
+                "r",
+                encoding="utf-8",
+            ) as f:
+
+                graph = json.load(f)
+
+            for ent in graph.get(
+                "entities",
+                [],
+            ):
+
+                name = ent.get(
+                    "name",
+                    "",
+                ).lower().strip()
+
+                if len(name) >= 3:
+                    self.known_entities.add(name)
+
+            logger.info(
+                f"✅ Graph entities: {len(self.known_entities)}"
+            )
+
+        except Exception as e:
+
+            logger.error(
+                f"❌ Graph entity load error: {e}"
+            )
+
+    # =========================================================
+    # NORMALIZE
+    # =========================================================
+
+    def _normalize_query(
+        self,
+        text: str,
+    ) -> str:
+
+        normalized = text.lower()
+
+        for k in sorted(
+            self.QUERY_REPLACEMENTS,
+            key=len,
+            reverse=True,
+        ):
+
+            normalized = normalized.replace(
+                k,
+                self.QUERY_REPLACEMENTS[k],
+            )
+
+        return normalized
+
+    # =========================================================
+    # TOKENIZE
+    # =========================================================
+
+    def _tokenize(
+        self,
+        text: str,
+    ) -> List[str]:
+
+        if not text:
+            return []
+
+        clean = re.sub(
+            r"[^а-яА-Яa-zA-Z0-9\s]",
+            " ",
+            text.lower(),
+        )
+
+        tokens = clean.split()
+
+        result = []
+
+        for w in tokens:
+
+            if w == "не":
+
+                result.append(w)
+
+            elif len(w) >= 2:
+
+                result.append(
+                    self.stemmer.stem(w)
+                )
+
+        return result
+
+    # =========================================================
+    # ENTITY EXTRACT
+    # =========================================================
+
+    def _extract_query_entities(
+        self,
+        query: str,
+    ):
+
+        query_tokens = set(
+            self._tokenize(query.lower())
+        )
+
+        entities = []
+
+        for ent in self.known_entities:
+
+            ent_tokens = set(
+                self._tokenize(ent)
+            )
+
+            if ent_tokens & query_tokens:
+                entities.append(ent)
+
+        for ent in self.BASE_ENTITIES:
+
+            ent_tokens = set(
+                self._tokenize(ent)
+            )
+
+            if (
+                ent_tokens & query_tokens
+                and ent not in entities
+            ):
+
+                entities.append(ent)
+
+        return entities
+
+    # =========================================================
+    # RRF
+    # =========================================================
+
+    def _reciprocal_rank_fusion(
+        self,
+        vector_nodes,
+        bm25_scores,
+        k=30,
+    ):
+
+        scores = {}
+
+        for rank, node in enumerate(vector_nodes):
+
+            nid = str(
+                node.node.metadata.get("id")
+                or node.node.node_id
+            )
+
+            scores[nid] = (
+                scores.get(nid, 0)
+                + self.VECTOR_WEIGHT
+                / (k + rank + 1)
+            )
+
+        bm25_indices = np.argsort(
+            bm25_scores
+        )[::-1][: self.BM25_TOP_K]
+
+        for rank, idx in enumerate(
+            bm25_indices
+        ):
+
+            if bm25_scores[idx] <= 0:
+                continue
+
+            nid = self.all_nodes[idx].node_id
+
+            scores[nid] = (
+                scores.get(nid, 0)
+                + self.BM25_WEIGHT
+                / (k + rank + 1)
+            )
+
+        sorted_ids = sorted(
+            scores.keys(),
+            key=lambda x: scores[x],
+            reverse=True,
+        )
+
+        return [
+            NodeWithScore(
+                node=self.node_map[nid],
+                score=scores[nid],
+            )
+            for nid in sorted_ids
+            if nid in self.node_map
+        ]
+
+    # =========================================================
+    # RESPONSE MODE
+    # =========================================================
+
+    def _select_response_mode(
+        self,
+        query_text: str,
+    ):
+
+        q = query_text.lower()
+
+        if any(
+            p in q
+            for p in self.NEGATIVE_PATTERNS
+        ):
+
+            logger.info(
+                "⚡ COMPACT -> NEGATIVE"
+            )
+
+            return self.compact_synthesizer
+
+        if any(
+            p in q
+            for p in [
+                "кто такой",
+                "кто такая",
+                "биография",
+                "родился",
+                "руководитель",
+                "заместитель",
+                "график",
+                "диаграмма",
+                "круговая",
+                "столбчатая",
+                "гистограмма",
+                "динамика",
+                # "какая"
+            ]
+        ):
+
+            logger.info(
+                "👤 COMPACT -> BIO"
+            )
+
+            return self.compact_synthesizer
+
+        if any(
+            p in q
+            for p in [
+                "сколько",
+                "какой срок",
+                "когда",
+                "предусмотрено ли",
+                "разрешается ли",
+                "допускается ли",
+                "можно ли",
+                "каким",
+                "каким законом",
+            ]
+        ):
+
+            logger.info(
+                "🎯 COMPACT -> FACT"
+            )
+
+            return self.compact_synthesizer
        
-        # 4. Генерация
-        final_nodes.sort(key=lambda x: x.score, reverse=True)
+        logger.info(
+                    "👤 TREE -> DEFAULT"
+                )
+        return self.tree_synthesizer
         
-        # Базовая инструкция
-        instruction = "ОТВЕТЬ НА РУССКОМ ЯЗЫКЕ, ИСПОЛЬЗУЯ ТОЛЬКО БАЗУ ЗНАНИЙ. "
-        # Защита от LaTeX
-        latex_fix = "Пиши дроби простыми цифрами (1/4). ЗАПРЕЩЕНО использовать LaTeX и символы '$'."
+
+    # =========================================================
+    # QUERY
+    # =========================================================
+    def _dump_debug_info(self, query: str, norm_query: str, nodes: list, final_prompt: str):
+        try:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            file_path = self.debug_dir / f"query_{ts}.txt"
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(f"ORIGINAL QUERY: {query}\nNORM SEARCH: {norm_query}\n\nPROMPT:\n{final_prompt}\n")
+                f.write(f"{'='*60}\n")
+                for i, n in enumerate(nodes):
+                    llm_content = n.node.get_content(metadata_mode=MetadataMode.LLM)
+                    f.write(f"\n[CHUNK {i+1}] ID: {n.node.id_} | SCORE: {n.score:.4f}\n{'-'*30}\n{llm_content}\n")
+        except Exception as e:
+            logger.error(f"❌ Debug Error: {e}")
+
+    def _sync_query(self, query_text: str):
+        norm_query = self._normalize_query(query_text)
+        logger.info(f"🔎 [QUERY]: {query_text} -> {norm_query}")
+
+        # 1. VECTOR SEARCH
+        vector_nodes = self.retriever.retrieve(norm_query)
+
+        # 2. BM25 + HYBRID
+        if self.bm25 and vector_nodes:
+            bm25_scores = self.bm25.get_scores(self._tokenize(norm_query))
+            combined_nodes = self._reciprocal_rank_fusion(vector_nodes, bm25_scores)
+        else:
+            combined_nodes = vector_nodes
+
+        # 3. ENTITY BOOST (Исправленная математика: делаем сложение для RRF)
+        query_entities = self._extract_query_entities(query_text)
+        if query_entities:
+            entity_token_cache = {ent: set(self._tokenize(ent)) for ent in query_entities}
+            boosted_nodes = []
+
+            for node in combined_nodes:
+                node_tokens = self.node_tokens_cache.get(node.node.node_id, set())
+                bonus = 0.0
+                for ent_tokens in entity_token_cache.values():
+                    if ent_tokens & node_tokens:
+                        bonus += self.ENTITY_BONUS
+
+                bonus = min(bonus, self.MAX_ENTITY_BONUS)
+                # Складываем скоры, чтобы бустинг сущностей реально работал на маленьких весах RRF
+                new_score = node.score + (bonus * 0.1) 
+                boosted_nodes.append(NodeWithScore(node=node.node, score=new_score))
+
+            combined_nodes = sorted(boosted_nodes, key=lambda x: x.score, reverse=True)
+
+        # ДЕБАГ ХАЙБРИД
+        print(f"\n{'='*20} HYBRID TOP-10 {'='*20}")
+        for i, n in enumerate(combined_nodes[:10]):
+            print(f"Rank {i+1}: [{n.score:.4f}] ID: {n.node.id_}")
+        print("=" * 55 + "\n")
+
+        # 4. RERANK
+        if self.reranker and combined_nodes:
+            final_nodes = self.reranker.postprocess_nodes(
+                combined_nodes[:self.RERANK_TOP_K],
+                query_bundle=QueryBundle(query_text),
+            )
+        else:
+            final_nodes = combined_nodes[:self.final_top_k]
+
+        # ДЕБАГ РЕРАНК
+        print(f"{'='*20} RERANKED TOP-5 {'='*20}")
+        for i, n in enumerate(final_nodes[:5]):
+            print(f"Rank {i+1}: [{n.score:.4f}] ID: {n.node.id_}")
+        print("=" * 55 + "\n")
+
+        # 5. FORCED QUERY
+        forced_query = (
+            f"ВОПРОС:\n{query_text}\n\n"
+            f"ВАЖНО:\n"
+            f"- отвечай только по русски;\n"
+            f"- БАЗА_ПУСТА возвращать ТОЛЬКО если ответ вообще отсутствует в тексте.\n"
+        )
+        q_lower = query_text.lower()
+        if any(p in q_lower for p in self.NEGATIVE_PATTERNS):
+            forced_query += (
+                "- вопрос содержит отрицание;\n"
+                "- ищи вариант который НЕ подтверждается;\n"
+                "- отвечай только по контексту.\n"
+            )
+
+        synthesizer = self._select_response_mode(query_text)
+        final_chunks = final_nodes[:self.final_top_k]
+        logger.info(f"🧬 Final chunks: {len(final_chunks)}")
         
-        forced_query = f"{query_text}\n\nВАЖНО: {instruction} {latex_fix}"
+        # 🔥 УМНЫЙ ДЕБАГ: Пишем файлы строго если флаг включен в .env
+        if os.getenv("DEBUG_MODE", "False").lower() == "true":
+            self._dump_debug_info(query_text, norm_query, final_chunks, forced_query)
+        else:
+            logger.info("ℹ️ Debug dump skipped (Production mode)")
+        
+        synthesizer = (
+            self._select_response_mode(
+                query_text
+            )
+        )
+
+        final_chunks = final_nodes[
+            : self.final_top_k
+        ]
 
         
-        logger.info("🚀 Отправка в Ollama...")
-        response = synthesizer.synthesize(forced_query, final_nodes)
-        
-        total_time = time.time() - overall_start
-        logger.info(f"🏁 [DONE] Итоговое время: {total_time:.2f} сек")
-        
-        return response
+        # 🔥 ВСТАВЛЯЕМ СЮДА: ЛОКАЛЬНЫЙ ЧЕТКИЙ РАСЧЕТ ВХОДНЫХ ТОКЕНОВ
+        try:
+            import tiktoken
+            encoding = tiktoken.get_encoding("cl100k_base")
+            
+            # Склеиваем абсолютно весь текст, который летит роборубке на чтение
+            full_input_text = str(self.qa_prompt) + "\n"
+            for chunk in final_chunks:
+                full_input_text += chunk.node.get_content(metadata_mode=MetadataMode.LLM) + "\n"
+            full_input_text += forced_query
 
-    async def aquery(self, query_text: str):
-        return await asyncio.to_thread(self._sync_query, query_text)
-              
+            exact_prompt_tokens = len(encoding.encode(full_input_text))
+        except Exception as e:
+            exact_prompt_tokens = f"Ошибка подсчета: {e}"
+
+        # Запускаем оригинальный синтез стрима
+        streaming_response = synthesizer.synthesize(
+            query=forced_query,
+            nodes=final_chunks,
+        )
+
+        # Перехватываем выходные токены через наш логгер
+        original_gen = streaming_response.response_gen
+
+        def logging_token_generator():
+            for token_obj in original_gen:
+                yield token_obj
+
+            # Как только модель допечатала последнюю букву — стреляем логом в Docker!
+            logger.info("═" * 50)
+            logger.info("📊 ТОЧНЫЙ АУДИТ ТОКЕНОВ ДЛЯ ФНС (ЛОКАЛЬНЫЙ РАСЧЕТ):")
+            logger.info(f"📥 На вход улетело (Промпт + Чанки + Вопрос): {exact_prompt_tokens} токенов")
+            logger.info("═" * 50)
+
+        streaming_response.response_gen = logging_token_generator()
+
+        return streaming_response
+
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
 logger.info("🧠 Загрузка векторного индекса...")
-storage_context = StorageContext.from_defaults(persist_dir=str(PERSIST_DIR))
-index = load_index_from_storage(storage_context)
 
+# 1. Создаем клиент ЯВНО
+# ВАЖНО: используем именно QdrantClient (он синхронный)
+client = QdrantClient(host="qdrant_db", port=6333, prefer_grpc=False)
+
+# 2. Передаем его в стор
+vector_store = QdrantVectorStore(
+    collection_name="fns_collection", 
+    client=client
+)
+
+# 3. Собираем индекс
+index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
+
+# 4. Инициализируем твой движок
 query_engine = RerankedEngine(
     index=index,
     qa_prompt=qa_prompt,
     initial_top_k=30,
     final_top_k=5,
 )
-logger.info("✅ Query engine готов к работе")
+logger.info("✅ Query engine ТЕПЕРЬ РЕАЛЬНО НА QDRANT!")
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (осталось без изменений) ==========
 def _collect_sources(nodes: list, max_sources: int = 3) -> list:
@@ -412,7 +1074,7 @@ async def get_ai_streaming_response(query_text: str):
     try:
         logger.info(f"🚀 Запрос: '{query_text[:100]}...'")
 
-        response = await query_engine.aquery(query_text)
+        response = query_engine._sync_query(query_text)
 
         if response is None:
             yield json.dumps({"type": "text", "content": "БАЗА_ПУСТА: Информация не найдена."}, ensure_ascii=False) + "\n"
@@ -422,21 +1084,15 @@ async def get_ai_streaming_response(query_text: str):
         nodes = response.source_nodes if hasattr(response, "source_nodes") else []
         has_real_context = bool(nodes)
 
-        logger.info(f"🧩 Найдено чанков: {len(nodes)}")
-
-        for i, node in enumerate(nodes[:5]):
-            if hasattr(node, 'node'):
-                node_id = node.node.metadata.get('id', 'unknown')
-                score = node.score if hasattr(node, 'score') else 0.0
-                logger.info(f"   📊 Чанк {i+1}: id={node_id[:40]}, score={score:.4f}")
-
         sources = _collect_sources(nodes)
         logger.info(f"🧩 Источников для фронта: {len(sources)}")
+        local_img = nodes[0].node.metadata.get('local_img', '')
 
         yield json.dumps({
             "type": "metadata",
             "sources": sources,
             "has_answer": has_real_context,
+            "img": local_img
         }, ensure_ascii=False) + "\n"
 
         if not has_real_context or not hasattr(response, "response_gen") or response.response_gen is None:

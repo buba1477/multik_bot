@@ -1,61 +1,32 @@
-# === [ ГЛАВНЫЕ ПОЖИРАТЕЛИ МЕСТА (ТВОИ 10 ГБ+) ] ===
+# Игнорим всё тяжелое под корень
 venv/
 .venv/
-reanker/
-hf_cache/
-.cache/
-.nv/
 .git/
-llama.cpp/
-unsloth_compiled_cache/
+.cache/
+hf_cache/
+storage_context/
 
-# === [ МОДЕЛИ И АДАПТЕРЫ ] ===
-lora_fns_adapter*/
-model_for_ollama*/
+# Игнорим папки моделей (они проброшены через volumes)
+reranker*/
+sber_model/
+m3_model/
+onnx/
+
+# Игнорим все тяжелые бинарники
 *.gguf
 *.safetensors
 *.bin
 *.pth
 *.onnx
-v4.gguf
-
-# === [ ДАННЫЕ И ИНДЕКСЫ ] ===
-fns_rag_index/
-images_cache/
-fns_docs/
-static/
-data/
-pdf/
-Лишнее/
+*.pt
+*.tar.gz
+*.zip
 *.jsonl
-*.csv
-*.pdf
-*.xlsx
-*.log
 
-# === [ ПИТОНОВСКИЙ МУСОР ] ===
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.ipynb_checkpoints/
-.python-version
-pyvenv.cfg
-
-# === [ СИСТЕМНОЕ И СЕКРЕТЫ ] ===
-.env
-.flaskenv
-.vscode/
-.idea/
-.DS_Store
-*.swp
-*.bak
-*.tmp
-
-# === [ ИСКЛЮЧЕНИЯ (ЭТО НУЖНО В ОБРАЗЕ) ] ===
+# Разрешаем только код
 !requirements.txt
 !main.py
 !main_api.py
 !engine_rag.py
 !rag_fns.py
+!Dockerfile*

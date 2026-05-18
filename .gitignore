@@ -45,6 +45,7 @@ images_cache/
 llama.cpp/
 reranker/
 fns_docs/
+reranker_m3/
 
 # === ВЕКТОРНЫЕ ИНДЕКСЫ (JSON) ===
 # Запрещаем все JSON, кроме requirements и конфигов
@@ -74,7 +75,6 @@ checkpoint-*/
 *.bin
 *.safetensors
 *.gguf
-*.onnx
 
 # === АРХИВЫ ===
 *.tar.gz
@@ -137,3 +137,40 @@ docstore.json
 graph_store.json
 image__vector_store.json
 index_store.json
+
+# === ЕЩЁ НЕСКОЛЬКО ПОЛЕЗНЫХ ПАТТЕРНОВ ===
+
+# Pickle и кэши BM25
+*.pkl
+*.pickle
+bm25_cache.pkl
+bm25_cache_v*
+
+# Debug директории (у тебя есть в коде self.debug_dir)
+debug/
+/engine_rag/debug/
+
+# Jupyter (если вдруг)
+*.ipynb
+.ipynb_checkpoints/
+
+# VS Code пользовательские настройки
+.vscode/settings.json
+.vscode/launch.json
+
+# Временные файлы при стриминге
+*.tmp
+*.temp
+
+# Графы и экспорты из твоей папки
+GraphRAG/*.gexf
+GraphRAG/*.json
+communities.json
+
+# Employees (если это персональные данные)
+employees.txt
+
+# Конфиги с секретами
+config_local.py
+config_secret.py
+secrets.py
