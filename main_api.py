@@ -66,19 +66,40 @@ async def get_chat_page():
 </head>
 <body>
 <div id="container">
-    <header style="text-align: center; padding-bottom: 10px; border-bottom: 4px solid #e2e2e2; margin-bottom: 10px;">
-        <h2 style="margin: 0; color: var(--accent);">🇷🇺 Tax AI <span style="font-weight: 200; color: #6c7086;">| ФНС России</span></h2>
+    <header style="display: flex; align-items: center; justify-content: center; border-bottom: 4px solid #e2e2e2; margin-bottom: 10px; position: relative;">
+        <!-- 🔥 Логотип -->
+        <img src="/static/logo.png" alt="Лого" style="height: 35px; width: auto; object-fit: contain; margin-right: auto; padding-left: 5px;">
+        
+        <!-- 🔥 Заголовок строго по центру -->
+        <h2 style="margin: 0; color: var(--accent); display: flex; align-items: center; font-size: 22px; position: absolute; left: 50%; transform: translateX(-50%);">
+            Нейроинспектор <span style="font-weight: 200; color: #6c7086; margin-left: 8px;">| ФНС России</span>
+        </h2>
     </header>
+    
     <div id="chat"></div>
-    <div id="input-area">
-        <input type="text" id="messageText" placeholder="Задай вопрос..." autocomplete="off"/>
-        <button id="sendButton" onclick="sendMessage()">➤</button>
+    
+    <!-- Главный контейнер панели ввода с relative-позиционированием -->
+     <div style="width: 100%; position: relative;">
+    
+    <!-- 1. Твой input-area — теперь ОН задает общую высоту и центрирует элементы -->
+    <div id="input-area" style="width: 100%; margin-bottom: 0; display: flex; align-items: center; position: relative;">
+        <input type="text" id="messageText" placeholder="Задай вопрос..." autocomplete="off" style="width: 100%; height: 44px; box-sizing: border-box;"/>
+        <button id="sendButton" onclick="sendMessage()" style="height: 44px; box-sizing: border-box;">➤</button>
+        
+        <!-- 2. Корзина: теперь она привязана прямо к input-area, у них одна базовая линия -->
+        <div style="position: absolute; right: -56px; height: 44px; display: flex; align-items: center;">
+            <button id="clearButton" class="clear-btn" data-tooltip="Очистить чат" onclick="clearInput()" style="background: #f1f3f5; border: 1px solid #d1dce7; border-radius: 8px; font-size: 18px; cursor: pointer; height: 44px; width: 44px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; transition: all 0.2s;">🗑️</button>
+        </div>
     </div>
+    
+</div>
+</div>
 </div>
 <script src="/static/js/script.js"></script>
 </body>
 </html>
 """
+
 
 class ChatRequest(BaseModel):
     query: str

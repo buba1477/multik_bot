@@ -59,14 +59,39 @@ function removeLoader() {
 function blockInput(block) {
     const input = document.getElementById("messageText");
     const button = document.getElementById("sendButton");
+    const clearBtn = document.getElementById("clearButton");
     if (block) {
         input.disabled = true;
         button.disabled = true;
+        clearBtn.disabled = true;
     } else {
         input.disabled = false;
         button.disabled = false;
+        clearBtn.disabled = false;
         input.focus();
     }
+}
+
+function clearInput() {
+    const input = document.getElementById("messageText");
+    const chat = document.getElementById("chat");
+
+    if (input) {
+        input.value = "";
+        input.focus();
+    }
+
+    if (chat) {
+        chat.innerHTML = "";
+    }
+
+    removeLoader();
+    chartInstances.forEach(chart => {
+        if (chart && typeof chart.dispose === 'function') {
+            chart.dispose();
+        }
+    });
+    chartInstances = [];
 }
 
 function tryRenderChart(text, container) {
