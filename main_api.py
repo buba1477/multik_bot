@@ -68,11 +68,12 @@ async def get_chat_page():
 <div id="container">
     <header style="display: flex; align-items: center; justify-content: center; border-bottom: 4px solid #e2e2e2; margin-bottom: 10px; position: relative;">
         <!-- 🔥 Логотип -->
+        <a href="/" style="display: flex; align-items: center; text-decoration: none; margin-right: auto; padding-left: 5px;">
         <img src="/static/logo.png" alt="Лого" style="height: 35px; width: auto; object-fit: contain; margin-right: auto; padding-left: 5px;">
-        
+        </a>
         <!-- 🔥 Заголовок строго по центру -->
-        <h2 style="margin: 0; color: var(--accent); display: flex; align-items: center; font-size: 22px; position: absolute; left: 50%; transform: translateX(-50%);">
-            Нейроинспектор <span style="font-weight: 200; color: #6c7086; margin-left: 8px;">| ФНС России</span>
+        <h2 style="margin: 0; color: #003366; display: flex; align-items: center; font-size: 22px; position: absolute; left: 50%; transform: translateX(-50%);">
+            Нейроинспектор <span style="font-weight: 200; color: #003366; margin-left: 8px;">| ФНС России</span>
         </h2>
     </header>
     

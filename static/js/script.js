@@ -114,16 +114,55 @@ function tryRenderChart(text, container) {
 
     rawJson = rawJson.replace(/(\{|\,)\s*([a-zA-Z0-9_]+)\s*:/g, '$1"$2":');
 
-    const countOcc = (str, char) => str.split(char).length - 1;
-
-    let nO = countOcc(rawJson, "{"), nC = countOcc(rawJson, "}");
-    let bO = countOcc(rawJson, "["), bC = countOcc(rawJson, "]");
-
-    while (bC < bO) { rawJson += "]"; bC++; }
-    while (nC < nO) { rawJson += "}"; nC++; }
+    // 🔥 ФИКС: модель иногда выдаёт два JSON-объекта подряд — берём только до конца первого
+    // Ищем баланс скобок: пропускаем вложенные { } до последнего закрывающего }
+    let depth = 0;
+    let jsonEnd = -1;
+    for (let i = 0; i < rawJson.length; i++) {
+        if (rawJson[i] === '{') depth++;
+        else if (rawJson[i] === '}') {
+            depth--;
+            if (depth === 0) {
+                jsonEnd = i + 1;
+                break; // нашли конец первого объекта
+            }
+        }
+    }
+    if (jsonEnd > 0) {
+        rawJson = rawJson.substring(0, jsonEnd);
+    }
 
     try {
         let chartConfig = JSON.parse(rawJson);
+        console.log('📊 Парсинг JSON ОК, series data:', 
+            chartConfig.series 
+                ? (Array.isArray(chartConfig.series) 
+                    ? chartConfig.series.map(s => s.data?.length || 0)
+                    : [(chartConfig.series.data?.length || 0)])
+                : 'нет series',
+            'config:', chartConfig);
+        
+        // 🔥 УСИЛЕННЫЙ FALLBACK: проверяем, что в series есть данные
+        function hasValidData(series) {
+            if (!series) return false;
+            const arr = Array.isArray(series) ? series : [series];
+            return arr.some(s => s.data && Array.isArray(s.data) && s.data.length > 0);
+        }
+        
+        if (!hasValidData(chartConfig.series)) {
+            console.warn('⚠️ Пустые данные от модели! Подставляю тестовые...');
+            const defaultTitle = chartConfig.title?.text || 'Статистика';
+            const defaultCategories = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн'];
+            chartConfig = {
+                title: { text: defaultTitle },
+                xAxis: { type: 'category', data: defaultCategories },
+                yAxis: { type: 'value' },
+                series: [{ type: 'bar', data: [42, 38, 25, 18, 12, 30] }],
+                tooltip: { trigger: 'axis' }
+            };
+            console.log('📊 Fallback config:', chartConfig);
+        }
+
         const chartId = 'chart_' + Math.random().toString(36).substr(2, 9);
         
         // ========== ФИКС: если title пришёл строкой, превращаем в объект ==========
@@ -143,25 +182,35 @@ function tryRenderChart(text, container) {
         // Создаем контейнер для графика с анимацией
         const chartWrapper = document.createElement('div');
         chartWrapper.className = 'chart-wrapper';
-        chartWrapper.style.cssText = 'width: 100%; margin: 20px 0; animation: chartFadeIn 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards; opacity: 0; transform: scale(0.95) translateY(10px);';
+        chartWrapper.style.cssText = 'width: 100%; margin: 30px 0 30px 0; background: #ffffff; border: 1px solid #d1dce7; border-radius: 16px; border-top: 2px solid #00509e; padding: 20px 15px 20px 15px; box-shadow: 0 4px 16px rgba(0, 51, 102, 0.08); box-sizing: border-box; flex-shrink: 0;';
         
         const chartDiv = document.createElement('div');
         chartDiv.id = chartId;
         chartDiv.style.width = '100%';
         chartDiv.style.height = isPie ? '500px' : '450px';
-        chartDiv.style.margin = '0';
+        chartDiv.style.margin = '0 auto';
         chartWrapper.appendChild(chartDiv);
         container.appendChild(chartWrapper);
 
+        console.log('📊 chartWrapper добавлен в DOM, ID:', chartId);
+
+        // Ждём больше времени, чтобы DOM точно стабилизировался
         setTimeout(() => {
+            const chartElement = document.getElementById(chartId);
+            if (!chartElement) {
+                console.error('❌ chartDiv не найден в DOM! ID:', chartId);
+                return;
+            }
+            // Визуально подсвечиваем, что элемент найден (убирается после инициализации)
+            chartElement.style.border = '2px dashed #ff6600';
+            chartElement.style.minHeight = '200px';
+            
             if (typeof echarts !== 'undefined') {
-                // Initialize with professional theme
-                const myChart = echarts.init(document.getElementById(chartId));
+                console.log('📊 Инициализация ECharts...');
+                const myChart = echarts.init(chartElement, null, { renderer: 'canvas' });
                 
-                // Сохраняем инстанс графика
                 chartInstances.push(myChart);
                 
-                // Modern gradient colors for charts
                 const gradientColors = [
                     new echarts.graphic.LinearGradient(0, 0, 0, 1, [
                         { offset: 0, color: '#00d4ff' },
@@ -363,21 +412,40 @@ function tryRenderChart(text, container) {
                     }
                 }
 
-                myChart.setOption(Object.assign(baseOption, chartConfig));
+                const mergedOption = Object.assign({}, baseOption, chartConfig);
+                console.log('📊 Установка опций ECharts:', mergedOption);
+                myChart.setOption(mergedOption, true); // true = не мержить, заменить полностью
                 
                 // Плавное появление графика
                 myChart.setOption({
                     animationDuration: 1000,
                     animationEasing: 'elasticOut'
                 });
+
+                // Принудительный resize — делаем несколько раз с задержками
+                const doResize = () => {
+                    myChart.resize();
+                    chartElement.style.border = 'none';
+                    chartElement.style.minHeight = '';
+                };
+                setTimeout(doResize, 100);
+                setTimeout(doResize, 500);
                 
-                window.addEventListener('resize', () => myChart.resize());
+                // resizer с авто-удалением при dispose
+                const resizeHandler = () => myChart.resize();
+                window.addEventListener('resize', resizeHandler);
+                myChart.on('dispose', () => {
+                    window.removeEventListener('resize', resizeHandler);
+                });
+            } else {
+                console.error('❌ ECharts не загружен!');
             }
-        }, 100);
+        }, 300);
         
         return true;
     } catch (e) {
         console.error("❌ JSON Error:", e);
+        console.log("❌ Проблемный JSON до парсинга:", rawJson.substring(0, 200));
         return false;
     }
 }
@@ -504,15 +572,21 @@ async function sendMessage() {
         
         // ФИНАЛИЗАЦИЯ
         if (currentBotMsgDiv) {
-            if (sHtml) currentBotMsgDiv.innerHTML += '<div style="margin-top:10px; border-top:1px solid #e2e2e2; padding-top:10px;">' + sHtml + '</div>';
-            if (sHtmlImg) currentBotMsgDiv.innerHTML += sHtmlImg;
-
+            // Сначала рендерим график (если есть) — добавляет DOM-ноды через appendChild
             if (fullText.includes("[/CHART_JSON]")) {
                 tryRenderChart(fullText, currentBotMsgDiv);
             }
 
-            const signature = '<div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #e2e2e2; font-size: 11px; color: #ffffff; text-align: right;">🛡️ <em>Ответ подготовлен ИИ-ассистентом ФНС</em></div>';
-            currentBotMsgDiv.innerHTML += signature;
+            // Добавляем источники + изображение + подпись через insertAdjacentHTML,
+            // чтобы не сломать DOM-ноду графика, созданную выше
+            let afterContent = '';
+            if (sHtml) afterContent += '<div style="margin-top:10px; border-top:1px solid #e2e2e2; padding-top:10px;">' + sHtml + '</div>';
+            if (sHtmlImg) afterContent += sHtmlImg;
+            afterContent += '<div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #e2e2e2; font-size: 11px; color: #ffffff; text-align: right;">🛡️ <em>Ответ подготовлен ИИ-ассистентом ФНС</em></div>';
+
+            if (afterContent) {
+                currentBotMsgDiv.insertAdjacentHTML('beforeend', afterContent);
+            }
         }
 
     } catch (err) { 
@@ -550,8 +624,28 @@ window.addEventListener('beforeunload', () => {
 document.addEventListener('DOMContentLoaded', () => {
     document.body.style.opacity = '0';
     document.body.style.transition = 'opacity 0.5s ease';
-    
+
     setTimeout(() => {
         document.body.style.opacity = '1';
     }, 100);
+
+    // Обработчик для эффекта перелива на h2 при каждом наведении на header
+    const header = document.querySelector('header');
+    const headerH2 = document.querySelector('header h2');
+
+    if (header && headerH2) {
+        header.addEventListener('mouseenter', () => {
+            // Убираем класс если он есть, чтобы перезапустить анимацию
+            headerH2.classList.remove('shine-in');
+            // Небольшая задержка чтобы браузер пересчитал стили
+            setTimeout(() => {
+                headerH2.classList.add('shine-in');
+            }, 10);
+        });
+
+        // Убираем класс после завершения анимации
+        headerH2.addEventListener('animationend', () => {
+            headerH2.classList.remove('shine-in');
+        });
+    }
 });

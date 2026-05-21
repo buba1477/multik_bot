@@ -14,6 +14,14 @@
     --blue-accent: #0088ff;
     --primary-grey: #e2e2e2;
     --primary-dark: #003366;
+    --gold: #d4a843;
+    --gold-light: #f0d68a;
+    
+    /* Gradients */
+    --gradient-bot-border: linear-gradient(180deg, #00509e 0%, #0088ff 50%, #00509e 100%);
+    --gradient-gold: linear-gradient(135deg, #d4a843 0%, #f0d68a 50%, #d4a843 100%);
+    --gradient-user: linear-gradient(135deg, #003d7a 0%, #004a99 50%, #002a5c 100%);
+    --gradient-bg: linear-gradient(160deg, #f0f4f8 0%, #e8eef7 50%, #f5f7fa 100%);
 
     /* Message Colors */
     --user-msg-bg: linear-gradient(135deg, #003d7a 0%, #00509e 100%);
@@ -75,7 +83,13 @@
 /* Body */
 body {
     font-family: var(--font-family);
-    background: linear-gradient(135deg, #f5f7fa 0%, #f0f4f8 100%);
+    background: linear-gradient(135deg, #f0f4f9 0%, #e6ecf5 40%, #f2f7fc 100%);
+    background-image:
+        radial-gradient(circle at 15% 30%, rgba(0, 80, 158, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 85% 70%, rgba(0, 80, 158, 0.05) 0%, transparent 45%),
+        radial-gradient(circle at 50% 50%, rgba(212, 168, 67, 0.04) 0%, transparent 50%),
+        radial-gradient(ellipse at 20% 80%, rgba(0, 150, 200, 0.06) 0%, transparent 50%);
+    background-attachment: fixed;
     color: var(--text-primary);
     display: flex;
     flex-direction: column;
@@ -119,20 +133,6 @@ header {
     gap: 12px;
 }
 
-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 3px;
-    background: linear-gradient(90deg, transparent, var(--blue-light), transparent);
-    transition: left 0.6s ease;
-}
-
-header:hover::before {
-    left: 100%;
-}
 
 header img {
     height: 32px;
@@ -148,6 +148,17 @@ header h2 {
     color: var(--text-header);
     letter-spacing: -0.02em;
     line-height: 1.4;
+    position: relative;
+}
+
+header h2.shine-in {
+    background: linear-gradient(50deg, var(--text-header) 0%, var(--text-header) 35%, rgba(255, 255, 255, 0.9) 50%, var(--text-header) 65%, var(--text-header) 100%);
+    background-size: 200% 100%;
+    background-position: 200% 0; /* 👈 Старт по умолчанию, чтобы зафиксировать цвет */
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: shineIn 3.5s ease-in-out forwards; /* 👈 Чистый вызов */
 }
 
 header h2 .accent {
@@ -174,7 +185,7 @@ header h2 .subtext {
 }
 
 #chat::-webkit-scrollbar {
-    width: 6px;
+    width: 8px;
 }
 
 #chat::-webkit-scrollbar-track {
@@ -182,12 +193,18 @@ header h2 .subtext {
 }
 
 #chat::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 3px;
+    background: #cbd5e1;
+    border-radius: 4px;
 }
 
 #chat::-webkit-scrollbar-thumb:hover {
-    background: var(--text-muted);
+    background: #94a3b8;
+}
+
+/* Firefox scrollbar */
+#chat {
+    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-width: thin;
 }
 
 /* Message Bubbles */
@@ -212,33 +229,51 @@ header h2 .subtext {
     }
 }
 
+@keyframes shineIn {
+    0% { background-position: 100% 0; }
+    100% { background-position: -200% 0; }
+}
+
 /* User Message */
 .user {
-    background: linear-gradient(135deg, #00509e 0%, #003d7a 100%);
+    background: var(--gradient-user);
     align-self: flex-end;
     border-bottom-right-radius: 4px;
     color: var(--text-light);
-    box-shadow: 0 4px 16px rgba(0, 80, 158, 0.25);
-    transition: all 0.3s ease;
+    box-shadow: 0 4px 20px rgba(0, 40, 92, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
+    padding-left: 20px;
+    padding-right: 20px;
 }
 
 .user::before {
+    content: '👤';
+    position: absolute;
+    bottom: 4px;
+    right: 10px;
+    font-size: 28px;
+    opacity: 0.08;
+    pointer-events: none;
+    user-select: none;
+}
+
+.user::after {
     content: '';
     position: absolute;
     inset: 0;
-    border-radius: var(--radius-lg);
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 100%);
+    border-radius: inherit;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, transparent 100%);
     pointer-events: none;
 }
 
 .user:hover {
-    box-shadow: 0 8px 24px rgba(0, 80, 158, 0.35);
+    box-shadow: 0 8px 32px rgba(0, 40, 92, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.20), inset 0 1px 0 rgba(255, 255, 255, 0.15);
     transform: translateY(-2px);
 }
 
 .user p {
-    color: var(--text-light);
+    color: #f0f5ff;
     margin-bottom: 12px;
     position: relative;
     z-index: 1;
@@ -254,12 +289,18 @@ header h2 .subtext {
     align-self: flex-start;
     border-bottom-left-radius: 4px;
     border: 1px solid var(--border-color);
-    border-left: 4px solid var(--primary-grey);
+    border-left: 4px solid #cbd5e1;
     max-width: 95%;
     width: 100%;
     box-sizing: border-box;
-    box-shadow: 0 2px 8px var(--shadow-light), 0 4px 12px rgba(0, 51, 102, 0.08);
-    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px var(--shadow-light), 0 4px 12px rgba(0, 51, 102, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+
+.bot:hover {
+    box-shadow: 0 8px 24px rgba(0, 51, 102, 0.14), 0 4px 12px rgba(0, 51, 102, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    transform: translateY(-1px);
 }
 
 /* Bot Message Links */
