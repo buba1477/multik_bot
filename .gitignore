@@ -174,3 +174,14 @@ employees.txt
 config_local.py
 config_secret.py
 secrets.py
+
+# === ИГНОР ВСЕГО ЧТО Я НЕ ЗНАЮ ===
+*~
+*.swp
+.DS_Store
+*.orig
+
+qdrant_storage/
+*.mmap
+*.dat
+*.wal
