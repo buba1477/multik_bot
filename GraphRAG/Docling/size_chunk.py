@@ -3,7 +3,7 @@ from transformers import AutoTokenizer
 
 # Путь к модели и файлу
 MODEL_PATH = "/home/amlin04/multik_bot/hf_cache/ru-en-RoSBERTa"
-JSONL_FILE = "146-FZ.jsonl"
+JSONL_FILE = "146-FZ-semantic.jsonl"
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
 

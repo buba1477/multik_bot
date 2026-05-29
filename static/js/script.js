@@ -59,20 +59,20 @@ function removeLoader() {
 function blockInput(block) {
     const input = document.getElementById("messageText");
     const button = document.getElementById("sendButton");
-    const clearBtn = document.getElementById("clearButton");
     if (block) {
-        input.disabled = true;
-        button.disabled = true;
-        clearBtn.disabled = true;
+        if (input) input.disabled = true;
+        if (button) button.disabled = true;
     } else {
-        input.disabled = false;
-        button.disabled = false;
-        clearBtn.disabled = false;
-        input.focus();
+        if (input) input.disabled = false;
+        if (button) button.disabled = false;
+        if (input) input.focus();
     }
 }
 
 function clearInput() {
+    // Сохраняем текущий чат перед очисткой
+    persistCurrentChat();
+    
     const input = document.getElementById("messageText");
     const chat = document.getElementById("chat");
 
@@ -287,18 +287,24 @@ function tryRenderChart(text, container) {
 
                 if (isPie) {
                     const s = Array.isArray(chartConfig.series) ? chartConfig.series[0] : chartConfig.series;
-                    s.radius = ['45%', '75%'];
-                    s.center = ['50%', '55%'];
-                    s.itemStyle = { 
-                        borderRadius: 12, 
-                        borderColor: '#ffffff', 
+                    s.radius = '65%';
+                    s.center = ['50%', '50%'];
+
+                    const pieColors = [
+                        '#00d4ff', '#7c3aed', '#ffd700', '#10b981', '#f59e0b',
+                        '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316'
+                    ];
+
+                    s.itemStyle = {
+                        borderRadius: 12,
+                        borderColor: '#ffffff',
                         borderWidth: 3,
-                        shadowBlur: 10,
-                        shadowColor: 'rgba(0, 51, 102, 0.2)'
+                        shadowBlur: 15,
+                        shadowColor: 'rgba(0, 0, 0, 0.2)'
                     };
-                    s.label = { 
-                        show: true, 
-                        color: '#1a2c3e', 
+                    s.label = {
+                        show: true,
+                        color: '#1a2c3e',
                         formatter: '{b}: {d}%',
                         fontSize: 13,
                         fontWeight: 600,
@@ -321,13 +327,15 @@ function tryRenderChart(text, container) {
                             shadowColor: 'rgba(0, 51, 102, 0.3)'
                         }
                     };
-                    
-                    // Применяем градиенты к сегментам
+
+                    // Применяем яркие цвета к каждому сегменту
                     if (s.data) {
                         s.data.forEach((item, index) => {
                             if (typeof item === 'object' && !item.itemStyle) {
                                 item.itemStyle = {
-                                    color: gradientColors[index % gradientColors.length]
+                                    color: pieColors[index % pieColors.length],
+                                    shadowBlur: 15,
+                                    shadowColor: 'rgba(0, 0, 0, 0.2)'
                                 };
                             }
                         });
@@ -469,13 +477,16 @@ async function sendMessage() {
     }
     
     appendMessage('user', query);
+    setFirstQuery(query);
+    persistCurrentChat();
     showLoader();
     
     let firstChunkReceived = false;
     let currentBotMsgDiv = null;
     let sHtml = '';
     let sHtmlImg = '';
-    let fullText = ""; 
+    let fullText = "";
+    let hadChartOnly = false; // Флаг: пришёл график без текста
 
     try {
         const response = await fetch('/api/v1/predict/stream', {
@@ -511,6 +522,186 @@ async function sendMessage() {
                             sHtmlImg = '<div style="margin-top:15px; border-top: 1px solid #e2e2e2; padding-top:10px;"><img src="/images/' + data.image + '" style="max-width:100%; border-radius:12px; border: 1px solid #e2e2e2;"></div>';
                         }
                     } 
+                    else if (data.type === "chart_error") {
+                        // Ошибка генерации графика — выводим как обычный текст
+                        if (!firstChunkReceived) {
+                            removeLoader();
+                            currentBotMsgDiv = appendMessage('bot', "<b>База знаний ФНС:</b> 📌 <br>");
+                            firstChunkReceived = true;
+                        }
+                        if (currentBotMsgDiv) {
+                            const errorHtml = `<div style="padding: 10px; background: #fff3f3; border: 1px solid #e0b4b4; border-radius: 8px; margin: 10px 0; color: #c0392b;">
+                                ⚠️ ${data.message || 'Ошибка визуализации'}</div>`;
+                            currentBotMsgDiv.insertAdjacentHTML('beforeend', errorHtml);
+                            scrollToBottom();
+                        }
+                    }
+                    else if (data.type === "chart") {
+                        // Если график пришёл первым чанком — убираем лоадер и создаём контейнер
+                        if (!firstChunkReceived) {
+                            removeLoader();
+                            currentBotMsgDiv = appendMessage('bot', "<b>База знаний ФНС:</b> 📌 <br>");
+                            firstChunkReceived = true;
+                        }
+
+                        const d = data.data;
+
+                        if (!currentBotMsgDiv) {
+                            currentBotMsgDiv = appendMessage('bot', '');
+                        }
+
+                        // Создаём контейнер для графика внутри msg bot
+                        const chartId = 'echarts_' + Math.random().toString(36).substr(2, 9);
+                        const chartWrapper = document.createElement('div');
+                        chartWrapper.className = 'chart-wrapper';
+                        chartWrapper.style.cssText = 'width: 100%; margin: 10px 0; background: #ffffff; border: 1px solid #d1dce7; border-radius: 16px; border-top: 2px solid #00509e; padding: 20px 15px; box-shadow: 0 4px 16px rgba(0, 51, 102, 0.08); box-sizing: border-box;';
+
+                        const chartDiv = document.createElement('div');
+                        chartDiv.id = chartId;
+                        const isPie = d.chart_type === 'pie';
+                        chartDiv.style.cssText = `width: 100%; height: ${isPie ? '500px' : '450px'};`;
+                        
+                        // Сохраняем данные графика для восстановления из истории
+                        chartWrapper.dataset.chartData = JSON.stringify(d);
+                        chartWrapper.appendChild(chartDiv);
+                        currentBotMsgDiv.appendChild(chartWrapper);
+                        scrollToBottom();
+
+                        // Инициализация ECharts после стабилизации DOM
+                        setTimeout(() => {
+                            const dom = document.getElementById(chartId);
+                            if (!dom) {
+                                console.error('❌ chartDiv не найден в DOM! ID:', chartId);
+                                return;
+                            }
+                            if (typeof echarts === 'undefined') {
+                                console.error('❌ ECharts не загружен!');
+                                return;
+                            }
+                            
+                            const myChart = echarts.init(dom);
+                            chartInstances.push(myChart);
+                            
+                            // Для pie — преобразуем x_axis + series_data в массив {name, value}
+                            const seriesData = isPie
+                                ? (d.x_axis || []).map((name, idx) => ({
+                                    name,
+                                    value: (d.series_data || [])[idx] || 0
+                                  }))
+                                : (d.series_data || []);
+
+                            const option = {
+                                title: {
+                                    text: d.title || 'График',
+                                    left: 'center',
+                                    top: 10,
+                                    textStyle: {
+                                        color: '#003366',
+                                        fontWeight: 700,
+                                        fontSize: 16
+                                    }
+                                },
+                                tooltip: {
+                                    trigger: isPie ? 'item' : 'axis',
+                                    backgroundColor: 'rgba(255, 255, 255, 0.97)',
+                                    borderColor: '#d1dce7',
+                                    borderWidth: 1,
+                                    textStyle: { color: '#1a2c3e' }
+                                },
+                                legend: isPie ? { orient: 'vertical', left: 'left', top: 40 } : undefined,
+                                xAxis: isPie ? undefined : {
+                                    data: d.x_axis || [],
+                                    axisLabel: {
+                                        color: '#1a2c3e',
+                                        rotate: 30,
+                                        fontSize: 12,
+                                        fontWeight: 600
+                                    },
+                                    axisLine: { lineStyle: { color: '#d1dce7', width: 2 } },
+                                    splitLine: { show: false },
+                                    axisTick: { show: false }
+                                },
+                                yAxis: isPie ? undefined : {
+                                    axisLabel: { color: '#1a2c3e', fontSize: 12, fontWeight: 600 },
+                                    axisLine: { show: false },
+                                    axisTick: { show: false },
+                                    splitLine: { lineStyle: { color: '#e8edf2', width: 1 } }
+                                },
+                                grid: isPie ? undefined : {
+                                    containLabel: true,
+                                    bottom: '10%',
+                                    top: '20%',
+                                    left: '10%',
+                                    right: '10%'
+                                },
+                                series: [{
+                                    name: d.series_name || 'Данные',
+                                    type: d.chart_type || 'bar',
+                                    radius: isPie ? ['0%', '65%'] : undefined,
+                                    data: isPie ? seriesData.map((item, idx) => {
+                                        const colors = [
+                                            '#00d4ff', '#7c3aed', '#ffd700', '#10b981', '#f59e0b',
+                                            '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316'
+                                        ];
+                                        return {
+                                            ...item,
+                                            itemStyle: {
+                                                color: colors[idx % colors.length],
+                                                shadowBlur: 15,
+                                                shadowColor: 'rgba(0, 0, 0, 0.2)'
+                                            }
+                                        };
+                                    }) : seriesData,
+                                    colorBy: d.chart_type === 'bar' ? 'data' : undefined,
+                                    itemStyle: isPie ? {
+                                        borderRadius: 12,
+                                        borderColor: '#ffffff',
+                                        borderWidth: 3
+                                    } : d.chart_type === 'bar' ? {
+                                        borderRadius: [4, 4, 0, 0]
+                                    } : undefined,
+                                    lineStyle: d.chart_type === 'line' ? { width: 3 } : undefined,
+                                    label: isPie ? {
+                                        show: true,
+                                        color: '#1a2c3e',
+                                        formatter: '{b}: {d}%',
+                                        fontSize: 12,
+                                        fontWeight: 600
+                                    } : d.chart_type === 'bar' ? {
+                                        show: true,
+                                        position: 'top',
+                                        color: '#1a2c3e',
+                                        fontSize: 11,
+                                        fontWeight: 600
+                                    } : undefined,
+                                    labelLine: isPie ? {
+                                        show: true,
+                                        lineStyle: {
+                                            color: '#1a2c3e',
+                                            width: 2
+                                        },
+                                        smooth: 0.2,
+                                        length: 15,
+                                        length2: 10
+                                    } : undefined,
+                                    smooth: d.chart_type === 'line' ? true : undefined,
+                                    symbol: d.chart_type === 'line' ? 'circle' : undefined,
+                                    symbolSize: d.chart_type === 'line' ? 10 : undefined
+                                }]
+                            };
+                            
+                            myChart.setOption(option, true);
+                            
+                            const resizeHandler = () => myChart.resize();
+                            window.addEventListener('resize', resizeHandler);
+                            myChart.on('dispose', () => {
+                                window.removeEventListener('resize', resizeHandler);
+                            });
+                            
+                            setTimeout(() => myChart.resize(), 100);
+                            setTimeout(() => myChart.resize(), 500);
+                        }, 300);
+                    }
                     else if (data.type === "text") {
                         if (!firstChunkReceived) {
                             removeLoader();
@@ -571,6 +762,11 @@ async function sendMessage() {
         }
         
         // ФИНАЛИЗАЦИЯ
+        // Если графика или ошибка пришли без текста — создаём сообщение для источников
+        if (!currentBotMsgDiv && (sHtml || sHtmlImg)) {
+            currentBotMsgDiv = appendMessage('bot', '');
+        }
+        
         if (currentBotMsgDiv) {
             // Сначала рендерим график (если есть) — добавляет DOM-ноды через appendChild
             if (fullText.includes("[/CHART_JSON]")) {
@@ -587,6 +783,9 @@ async function sendMessage() {
             if (afterContent) {
                 currentBotMsgDiv.insertAdjacentHTML('beforeend', afterContent);
             }
+            
+            // Сохраняем ответ бота в историю
+            persistCurrentChat();
         }
 
     } catch (err) { 
@@ -648,4 +847,346 @@ document.addEventListener('DOMContentLoaded', () => {
             headerH2.classList.remove('shine-in');
         });
     }
+
+    // 🔥 ИНИЦИАЛИЗАЦИЯ ИСТОРИИ ЧАТОВ
+    initializeChatHistory();
 });
+
+// ============================================
+// 🔥 СИСТЕМА ИСТОРИИ ЧАТОВ - localStorage
+// ============================================
+
+let currentChatId = null;
+let _loadingChat = false; // Флаг: идёт загрузка чата — не сохраняем
+const STORAGE_KEY = 'fns_chat_history';
+const CHAT_CONTENT_KEY = 'fns_chat_content_';
+
+// Структура чата: { id, title, messages: [{ type, content }], timestamp, firstUserQuery }
+
+// 🔧 Вспомогательная — собирает сообщения и графики из DOM
+function captureMessages() {
+    const items = [];
+    const chat = document.getElementById('chat');
+    if (!chat) return items;
+    
+    for (const el of chat.children) {
+        if (el.classList.contains('msg')) {
+            const chartWrapper = el.querySelector('.chart-wrapper');
+            if (chartWrapper && chartWrapper.dataset && chartWrapper.dataset.chartData) {
+                try {
+                    const chartData = JSON.parse(chartWrapper.dataset.chartData);
+                    // Клонируем и удаляем wrapper — сохраняем только текст
+                    const cloned = el.cloneNode(true);
+                    const cw = cloned.querySelector('.chart-wrapper');
+                    if (cw) cw.remove();
+                    items.push({
+                        type: 'bot',
+                        content: cloned.innerHTML
+                    });
+                    items.push({
+                        type: 'chart_data',
+                        chartData: chartData
+                    });
+                } catch (e) {
+                    items.push({
+                        type: el.classList.contains('user') ? 'user' : 'bot',
+                        content: el.innerHTML
+                    });
+                }
+            } else {
+                items.push({
+                    type: el.classList.contains('user') ? 'user' : 'bot',
+                    content: el.innerHTML
+                });
+            }
+        }
+    }
+    return items;
+}
+
+function getChatHistory() {
+    try {
+        const history = localStorage.getItem(STORAGE_KEY);
+        return history ? JSON.parse(history) : [];
+    } catch (e) {
+        console.error('❌ Ошибка при загрузке истории:', e);
+        return [];
+    }
+}
+
+function saveChatHistory(history) {
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    } catch (e) {
+        console.error('❌ Ошибка при сохранении истории:', e);
+    }
+}
+
+function getChatMessages(chatId) {
+    try {
+        const content = localStorage.getItem(CHAT_CONTENT_KEY + chatId);
+        return content ? JSON.parse(content) : [];
+    } catch (e) {
+        console.error('❌ Ошибка при загрузке сообщений:', e);
+        return [];
+    }
+}
+
+function saveChatMessages(chatId, messages) {
+    try {
+        localStorage.setItem(CHAT_CONTENT_KEY + chatId, JSON.stringify(messages));
+    } catch (e) {
+        console.error('❌ Ошибка при сохранении сообщений:', e);
+    }
+}
+
+// 🔧 Сохраняет сообщения текущего чата из DOM (с защитой от сохранения при загрузке)
+function persistCurrentChat() {
+    if (!currentChatId || _loadingChat) return;
+    const messages = captureMessages();
+    saveChatMessages(currentChatId, messages);
+}
+
+// 🔧 Обновляет заголовок чата первым вопросом пользователя
+function setFirstQuery(query) {
+    if (!currentChatId || !query.trim()) return;
+    const history = getChatHistory();
+    const idx = history.findIndex(c => c.id === currentChatId);
+    if (idx !== -1 && !history[idx].firstUserQuery) {
+        history[idx].firstUserQuery = query.substring(0, 60);
+        saveChatHistory(history);
+        updateHistoryUI();
+    }
+}
+
+function createNewChat() {
+    const chatId = 'chat_' + Date.now();
+    const history = getChatHistory();
+    
+    const newChat = {
+        id: chatId,
+        title: 'Новый чат',
+        timestamp: new Date().toLocaleString('ru-RU'),
+        firstUserQuery: ''
+    };
+    
+    history.unshift(newChat);
+    saveChatHistory(history);
+    saveChatMessages(chatId, []);
+    
+    loadChat(chatId);
+    closeSidebar();
+}
+
+function loadChat(chatId) {
+    if (currentChatId === chatId) return; // Если уже открыт
+    
+    // Сохраняем текущий чат перед переключением
+    persistCurrentChat();
+    
+    // Включаем флаг загрузки — appendMessage не будет сохранять
+    _loadingChat = true;
+    
+    currentChatId = chatId;
+    const chat = document.getElementById('chat');
+    chat.innerHTML = '';
+    
+    const messages = getChatMessages(chatId);
+    let lastBotDiv = null;
+    // Вставляем сообщения напрямую, без appendMessage (чтобы не сохранять)
+    messages.forEach(msg => {
+        if (msg.type === 'chart_data' && msg.chartData && lastBotDiv) {
+            // Восстанавливаем график — создаём wrapper и вставляем в последний bot-div
+            const d = msg.chartData;
+            const chartId = 'echarts_' + Math.random().toString(36).substr(2, 9);
+            const chartWrapper = document.createElement('div');
+            chartWrapper.className = 'chart-wrapper';
+            chartWrapper.style.cssText = 'width: 100%; margin: 10px 0; background: #ffffff; border: 1px solid #d1dce7; border-radius: 16px; border-top: 2px solid #00509e; padding: 20px 15px; box-shadow: 0 4px 16px rgba(0, 51, 102, 0.08); box-sizing: border-box;';
+            chartWrapper.dataset.chartData = JSON.stringify(d);
+            const chartDiv = document.createElement('div');
+            chartDiv.id = chartId;
+            const isPie = d.chart_type === 'pie';
+            chartDiv.style.cssText = `width: 100%; height: ${isPie ? '500px' : '450px'};`;
+            chartWrapper.appendChild(chartDiv);
+
+            // Вставляем график ДО ссылок (если они есть)
+            const sourcesDiv = lastBotDiv.querySelector('div[style*="border-top"]');
+            if (sourcesDiv) {
+                lastBotDiv.insertBefore(chartWrapper, sourcesDiv);
+            } else {
+                lastBotDiv.appendChild(chartWrapper);
+            }
+
+            // Инициализация ECharts
+            setTimeout(() => {
+                const dom = document.getElementById(chartId);
+                if (!dom || typeof echarts === 'undefined') return;
+                const myChart = echarts.init(dom);
+                chartInstances.push(myChart);
+                const seriesData = isPie
+                    ? (d.x_axis || []).map((name, idx) => ({ name, value: (d.series_data || [])[idx] || 0 }))
+                    : (d.series_data || []);
+
+                const pieColors = [
+                    '#00d4ff', '#7c3aed', '#ffd700', '#10b981', '#f59e0b',
+                    '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316'
+                ];
+
+                const option = {
+                    title: { text: d.title || 'График', left: 'center', top: 10, textStyle: { color: '#003366', fontWeight: 700, fontSize: 16 } },
+                    tooltip: { trigger: isPie ? 'item' : 'axis', backgroundColor: 'rgba(255, 255, 255, 0.97)', borderColor: '#d1dce7', borderWidth: 1 },
+                    legend: isPie ? { orient: 'vertical', left: 'left', top: 40 } : undefined,
+                    xAxis: isPie ? undefined : { data: d.x_axis || [], axisLabel: { color: '#1a2c3e', rotate: 30, fontSize: 12, fontWeight: 600 }, axisLine: { lineStyle: { color: '#d1dce7', width: 2 } }, splitLine: { show: false }, axisTick: { show: false } },
+                    yAxis: isPie ? undefined : { axisLabel: { color: '#1a2c3e', fontSize: 12, fontWeight: 600 }, axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: '#e8edf2', width: 1 } } },
+                    grid: isPie ? undefined : { containLabel: true, bottom: '10%', top: '20%', left: '10%', right: '10%' },
+                    series: [{
+                        name: d.series_name || 'Данные',
+                        type: d.chart_type || 'bar',
+                        radius: isPie ? '65%' : undefined,
+                        data: isPie ? seriesData.map((item, idx) => ({
+                            ...item,
+                            itemStyle: {
+                                color: pieColors[idx % pieColors.length],
+                                shadowBlur: 15,
+                                shadowColor: 'rgba(0, 0, 0, 0.2)'
+                            }
+                        })) : seriesData,
+                        colorBy: d.chart_type === 'bar' ? 'data' : undefined,
+                        itemStyle: isPie ? { borderRadius: 12, borderColor: '#ffffff', borderWidth: 3, shadowBlur: 15, shadowColor: 'rgba(0, 0, 0, 0.2)' } : d.chart_type === 'bar' ? { borderRadius: [4, 4, 0, 0] } : undefined,
+                        lineStyle: d.chart_type === 'line' ? { width: 3 } : undefined,
+                        label: isPie ? { show: true, color: '#1a2c3e', formatter: '{b}: {d}%', fontSize: 12, fontWeight: 600 } : d.chart_type === 'bar' ? { show: true, position: 'top', color: '#1a2c3e', fontSize: 11, fontWeight: 600 } : undefined,
+                        labelLine: isPie ? { show: true, lineStyle: { color: '#1a2c3e', width: 2 }, smooth: 0.2, length: 15, length2: 10 } : undefined,
+                        smooth: d.chart_type === 'line' ? true : undefined,
+                        symbol: d.chart_type === 'line' ? 'circle' : undefined,
+                        symbolSize: d.chart_type === 'line' ? 10 : undefined
+                    }]
+                };
+                myChart.setOption(option, true);
+                setTimeout(() => myChart.resize(), 100);
+                setTimeout(() => myChart.resize(), 500);
+                const resizeHandler = () => myChart.resize();
+                window.addEventListener('resize', resizeHandler);
+                myChart.on('dispose', () => window.removeEventListener('resize', resizeHandler));
+            }, 300);
+            return;
+        }
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'msg ' + msg.type;
+        if (msg.type === 'user') {
+            msgDiv.textContent = msg.content;
+        } else if (msg.type === 'bot') {
+            msgDiv.innerHTML = msg.content;
+            lastBotDiv = msgDiv;
+        } else {
+            msgDiv.innerHTML = msg.content;
+        }
+        chat.appendChild(msgDiv);
+    });
+    
+    _loadingChat = false;
+    
+    updateHistoryUI();
+    
+    document.getElementById('messageText').value = '';
+    document.getElementById('messageText').focus();
+    scrollToBottom();
+}
+
+function deleteChat(chatId, e) {
+    e.stopPropagation(); // Не открываем чат при клике на удаление
+    
+    const history = getChatHistory();
+    const filtered = history.filter(c => c.id !== chatId);
+    saveChatHistory(filtered);
+    localStorage.removeItem(CHAT_CONTENT_KEY + chatId);
+    
+    if (currentChatId === chatId) {
+        if (filtered.length > 0) {
+            loadChat(filtered[0].id);
+        } else {
+            currentChatId = null;
+            document.getElementById('chat').innerHTML = '';
+            createNewChat();
+        }
+    }
+    
+    updateHistoryUI();
+}
+
+function updateHistoryUI() {
+    const history = getChatHistory();
+    const container = document.getElementById('chatHistory');
+    
+    if (history.length === 0) {
+        container.innerHTML = `<div class="chat-empty">Нет чатов</div>`;
+        return;
+    }
+    
+    container.innerHTML = history.map(chat => {
+        const isActive = currentChatId === chat.id;
+        const title = chat.firstUserQuery || chat.title;
+        const truncated = title.length > 40 ? title.substring(0, 40) + '...' : title;
+        
+        return `
+            <div class="chat-item ${isActive ? 'active' : ''}" onclick="loadChat('${chat.id}')">
+                <span>${truncated}</span>
+                <span class="chat-del" onclick="deleteChat('${chat.id}', event)">×</span>
+            </div>
+        `;
+    }).join('');
+}
+
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    sidebar.classList.toggle('open');
+    overlay.classList.toggle('open');
+}
+
+function closeSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    sidebar.classList.remove('open');
+    overlay.classList.remove('open');
+}
+
+function toggleSidebarCollapse() {
+    const sidebar = document.getElementById('sidebar');
+    const btn = document.getElementById('sidebarToggle');
+    
+    sidebar.classList.toggle('collapsed');
+    document.body.classList.toggle('sidebar-collapsed');
+    
+    if (sidebar.classList.contains('collapsed')) {
+        btn.textContent = '▶';
+    } else {
+        btn.textContent = '◀';
+    }
+}
+
+function clearAllHistory() {
+    if (!confirm('⚠️ Вы уверены? Все чаты будут удалены!')) return;
+    
+    const history = getChatHistory();
+    history.forEach(chat => {
+        localStorage.removeItem(CHAT_CONTENT_KEY + chat.id);
+    });
+    
+    localStorage.removeItem(STORAGE_KEY);
+    currentChatId = null;
+    document.getElementById('chat').innerHTML = '';
+    updateHistoryUI();
+    createNewChat();
+}
+
+function initializeChatHistory() {
+    const history = getChatHistory();
+    
+    if (history.length === 0) {
+        createNewChat();
+    } else {
+        loadChat(history[0].id);
+    }
+    
+    updateHistoryUI();
+}

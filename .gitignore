@@ -167,7 +167,7 @@ GraphRAG/*.gexf
 GraphRAG/*.json
 communities.json
 
-# Employees (если это персональные данные)
+# Employees (если это персональные данные)qdrant_storage
 employees.txt
 
 # Конфиги с секретами

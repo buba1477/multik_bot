@@ -6,6 +6,7 @@ import asyncio
 import time
 import urllib.parse
 import numpy as np
+import requests 
 from pathlib import Path
 from typing import List, Optional, Any, Tuple
 
@@ -36,6 +37,8 @@ import pickle
 
 from llama_index.core.schema import MetadataMode # <--- ДОБАВЬ MetadataMode
 
+# Импорт графиков и визуализации (для будущего использования в ECharts)
+from chart_engine import DynamicChartEngine
 
 from qdrant_client import QdrantClient # СТРОГО ТАК
 from llama_index.vector_stores.qdrant import QdrantVectorStore
@@ -63,7 +66,7 @@ def patched_setitem(self, key, value):
         pass
 
 # Подменяем метод записи во всей библиотеке на лету
-ChatResponse.__setitem__ = patched_setitem
+# ChatResponse.__setitem__ = patched_setitem
 
 
 # ========== BM25 ==========
@@ -89,6 +92,8 @@ MODEL_PATH  = BASE_DIR / "hf_cache" / "ru-en-RoSBERTa"
 PERSIST_DIR = BASE_DIR / "fns_rag_graph_final"
 IMG_FOLDER  = BASE_DIR / "images_cache"
 EMPLOYEES_FILE = BASE_DIR / "employees.txt"
+
+
 
 if not MODEL_PATH.exists():
     logger.warning(f"⚠️ Папка модели не найдена: {MODEL_PATH}")
@@ -117,9 +122,6 @@ _QA_PROMPT_STR = """
 """
 
 qa_prompt = PromptTemplate(_QA_PROMPT_STR)
-
-
-_FORCED_QUERY_SUFFIX = "\n\nВАЖНО: ОТВЕТЬ НА РУССКОМ ЯЗЫКЕ, ИСПОЛЬЗУЯ ТОЛЬКО БАЗУ ЗНАНИЙ."
 
 
 # ========== ЭМБЕДДЕР ==========
@@ -161,6 +163,10 @@ Settings.embed_model = SberRoSBERTaEmbedding(
 # ========== LLM (OLLAMA) ==========
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama_container:11434")
 
+
+# Инициализируем наш новый изолированный движок
+chart_engine = DynamicChartEngine(ollama_url=OLLAMA_HOST)
+
 Settings.llm = Ollama(
     model="yagpt5_fns:latest",
     base_url=OLLAMA_HOST,
@@ -175,8 +181,8 @@ Settings.llm = Ollama(
         "repeat_penalty": 1.05,
         
         # Спасатели памяти (Оставляем!)
-        "f16_kv": False,       
-        "flash_attn": True,    
+        # "f16_kv": False,       
+        # "flash_attn": True,    
         # "num_thread": 4,     
     },
     
@@ -772,75 +778,34 @@ class RerankedEngine:
     # RESPONSE MODE
     # =========================================================
 
-    def _select_response_mode(
-        self,
-        query_text: str,
-    ):
-
+    def _select_response_mode(self, query_text: str):
         q = query_text.lower()
 
-        if any(
-            p in q
-            for p in self.NEGATIVE_PATTERNS
-        ):
+        # --- 1. КОНТУР ГЛОБАЛЬНОЙ АНАЛИТИКИ И СУММАРИЗАЦИИ (ВРУБАЕМ TREE!) ---
+        if any(p in q for p in ["сравни", "отличия", "разница", "обобщи", "обзор", "анализ", "суммариз"]):
+            logger.info("🌲 GLOBAL -> TREE_SUMMARIZE")
+            # Возвращаем древовидный синтезатор LlamaIndex для концептуальных задач
+            return self.tree_synthesizer 
 
-            logger.info(
-                "⚡ COMPACT -> NEGATIVE"
-            )
-
+        # --- 2. КОНТУР ОТРИЦАНИЙ ---
+        if any(p in q for p in self.NEGATIVE_PATTERNS):
+            logger.info("⚡ COMPACT -> NEGATIVE")
             return self.compact_synthesizer
 
-        if any(
-            p in q
-            for p in [
-                "кто такой",
-                "кто такая",
-                "биография",
-                "родился",
-                "руководитель",
-                "заместитель",
-                "график",
-                "диаграмма",
-                "круговая",
-                "столбчатая",
-                "гистограмма",
-                "динамика",
-                # "какая"
-            ]
-        ):
-
-            logger.info(
-                "👤 COMPACT -> BIO"
-            )
-
+        # --- 3. КОНТУР БИОГРАФИЙ И ГРАФИКОВ ---
+        if any(p in q for p in ["кто такой", "кто такая", "биография", "руководитель", "график", "диаграмма"]):
+            logger.info("👤 COMPACT -> BIO")
             return self.compact_synthesizer
 
-        if any(
-            p in q
-            for p in [
-                "сколько",
-                "какой срок",
-                "когда",
-                "предусмотрено ли",
-                "разрешается ли",
-                "допускается ли",
-                "можно ли",
-                "каким",
-                "каким законом",
-            ]
-        ):
-
-            logger.info(
-                "🎯 COMPACT -> FACT"
-            )
-
+        # --- 4. КОНТУР ТОЧНЫХ ОПЕРАТИВНЫХ ФАКТОВ (Наш пуленепробиваемый COMPACT) ---
+        if any(p in q for p in ["сколько", "какой срок", "когда", "предусмотрено ли", "можно ли", "каким"]):
+            logger.info("🎯 COMPACT -> FACT")
             return self.compact_synthesizer
        
-        logger.info(
-                    "👤 TREE -> DEFAULT"
-                )
-        return self.tree_synthesizer
-        
+        # --- 5. ДЕФОЛТНЫЙ КОНТУР ---
+        logger.info("👤 COMPACT -> DEFAULT")
+        return self.compact_synthesizer
+   
 
     # =========================================================
     # QUERY
@@ -860,7 +825,7 @@ class RerankedEngine:
 
     def _sync_query(self, query_text: str):
         norm_query = self._normalize_query(query_text)
-        logger.info(f"🔎 [QUERY]: {query_text} -> {norm_query}")
+        # logger.info(f"🔎 [QUERY]: {query_text} -> {norm_query}")
 
         # 1. VECTOR SEARCH
         vector_nodes = self.retriever.retrieve(norm_query)
@@ -1052,13 +1017,19 @@ def _find_photo(resp_lower: str, nodes: list) -> Optional[str]:
 
     return None
 
-# ========== ОСНОВНАЯ ФУНКЦИЯ ДЛЯ API ==========
+
+# ========== ОСНОВНАЯ ФУНКЦИЯ ДЛЯ API (АРХИТЕКТУРНО ЧИСТАЯ) ==========
 async def get_ai_streaming_response(query_text: str):
     start_time = time.time()
 
     try:
         logger.info(f"🚀 Запрос: '{query_text[:100]}...'")
 
+        # 1. Проверяем намерение пользователя через изолированный chart_engine
+        is_chart_mode = chart_engine.is_chart_request(query_text)
+        
+        # 2. В QDRANT ШЛЕМ СТРОГО ЧИСТЫЙ ВОПРОС! Никакого мусора и ИТ-инструкций.
+        # Поиск и реранкер Сбера теперь работают со 100% точностью по смыслу.
         response = query_engine._sync_query(query_text)
 
         if response is None:
@@ -1071,8 +1042,9 @@ async def get_ai_streaming_response(query_text: str):
 
         sources = _collect_sources(nodes)
         logger.info(f"🧩 Источников для фронта: {len(sources)}")
-        local_img = nodes[0].node.metadata.get('local_img', '')
+        local_img = nodes[0].node.metadata.get('local_img', '') if nodes else ''
 
+        # Отправляем метаданные и источники на фронтенд
         yield json.dumps({
             "type": "metadata",
             "sources": sources,
@@ -1088,34 +1060,72 @@ async def get_ai_streaming_response(query_text: str):
         gen_start = time.time()
         tokens: List[str] = []
 
-        for token in response.response_gen:
-            tokens.append(token)
-            yield json.dumps({"type": "text", "content": token}, ensure_ascii=False) + "\n"
+        # =========================================================
+        # РАЗВЕТВЛЕНИЕ КОНТУРОВ: ГРАФИК VS СТАНДАРТНЫЙ ТЕКСТ
+        # =========================================================
+        if is_chart_mode:
+            logger.info("🎯 [API]: Включаем изолированный Pydantic-контур генерации графика.")
+            
+            # Собираем найденный в Qdrant текстовый контекст из нод в одну чистую строку
+            rag_context = "\n\n".join([node.node.get_content() for node in nodes])
+            
+            # Формируем payload для Ollama, где огромный промпт встает в поле system
+            # и больше не отсвечивает в векторизаторе. Мы вызываем его тут!
+            config = chart_engine.process_llm_payload(
+                query=query_text, 
+                rag_context=rag_context, 
+                model_name="yagpt5_fns:latest"
+            )
+            payload = config["payload"]
+            
+            # Лупим ПРЯМОЙ POST-запрос в контейнер Ollama за монолитным JSON-ом
+            ollama_response = requests.post(chart_engine.ollama_url, json=payload, timeout=30)
+            ollama_response.raise_for_status()
+            raw_json_text = ollama_response.json()["message"]["content"]
+            
+            # Наполняем массив для корректной работы логов
+            tokens = list(raw_json_text)
+            
+            # Валидируем получившийся монолит через Pydantic-контракт
+            parsed_chart_node = chart_engine.validate_and_parse(raw_json_text)
+            
+            # Отправляем готовый график на фронт за один раз
+            yield json.dumps(parsed_chart_node, ensure_ascii=False) + "\n"
+            logger.info("📊 График успешно отвалидирован и отправлен на фронт.")
+            
+        else:
+            # Сценарий Б: Стандартный стриминг текстовых токенов на фронт (Твой старый код)
+            for token in response.response_gen:
+                tokens.append(token)
+                yield json.dumps({"type": "text", "content": token}, ensure_ascii=False) + "\n"
 
+        # Логируем скорость работы контейнера Ollama
         gen_time = time.time() - gen_start
         token_count = len(tokens)
-        if gen_time > 0:
+        if gen_time > 0 and not is_chart_mode:
             logger.info(f"💬 {token_count} токенов за {gen_time:.2f} сек ({token_count / gen_time:.1f} ток/сек)")
-        else:
-            logger.info(f"💬 {token_count} токенов за {gen_time:.2f} сек")
 
-        full_response_text = "".join(tokens)
-        resp_lower = full_response_text.lower()
+        # =========================================================
+        # ТВОЙ РОДНОЙ КОНТУР ПОДБОРА ФОТОГРАФИЙ (СТРОГО НА МЕСТЕ)
+        # =========================================================
+        if not is_chart_mode:
+            full_response_text = "".join(tokens)
+            resp_lower = full_response_text.lower()
 
-        is_empty = bool(_EMPTY_RESPONSE_RE.search(resp_lower))
-        is_chart = "[chart_json]" in resp_lower
-        is_table = "|---" in resp_lower or "| :---" in resp_lower or resp_lower.count("|") > 10
+            is_empty = bool(_EMPTY_RESPONSE_RE.search(resp_lower))
+            is_table = "|---" in resp_lower or "| :---" in resp_lower or resp_lower.count("|") > 10
 
-        if not is_empty and not is_chart and not is_table:
-            final_photo = _find_photo(resp_lower, nodes)
-            if final_photo and "ии-помощник" not in resp_lower:
-                encoded = urllib.parse.quote(final_photo)
-                yield json.dumps(
-                    {"type": "text", "content": f"\n\n![photo](/images/{encoded})"},
-                    ensure_ascii=False,
-                ) + "\n"
-                logger.info(f"📸 Добавлено фото: {final_photo}")
+            if not is_empty and not is_table:
+                final_photo = _find_photo(resp_lower, nodes)
+                if final_photo and "ии-помощник" not in resp_lower:
+                    encoded = urllib.parse.quote(final_photo)
+                    yield json.dumps(
+                        {"type": "text", "content": f"\n\n![photo](/images/{encoded})"},
+                        ensure_ascii=False,
+                    ) + "\n"
+                    logger.info(f"📸 Добавлено фото: {final_photo}")
 
+        # Закрываем стрим
         yield json.dumps({"type": "end"}, ensure_ascii=False) + "\n"
         logger.info(f"⏱️ Итого: {time.time() - start_time:.2f} сек")
 

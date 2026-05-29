@@ -65,8 +65,26 @@ async def get_chat_page():
     <script src="/static/js/echarts.min.js"></script>
 </head>
 <body>
+<!-- 🔥 Стрелка для скрытия/показа сайдбара -->
+<span id="sidebarToggle" class="sidebar-toggle-btn" onclick="toggleSidebarCollapse()">◀</span>
+
+<!-- 🔥 БОКОВАЯ ПАНЕЛЬ ИСТОРИИ -->
+<div id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+        <h3>История</h3>
+        <span class="sidebar-new-btn" onclick="createNewChat()">+</span>
+    </div>
+    <div id="chatHistory" class="chat-history"></div>
+</div>
+
+<!-- Оверлей для закрытия сайдбара -->
+<div id="sidebarOverlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
+
 <div id="container">
-    <header style="display: flex; align-items: center; justify-content: center; border-bottom: 4px solid #e2e2e2; margin-bottom: 10px; position: relative;">
+    <header style="display: flex; align-items: center; justify-content: center; margin-bottom: 10px; position: relative;">
+        <!-- 🔥 Кнопка меню -->
+        <button id="menuBtn" class="menu-toggle-btn" onclick="toggleSidebar()" title="История чатов">☰</button>
+        
         <!-- 🔥 Логотип -->
         <a href="/" style="display: flex; align-items: center; text-decoration: none; margin-right: auto; padding-left: 5px;">
         <img src="/static/logo.png" alt="Лого" style="height: 35px; width: auto; object-fit: contain; margin-right: auto; padding-left: 5px;">
@@ -88,9 +106,9 @@ async def get_chat_page():
         <button id="sendButton" onclick="sendMessage()" style="height: 44px; box-sizing: border-box;">➤</button>
         
         <!-- 2. Корзина: теперь она привязана прямо к input-area, у них одна базовая линия -->
-        <div style="position: absolute; right: -56px; height: 44px; display: flex; align-items: center;">
+        <!-- <div style="position: absolute; right: -56px; height: 44px; display: flex; align-items: center;">
             <button id="clearButton" class="clear-btn" data-tooltip="Очистить чат" onclick="clearInput()" style="background: #f1f3f5; border: 1px solid #d1dce7; border-radius: 8px; font-size: 18px; cursor: pointer; height: 44px; width: 44px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; transition: all 0.2s;">🗑️</button>
-        </div>
+        </div> -->
     </div>
     
 </div>

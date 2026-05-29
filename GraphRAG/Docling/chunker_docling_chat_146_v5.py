@@ -11,8 +11,8 @@ import os
 # =========================================================
 
 MODEL_PATH = "/home/amlin04/multik_bot/hf_cache/ru-en-RoSBERTa"
-INPUT_PDF = "146-ФЗ.pdf"
-OUTPUT_FILE = "146-FZ.jsonl"
+INPUT_PDF = "117-ФЗ.pdf"
+OUTPUT_FILE = "117-FZ.jsonl"
 URL = "http://www.kremlin.ru/acts/bank/12755"
 
 MAX_TOKENS = 512
