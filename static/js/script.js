@@ -465,7 +465,19 @@ async function sendMessage() {
     if (!input || !input.value.trim()) return;
 
     const query = input.value;
-    input.value = "";
+    
+    // ========== ВОЗВРАЩАЕМ ПОЛЕ В ДЕФОЛТ ==========
+    input.value = "";                 // очищаем текст
+    input.style.height = "auto";      // сбрасываем высоту
+    
+    // Прячем крестик очистки (если есть)
+    const clearBtn = document.getElementById("clearTextBtn");
+    if (clearBtn) clearBtn.style.display = "none";
+    
+    // Деактивируем кнопку отправки
+    const sendButton = document.getElementById("sendButton");
+    if (sendButton) sendButton.disabled = true;
+    // =============================================
     
     isGenerating = true;
     blockInput(true);
@@ -486,7 +498,7 @@ async function sendMessage() {
     let sHtml = '';
     let sHtmlImg = '';
     let fullText = "";
-    let hadChartOnly = false; // Флаг: пришёл график без текста
+    let hadChartOnly = false;
 
     try {
         const response = await fetch('/api/v1/predict/stream', {
@@ -523,7 +535,6 @@ async function sendMessage() {
                         }
                     } 
                     else if (data.type === "chart_error") {
-                        // Ошибка генерации графика — выводим как обычный текст
                         if (!firstChunkReceived) {
                             removeLoader();
                             currentBotMsgDiv = appendMessage('bot', "<b>База знаний ФНС:</b> 📌 <br>");
@@ -537,7 +548,6 @@ async function sendMessage() {
                         }
                     }
                     else if (data.type === "chart") {
-                        // Если график пришёл первым чанком — убираем лоадер и создаём контейнер
                         if (!firstChunkReceived) {
                             removeLoader();
                             currentBotMsgDiv = appendMessage('bot', "<b>База знаний ФНС:</b> 📌 <br>");
@@ -545,12 +555,10 @@ async function sendMessage() {
                         }
 
                         const d = data.data;
-
                         if (!currentBotMsgDiv) {
                             currentBotMsgDiv = appendMessage('bot', '');
                         }
 
-                        // Создаём контейнер для графика внутри msg bot
                         const chartId = 'echarts_' + Math.random().toString(36).substr(2, 9);
                         const chartWrapper = document.createElement('div');
                         chartWrapper.className = 'chart-wrapper';
@@ -561,145 +569,32 @@ async function sendMessage() {
                         const isPie = d.chart_type === 'pie';
                         chartDiv.style.cssText = `width: 100%; height: ${isPie ? '500px' : '450px'};`;
                         
-                        // Сохраняем данные графика для восстановления из истории
                         chartWrapper.dataset.chartData = JSON.stringify(d);
                         chartWrapper.appendChild(chartDiv);
                         currentBotMsgDiv.appendChild(chartWrapper);
                         scrollToBottom();
 
-                        // Инициализация ECharts после стабилизации DOM
                         setTimeout(() => {
                             const dom = document.getElementById(chartId);
-                            if (!dom) {
-                                console.error('❌ chartDiv не найден в DOM! ID:', chartId);
-                                return;
-                            }
-                            if (typeof echarts === 'undefined') {
-                                console.error('❌ ECharts не загружен!');
-                                return;
-                            }
+                            if (!dom || typeof echarts === 'undefined') return;
                             
                             const myChart = echarts.init(dom);
                             chartInstances.push(myChart);
                             
-                            // Для pie — преобразуем x_axis + series_data в массив {name, value}
                             const seriesData = isPie
-                                ? (d.x_axis || []).map((name, idx) => ({
-                                    name,
-                                    value: (d.series_data || [])[idx] || 0
-                                  }))
+                                ? (d.x_axis || []).map((name, idx) => ({ name, value: (d.series_data || [])[idx] || 0 }))
                                 : (d.series_data || []);
 
                             const option = {
-                                title: {
-                                    text: d.title || 'График',
-                                    left: 'center',
-                                    top: 10,
-                                    textStyle: {
-                                        color: '#003366',
-                                        fontWeight: 700,
-                                        fontSize: 16
-                                    }
-                                },
-                                tooltip: {
-                                    trigger: isPie ? 'item' : 'axis',
-                                    backgroundColor: 'rgba(255, 255, 255, 0.97)',
-                                    borderColor: '#d1dce7',
-                                    borderWidth: 1,
-                                    textStyle: { color: '#1a2c3e' }
-                                },
+                                title: { text: d.title || 'График', left: 'center', top: 10, textStyle: { color: '#003366', fontWeight: 700, fontSize: 16 } },
+                                tooltip: { trigger: isPie ? 'item' : 'axis', backgroundColor: 'rgba(255, 255, 255, 0.97)', borderColor: '#d1dce7', borderWidth: 1 },
                                 legend: isPie ? { orient: 'vertical', left: 'left', top: 40 } : undefined,
-                                xAxis: isPie ? undefined : {
-                                    data: d.x_axis || [],
-                                    axisLabel: {
-                                        color: '#1a2c3e',
-                                        rotate: 30,
-                                        fontSize: 12,
-                                        fontWeight: 600
-                                    },
-                                    axisLine: { lineStyle: { color: '#d1dce7', width: 2 } },
-                                    splitLine: { show: false },
-                                    axisTick: { show: false }
-                                },
-                                yAxis: isPie ? undefined : {
-                                    axisLabel: { color: '#1a2c3e', fontSize: 12, fontWeight: 600 },
-                                    axisLine: { show: false },
-                                    axisTick: { show: false },
-                                    splitLine: { lineStyle: { color: '#e8edf2', width: 1 } }
-                                },
-                                grid: isPie ? undefined : {
-                                    containLabel: true,
-                                    bottom: '10%',
-                                    top: '20%',
-                                    left: '10%',
-                                    right: '10%'
-                                },
-                                series: [{
-                                    name: d.series_name || 'Данные',
-                                    type: d.chart_type || 'bar',
-                                    radius: isPie ? ['0%', '65%'] : undefined,
-                                    data: isPie ? seriesData.map((item, idx) => {
-                                        const colors = [
-                                            '#00d4ff', '#7c3aed', '#ffd700', '#10b981', '#f59e0b',
-                                            '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316'
-                                        ];
-                                        return {
-                                            ...item,
-                                            itemStyle: {
-                                                color: colors[idx % colors.length],
-                                                shadowBlur: 15,
-                                                shadowColor: 'rgba(0, 0, 0, 0.2)'
-                                            }
-                                        };
-                                    }) : seriesData,
-                                    colorBy: d.chart_type === 'bar' ? 'data' : undefined,
-                                    itemStyle: isPie ? {
-                                        borderRadius: 12,
-                                        borderColor: '#ffffff',
-                                        borderWidth: 3
-                                    } : d.chart_type === 'bar' ? {
-                                        borderRadius: [4, 4, 0, 0]
-                                    } : undefined,
-                                    lineStyle: d.chart_type === 'line' ? { width: 3 } : undefined,
-                                    label: isPie ? {
-                                        show: true,
-                                        color: '#1a2c3e',
-                                        formatter: '{b}: {d}%',
-                                        fontSize: 12,
-                                        fontWeight: 600
-                                    } : d.chart_type === 'bar' ? {
-                                        show: true,
-                                        position: 'top',
-                                        color: '#1a2c3e',
-                                        fontSize: 11,
-                                        fontWeight: 600
-                                    } : undefined,
-                                    labelLine: isPie ? {
-                                        show: true,
-                                        lineStyle: {
-                                            color: '#1a2c3e',
-                                            width: 2
-                                        },
-                                        smooth: 0.2,
-                                        length: 15,
-                                        length2: 10
-                                    } : undefined,
-                                    smooth: d.chart_type === 'line' ? true : undefined,
-                                    symbol: d.chart_type === 'line' ? 'circle' : undefined,
-                                    symbolSize: d.chart_type === 'line' ? 10 : undefined
-                                }]
+                                xAxis: isPie ? undefined : { data: d.x_axis || [], axisLabel: { rotate: 30, fontSize: 12 } },
+                                yAxis: isPie ? undefined : { axisLabel: { fontSize: 12 } },
+                                series: [{ type: d.chart_type || 'bar', data: seriesData }]
                             };
-                            
-                            myChart.setOption(option, true);
-                            
-                            const resizeHandler = () => myChart.resize();
-                            window.addEventListener('resize', resizeHandler);
-                            myChart.on('dispose', () => {
-                                window.removeEventListener('resize', resizeHandler);
-                            });
-                            
+                            myChart.setOption(option);
                             setTimeout(() => myChart.resize(), 100);
-                            setTimeout(() => myChart.resize(), 500);
                         }, 300);
                     }
                     else if (data.type === "text") {
@@ -712,40 +607,14 @@ async function sendMessage() {
                         fullText += data.content;
                         
                         if (currentBotMsgDiv) {
-                            // 1. Отделяем текст от графиков (чтобы JSON не треснул)
                             let textPart = fullText.split('[CHART_JSON]')[0];
                             let chartPart = fullText.includes('[CHART_JSON]') ? fullText.substring(fullText.indexOf('[CHART_JSON]')) : '';
-
-                            // 🛠️ 2. УЛЬТРА-ОЧИСТКА ТЕКСТА (Для Бударина, Бациева и должностей)
-                            const n = "\n";
                             
-                            // А) Биографии: Режем по датам (В 2001, С 2013, 2016-2020)
-                           // textPart = textPart.replace(/([.!?])\s*(?=(С \d{4}|В \d{4}|\d{4}-\d{4}))/g, '$1' + n + n + '• ');
-
-                            // Б) Полномочия: Режем перед словами "Непосредственно", "Распоряжением", "Координирует"
-                            //textPart = textPart.replace(/([.!?])\s*(?=(Непосредственно|Распоряжением|Координирует|Контролирует|Имеет классный))/g, '$1' + n + n + '• ');
-
-                            // В) Разрываем слипшиеся пункты (•), если они уже есть
-                            
-                            // Любой знак препинания (., !, ?, :, ;) перед • — вставляем перенос
                             textPart = textPart.replace(/([.!?:;])\s*•/g, '$1\n\n•');
-                            
-                            // Г) Категории должностей (руководители, специалисты)
-                            //textPart = textPart.replace(/(\s*)(руководители|специалисты|обеспечивающие специалисты)\s*\(/gi, n + n + '• **$2** (');
-
-                            // Д) Таблицы (пайпы)
-                            // textPart = textPart.replace(/([^\n])\|/g, '$1' + n + '|');
-                            // textPart = textPart.replace(/\|(\s*)\|/g, '|' + n + '|');
-
-
-                            // Собираем обратно
                             let display = textPart + chartPart;
-
-                            // 3. Прячем теги графиков для красоты во время стриминга
                             display = display.replace(/\[CHART_JSON\][\s\S]*?\[\/CHART_JSON\]/g, '📈 *Визуализация готова*');
                             display = display.replace(/\[CHART_JSON\][\s\S]*$/g, '📈 *Генерация аналитики...*');
-
-                            // 4. Парсим Markdown и выводим
+                            
                             let parsedHtml = marked.parse(display);
                             
                             if (!parsedHtml.includes('<table')) {
@@ -761,30 +630,24 @@ async function sendMessage() {
             }
         }
         
-        // ФИНАЛИЗАЦИЯ
-        // Если графика или ошибка пришли без текста — создаём сообщение для источников
         if (!currentBotMsgDiv && (sHtml || sHtmlImg)) {
             currentBotMsgDiv = appendMessage('bot', '');
         }
         
         if (currentBotMsgDiv) {
-            // Сначала рендерим график (если есть) — добавляет DOM-ноды через appendChild
             if (fullText.includes("[/CHART_JSON]")) {
                 tryRenderChart(fullText, currentBotMsgDiv);
             }
 
-            // Добавляем источники + изображение + подпись через insertAdjacentHTML,
-            // чтобы не сломать DOM-ноду графика, созданную выше
             let afterContent = '';
             if (sHtml) afterContent += '<div style="margin-top:10px; border-top:1px solid #e2e2e2; padding-top:10px;">' + sHtml + '</div>';
             if (sHtmlImg) afterContent += sHtmlImg;
-            afterContent += '<div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #e2e2e2; font-size: 11px; color: #ffffff; text-align: right;">🛡️ <em>Ответ подготовлен ИИ-ассистентом ФНС</em></div>';
+            afterContent += '<div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #e2e2e2; font-size: 11px; color: #ffffff; text-align: right;">🛡️ <em>Ответ подготовлен ИИ-консультантом ФНС</em></div>';
 
             if (afterContent) {
                 currentBotMsgDiv.insertAdjacentHTML('beforeend', afterContent);
             }
             
-            // Сохраняем ответ бота в историю
             persistCurrentChat();
         }
 
@@ -795,7 +658,6 @@ async function sendMessage() {
         isGenerating = false;
         blockInput(false);
         
-        // Убираем класс searching с header
         const header = document.querySelector('header');
         if (header) {
             header.classList.remove('searching');
@@ -1141,6 +1003,11 @@ function toggleSidebar() {
     const overlay = document.getElementById('sidebarOverlay');
     sidebar.classList.toggle('open');
     overlay.classList.toggle('open');
+    document.body.classList.toggle('sidebar-open');
+}
+
+function toggleDesktopSidebar() {
+    toggleSidebarCollapse();
 }
 
 function closeSidebar() {
@@ -1148,6 +1015,7 @@ function closeSidebar() {
     const overlay = document.getElementById('sidebarOverlay');
     sidebar.classList.remove('open');
     overlay.classList.remove('open');
+    document.body.classList.remove('sidebar-open');
 }
 
 function toggleSidebarCollapse() {
@@ -1190,3 +1058,58 @@ function initializeChatHistory() {
     
     updateHistoryUI();
 }
+
+// ============================================
+// ПОЛЕ ВВОДА — ВСЁ В ОДНОМ МЕСТЕ
+// ============================================
+
+document.addEventListener("DOMContentLoaded", function () {
+    const textarea = document.getElementById("messageText");
+    const sendButton = document.getElementById("sendButton");
+    const clearBtn = document.getElementById("clearTextBtn");
+
+    if (!textarea || !sendButton) return;
+
+    // Функция авто-высоты
+    function autoResizeTextarea() {
+        textarea.style.height = 'auto';
+        textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
+    }
+
+    // Обновление кнопки отправки
+    function updateSendButton() {
+        sendButton.disabled = textarea.value.trim().length === 0;
+    }
+
+    // Обновление крестика
+    function updateClearButton() {
+        if (clearBtn) {
+            if (textarea.value.trim().length > 0) {
+                clearBtn.style.display = 'inline-flex';
+            } else {
+                clearBtn.style.display = 'none';
+            }
+        }
+    }
+
+    // Очистка поля
+    window.clearTextField = function() {
+        textarea.value = '';
+        autoResizeTextarea();
+        updateSendButton();
+        updateClearButton();
+        textarea.focus();
+    };
+
+    // Событие ввода текста
+    textarea.addEventListener('input', function() {
+        autoResizeTextarea();
+        updateSendButton();
+        updateClearButton();
+    });
+
+    // Инициализация
+    autoResizeTextarea();
+    updateSendButton();
+    updateClearButton();
+});

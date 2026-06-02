@@ -65,9 +65,6 @@ async def get_chat_page():
     <script src="/static/js/echarts.min.js"></script>
 </head>
 <body>
-<!-- 🔥 Стрелка для скрытия/показа сайдбара -->
-<span id="sidebarToggle" class="sidebar-toggle-btn" onclick="toggleSidebarCollapse()">◀</span>
-
 <!-- 🔥 БОКОВАЯ ПАНЕЛЬ ИСТОРИИ -->
 <div id="sidebar" class="sidebar">
     <div class="sidebar-header">
@@ -77,21 +74,21 @@ async def get_chat_page():
     <div id="chatHistory" class="chat-history"></div>
 </div>
 
+<!-- 🔥 Стрелка для скрытия/показа сайдбара (десктоп) — строго ПОСЛЕ сайдбара для CSS-селектора -->
+<span id="sidebarToggle" class="sidebar-toggle-btn" onclick="toggleDesktopSidebar()">◀</span>
+
 <!-- Оверлей для закрытия сайдбара -->
 <div id="sidebarOverlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
 
 <div id="container">
     <header style="display: flex; align-items: center; justify-content: center; margin-bottom: 10px; position: relative;">
-        <!-- 🔥 Кнопка меню -->
-        <button id="menuBtn" class="menu-toggle-btn" onclick="toggleSidebar()" title="История чатов">☰</button>
-        
         <!-- 🔥 Логотип -->
         <a href="/" style="display: flex; align-items: center; text-decoration: none; margin-right: auto; padding-left: 5px;">
         <img src="/static/logo.png" alt="Лого" style="height: 35px; width: auto; object-fit: contain; margin-right: auto; padding-left: 5px;">
         </a>
         <!-- 🔥 Заголовок строго по центру -->
         <h2 style="margin: 0; color: #003366; display: flex; align-items: center; font-size: 22px; position: absolute; left: 50%; transform: translateX(-50%);">
-            Нейроинспектор <span style="font-weight: 200; color: #003366; margin-left: 8px;">| ФНС России</span>
+            Нейроконсультант <span style="font-weight: 200; color: #003366; margin-left: 8px;">| ФНС России</span>
         </h2>
     </header>
     
@@ -101,15 +98,19 @@ async def get_chat_page():
      <div style="width: 100%; position: relative;">
     
     <!-- 1. Твой input-area — теперь ОН задает общую высоту и центрирует элементы -->
-    <div id="input-area" style="width: 100%; margin-bottom: 0; display: flex; align-items: center; position: relative;">
-        <input type="text" id="messageText" placeholder="Задай вопрос..." autocomplete="off" style="width: 100%; height: 44px; box-sizing: border-box;"/>
-        <button id="sendButton" onclick="sendMessage()" style="height: 44px; box-sizing: border-box;">➤</button>
-        
-        <!-- 2. Корзина: теперь она привязана прямо к input-area, у них одна базовая линия -->
-        <!-- <div style="position: absolute; right: -56px; height: 44px; display: flex; align-items: center;">
-            <button id="clearButton" class="clear-btn" data-tooltip="Очистить чат" onclick="clearInput()" style="background: #f1f3f5; border: 1px solid #d1dce7; border-radius: 8px; font-size: 18px; cursor: pointer; height: 44px; width: 44px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; transition: all 0.2s;">🗑️</button>
-        </div> -->
+   <div id="input-area">
+    <!-- Левая зона: только текстовое поле -->
+    <div class="input-text-container">
+        <textarea id="messageText" placeholder="Задай вопрос..." autocomplete="off"></textarea>
     </div>
+    
+    <!-- Правая зона: обе кнопки жестко в одной колонке -->
+    <div class="input-actions-col">
+        <button id="clearTextBtn" class="clear-text-btn" onclick="clearTextField()">✕</button>
+        <button id="sendButton" class="send-btn" onclick="sendMessage()" disabled>↑</button>
+    </div>
+</div>
+
     
 </div>
 </div>
@@ -168,7 +169,8 @@ BAD_PATTERNS = [
     r"(?i)игнорируй.*(ограничения|правила|безопасность)",
     r"(?i)отключи.*(фильтры|безопасность|цензуру)",
     r"(?i)disable.*(filters|security|safety)",
-    
+    r"(?i)ты.*(программист|разработчик|админ|developer)",
+
     # Технические атаки
     r"(?i)prompt.*injection", r"(?i)jailbreak",
     r"(?i)reveal.*(prompt|instructions)", r"(?i)extract.*(prompt|instructions)",

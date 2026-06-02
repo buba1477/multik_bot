@@ -51,6 +51,7 @@
     --radius-sm: 6px;
     --radius-md: 10px;
     --radius-lg: 12px;
+    --radius-xl: 50px;
 
     /* Transitions */
     --transition: 0.2s ease;
@@ -93,7 +94,7 @@ body {
 
 /* Main Container */
 #container {
-    width: 100%;
+    width: calc(100% - 260px);
     max-width: 1000px;
     display: flex;
     flex-direction: column;
@@ -104,8 +105,9 @@ body {
     margin-left: 260px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 900px) {
     #container {
+        width: 100%;
         margin-left: 0;
     }
 }
@@ -478,18 +480,18 @@ header h2 .subtext {
     50% { opacity: 1; }
 }
 
-#input-area {
+/* #input-area {
     background: #ffffff;
     padding: 12px 18px;
     border-radius: 28px;
     display: flex;
-    align-items: center;
+    align-items: stretch !important;
     gap: 12px;
     border: 2px solid var(--border-color);
     margin-top: 20px;
     box-shadow: 0 4px 12px rgba(0, 51, 102, 0.08);
     transition: all 0.3s ease;
-}
+} */
 
 #input-area:focus-within {
     box-shadow: 0 8px 24px rgba(0, 51, 102, 0.15);
@@ -514,13 +516,149 @@ input:focus {
     box-shadow: none !important;
 }
 
-/* Send Button */
+/* ============================================
+   ФИНАЛЬНЫЙ СУПЕР-ФИКС: КНОПКИ ОДИНАКОВЫЕ ДРУГ НАД ДРУГОМ
+   ============================================ */
+
+#input-area {
+    display: grid;
+    grid-template-columns: 1fr auto; /* Лево — весь текст, Право — фиксированная колонка кнопок */
+    align-items: stretch; 
+    gap: 16px;
+    background: #ffffff;
+    border: 2px solid #e2e8f0;
+    border-radius: 32px;
+    padding: 12px 20px;
+    box-sizing: border-box;
+    width: 100%;
+}
+
+/* Контейнер для textarea */
+.input-text-container {
+    width: 100%;
+    display: flex;
+}
+
+#input-area textarea {
+    width: 100%;
+    background: transparent;
+    border: none !important;
+    outline: none !important;
+    resize: none !important;
+    font-family: inherit;
+    font-size: 16px;
+    line-height: 1.5;
+    padding: 8px 0;
+    min-height: 100px;
+    max-height: 150px;
+    overflow-y: auto !important;
+    box-sizing: border-box;
+    scrollbar-width: none !important; /* Для Firefox */
+    -ms-overflow-style: none !important;  /* Для старого IE */
+}
+
+/* 🔥 ПРАВАЯ КОЛОНКА ДЛЯ КНОПОК — СТРОГО ВЕРТИКАЛЬНЫЙ СТЕК */
+.input-actions-col {
+    display: flex;
+    flex-direction: column; /* Выстраивает элементы друг над другом */
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px; /* Зазор между крестиком и стрелкой */
+    flex-shrink: 0; /* Защита от сжатия колонки */
+    width: 44px; /* Фиксируем общую ширину под размер кнопок */
+}
+
+/* Жесткий точечный разгон кнопок по краям */
+#input-area {
+    align-items: stretch !important; /* Насильно растягиваем правую колонку на всю высоту */
+}
+
+/* Находим ЛЮБОЙ блок внутри #input-area, который идет вторым (колонку кнопок) */
+#input-area > div:last-child {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important; /* Расталкивает крестик наверх, а стрелку вниз */
+    height: 100% !important;
+}
+
+/* КНОПКА ОЧИСТКИ (КРЕСТИК) — СДЕЛАЛИ ОДИНАКОВОЙ С СИНЕЙ */
+.clear-text-btn {
+    position: static !important; /* Никаких абсолютов и улетов по центру */
+    width: 44px !important;  /* 🔥 Точно такой же размер, как у send-btn */
+    height: 44px !important; /* 🔥 Точно такой же размер, как у send-btn */
+    border-radius: 50% !important;
+    background: #e2e8f0 !important;
+    border: none !important;
+    color: #64748b !important;
+    font-size: 16px !important;
+    font-weight: bold !important;
+    cursor: pointer;
+    display: none; /* Контролируется твоим JS скриптом (flex при вводе) */
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    box-shadow: none !important;
+    transform: none !important;
+    padding: 0 !important;
+    min-width: 44px !important;
+}
+
+.clear-text-btn:hover {
+    background: #cbd5e1 !important;
+    color: #1f2937 !important;
+}
+
+/* КНОПКА ОТПРАВКИ (СИНЯЯ СТРЕЛКА) */
+#input-area .send-btn {
+    width: 44px !important;  /* 🔥 Фиксированный размер */
+    height: 44px !important; /* 🔥 Фиксированный размер */
+    border-radius: 50% !important;
+    background: #e2e8f0 !important;
+    color: #94a3b8 !important;
+    border: none !important;
+    cursor: pointer;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 20px !important;
+    transition: all 0.2s ease;
+    padding: 0 !important;
+    min-width: 44px !important;
+    box-shadow: none !important;
+    transform: none !important;
+    margin-top: auto !important;
+}
+
+/* Твоя рабочая активация ведомственного синего градиента ФНС */
+#input-area .send-btn:not(:disabled) {
+    background: linear-gradient(135deg, #003366 0%, #004080 100%) !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 12px rgba(0, 51, 102, 0.35) !important;
+}
+
+#input-area .send-btn:not(:disabled):hover {
+    background: linear-gradient(135deg, #004080 0%, #00509e 100%) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 15px rgba(0, 51, 102, 0.45) !important;
+}
+
+#input-area .send-btn:disabled {
+    opacity: 0.5 !important;
+    cursor: not-allowed !important;
+    background: #e2e8f0 !important;
+    color: #94a3b8 !important;
+    box-shadow: none !important;
+    transform: none !important;
+}
+
+
+/* Стили общих кнопок интерфейса — оставляем без изменений */
 button {
     background: linear-gradient(135deg, #003366 0%, #004080 100%);
     color: var(--text-light);
     border: none;
     padding: 12px 28px;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-xl);
     font-weight: 600;
     font-size: 15px;
     cursor: pointer;
@@ -531,8 +669,6 @@ button {
     min-width: 48px;
     font-family: var(--font-family);
     box-shadow: 0 4px 12px rgba(0, 51, 102, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
-    position: relative;
-    overflow: visible;
 }
 
 button:hover:not(:disabled) {
@@ -550,7 +686,7 @@ button:disabled {
     cursor: not-allowed;
 }
 
-/* Clear Button */
+/* Кнопка очистки истории чата верхняя — без изменений */
 .clear-btn {
     background: linear-gradient(135deg, #f5f7fa 0%, #eff2f7 100%);
     color: #2d3748;
@@ -687,6 +823,7 @@ body.sidebar-collapsed .sidebar-toggle-btn {
     display: none;
 }
 body.sidebar-collapsed #container {
+    width: 100%;
     margin-left: 0;
 }
 
@@ -810,6 +947,9 @@ body.sidebar-collapsed #container {
     .sidebar-toggle-btn {
         display: none !important;
     }
+    body.sidebar-open {
+        overflow: hidden;
+    }
     .sidebar {
         left: -280px;
         width: 100%;
@@ -826,6 +966,44 @@ body.sidebar-collapsed #container {
     #container {
         margin-left: 0;
         padding: var(--spacing-md);
+        width: 100%;
+    }
+    body.sidebar-open #container {
+        margin-left: 260px;
+        width: calc(100% - 260px);
+    }
+    header {
+        padding: 10px 12px;
+        border-radius: 16px;
+    }
+    header img {
+        height: 24px;
+    }
+    header h2 {
+        font-size: 1rem;
+    }
+    header h2 span {
+        font-size: 0.85rem;
+    }
+    #chat {
+        padding: 8px;
+        gap: 8px;
+    }
+    .msg {
+        padding: 10px 12px;
+        font-size: 14px;
+    }
+    #input-area {
+        padding: 8px 12px;
+        border-radius: 20px;
+    }
+    input {
+        font-size: 16px;
+    }
+    button {
+        padding: 10px 20px;
+        font-size: 14px;
+        min-width: 44px;
     }
 }
 
@@ -834,13 +1012,19 @@ body.sidebar-collapsed #container {
     left: 10px;
     top: 50%;
     transform: translateY(-50%);
-    background: none;
+    background: #003366;
     border: none;
-    font-size: 24px;
+    font-size: 20px;
     cursor: pointer;
-    padding: 8px 12px;
-    color: #003366;
+    padding: 6px 10px;
+    color: #fff;
     display: none;
+    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    line-height: 1;
+    box-shadow: 0 2px 8px rgba(0,51,102,0.3);
+    z-index: 10;
 }
 
 .sidebar-close-btn {
@@ -852,17 +1036,49 @@ body.sidebar-collapsed #container {
     display: none;
 }
 
+@media (max-width: 520px) {
+    body.sidebar-open #container {
+        margin-left: 0;
+        width: 100%;
+    }
+}
+
 @media (max-width: 480px) {
     #container {
-        padding: 8px;
+        padding: 6px;
     }
     header {
-        padding: 10px 12px;
-        border-radius: 16px;
+        padding: 8px 10px;
+        border-radius: 12px;
     }
-    header h2 { font-size: 0.95rem; }
-    #chat { padding: 8px; gap: 8px; }
-    .msg { padding: 10px 12px; font-size: 13px; }
-    #input-area { padding: 8px 12px; border-radius: 20px; }
-    input { font-size: 14px; }
+    header img {
+        height: 20px;
+    }
+    header h2 {
+        font-size: 0.85rem;
+    }
+    header h2 span {
+        font-size: 0.75rem;
+    }
+    #chat {
+        padding: 6px;
+        gap: 6px;
+    }
+    .msg {
+        padding: 8px 10px;
+        font-size: 13px;
+    }
+    #input-area {
+        padding: 6px 10px;
+        border-radius: 18px;
+        gap: 8px;
+    }
+    input {
+        font-size: 15px;
+    }
+    button {
+        padding: 8px 16px;
+        font-size: 13px;
+        min-width: 40px;
+    }
 }

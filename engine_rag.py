@@ -284,6 +284,7 @@ class RerankedEngine:
         "отпуск": "ежегодный оплачиваемый отпуск",
         "коррупция": "коррупционное правонарушение",
         "коррупционный": "коррупционное правонарушение",
+        "цкп": "цифровая кадровая платформа",
     }
 
     BASE_ENTITIES = [
@@ -782,7 +783,7 @@ class RerankedEngine:
         q = query_text.lower()
 
         # --- 1. КОНТУР ГЛОБАЛЬНОЙ АНАЛИТИКИ И СУММАРИЗАЦИИ (ВРУБАЕМ TREE!) ---
-        if any(p in q for p in ["сравни", "отличия", "разница", "обобщи", "обзор", "анализ", "суммариз"]):
+        if any(p in q for p in ["сравни", "чем отличается", "разница", "обобщи", "обзор", "анализ", "вывод", "кратко", "синтезируй", "сформулируй"]):
             logger.info("🌲 GLOBAL -> TREE_SUMMARIZE")
             # Возвращаем древовидный синтезатор LlamaIndex для концептуальных задач
             return self.tree_synthesizer 
@@ -822,8 +823,10 @@ class RerankedEngine:
                     f.write(f"\n[CHUNK {i+1}] ID: {n.node.id_} | SCORE: {n.score:.4f}\n{'-'*30}\n{llm_content}\n")
         except Exception as e:
             logger.error(f"❌ Debug Error: {e}")
-
+    
     def _sync_query(self, query_text: str):
+        from llama_index.core.schema import MetadataMode, QueryBundle, NodeWithScore
+
         norm_query = self._normalize_query(query_text)
         # logger.info(f"🔎 [QUERY]: {query_text} -> {norm_query}")
 
@@ -863,11 +866,24 @@ class RerankedEngine:
             print(f"Rank {i+1}: [{n.score:.4f}] ID: {n.node.id_}")
         print("=" * 55 + "\n")
 
-        # 4. RERANK
+        # 4. RERANK & STRICT SCORE FILTERING (ФИЛЬТРАЦИЯ МУСОРА ПО СКОРУ ДЛЯ BAAI BGE)
         if self.reranker and combined_nodes:
-            final_nodes = self.reranker.postprocess_nodes(
-                combined_nodes[:self.RERANK_TOP_K],
+            # BAAI/bge-reranker-v2-m3 пересчитывает скоры строго для ТОП-10 чанков из гибрида
+            reranked_nodes = self.reranker.postprocess_nodes(
+                combined_nodes[:10],
                 query_bundle=QueryBundle(query_text),
+            )
+            
+            # Из результатов bge-реранкера берем первые ТОП-5
+            top_5_reranked = reranked_nodes[:5]
+            
+            # И уже из этих 5 чанков отсекаем всё, что ниже порога 0.1
+            SCORE_THRESHOLD = 0.1
+            final_nodes = [node for node in top_5_reranked if node.score >= SCORE_THRESHOLD]
+            
+            logger.info(
+                f"🛡️ [BGE RERANK FILTER]: Из 5 переранжированных чанков "
+                f"проверку по порогу >= {SCORE_THRESHOLD} прошли строго {len(final_nodes)}."
             )
         else:
             final_nodes = combined_nodes[:self.final_top_k]
@@ -893,59 +909,77 @@ class RerankedEngine:
                 "- отвечай только по контексту.\n"
             )
 
+        # ИНИЦИАЛИЗАЦИЯ СИНТЕЗАТОРА И КОНТЕКСТА
         synthesizer = self._select_response_mode(query_text)
         final_chunks = final_nodes[:self.final_top_k]
-        logger.info(f"🧬 Final chunks: {len(final_chunks)}")
+        logger.info(f"🧬 Final chunks allowed for LLM context: {len(final_chunks)}")
         
         # 🔥 УМНЫЙ ДЕБАГ: Пишем файлы строго если флаг включен в .env
         if os.getenv("DEBUG_MODE", "False").lower() == "true":
             self._dump_debug_info(query_text, norm_query, final_chunks, forced_query)
         else:
             logger.info("ℹ️ Debug dump skipped (Production mode)")
-        
-        synthesizer = (
-            self._select_response_mode(
-                query_text
-            )
-        )
 
         final_chunks = final_nodes[
             : self.final_top_k
         ]
 
-        
-        # 🔥 ВСТАВЛЯЕМ СЮДА: ЛОКАЛЬНЫЙ ЧЕТКИЙ РАСЧЕТ ВХОДНЫХ ТОКЕНОВ
+        # Флаг для безопасной заглушки на случай пустого контекста
+        is_empty_context = not final_chunks
+
+        # 🔥 МГНОВЕННЫЙ ЛОКАЛЬНЫЙ РАСЧЕТ ТОКЕНОВ (ТВОЯ НАСТРОЙКА РАСЧЕТА INPUT)
         try:
-            import tiktoken
-            encoding = tiktoken.get_encoding("cl100k_base")
-            
-            # Склеиваем абсолютно весь текст, который летит роборубке на чтение
-            full_input_text = str(self.qa_prompt) + "\n"
+            prompt_str = str(self.qa_prompt) + "\n"
+            full_input_text = prompt_str
             for chunk in final_chunks:
-                full_input_text += chunk.node.get_content(metadata_mode=MetadataMode.LLM) + "\n"
+                full_input_text += (
+                    chunk.node.get_content(
+                        metadata_mode=MetadataMode.LLM
+                    ) + "\n"
+                )
             full_input_text += forced_query
 
-            exact_prompt_tokens = len(encoding.encode(full_input_text))
+            # Более адекватная оценка для русского текста (~1 токен = 4 символа)
+            exact_prompt_tokens = (
+                max(1, int(len(full_input_text) / 4))
+                if not is_empty_context
+                else 0
+            )
         except Exception as e:
             exact_prompt_tokens = f"Ошибка подсчета: {e}"
 
-        # Запускаем оригинальный синтез стрима
-        streaming_response = synthesizer.synthesize(
-            query=forced_query,
-            nodes=final_chunks,
-        )
+        # Запускаем оригинальный синтез стрима (с защитой от nodes=[])
+        if not is_empty_context:
+            streaming_response = synthesizer.synthesize(
+                query=forced_query,
+                nodes=final_chunks,
+            )
+        else:
+            fallback_msg = "[ДАННЫЕ_НЕ_НАЙДЕНЫ: В предоставленных документах ФНС информация отсутствует]"
+            streaming_response = type('_', (object,), {'response_gen': iter([fallback_msg])})()
 
         # Перехватываем выходные токены через наш логгер
         original_gen = streaming_response.response_gen
 
         def logging_token_generator():
+            tokens = []
             for token_obj in original_gen:
+                # Сохраняем строковое представление токена для последующей склейки
+                if hasattr(token_obj, "delta"):
+                    tokens.append(str(token_obj.delta))
+                else:
+                    tokens.append(str(token_obj))
                 yield token_obj
+
+            # 🔥 ТВОЯ НАСТРОЙКА РАСЧЕТА OUTPUT ТОКЕНОВ С УЧЕТОМ ДЕЛЕНИЯ НА 4
+            generated_text = "".join(tokens)
+            token_count = max(1, int(len(generated_text) / 4)) if not is_empty_context else 0
 
             # Как только модель допечатала последнюю букву — стреляем логом в Docker!
             logger.info("═" * 50)
             logger.info("📊 ТОЧНЫЙ АУДИТ ТОКЕНОВ ДЛЯ ФНС (ЛОКАЛЬНЫЙ РАСЧЕТ):")
-            logger.info(f"📥 На вход улетело (Промпт + Чанки + Вопрос): {exact_prompt_tokens} токенов")
+            logger.info(f"📥 На вход улетело (Промпт + Чанки + Вопрос): ~{exact_prompt_tokens} токенов")
+            logger.info(f"📤 На выход сгенерировано моделью: ~{token_count} токенов")
             logger.info("═" * 50)
 
         streaming_response.response_gen = logging_token_generator()
