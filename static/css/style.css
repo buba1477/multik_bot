@@ -522,8 +522,8 @@ input:focus {
 
 #input-area {
     display: grid;
-    grid-template-columns: 1fr auto; /* Лево — весь текст, Право — фиксированная колонка кнопок */
-    align-items: stretch; 
+    grid-template-columns: 1fr auto;
+    align-items: stretch !important;
     gap: 16px;
     background: #ffffff;
     border: 2px solid #e2e8f0;
@@ -553,39 +553,76 @@ input:focus {
     max-height: 150px;
     overflow-y: auto !important;
     box-sizing: border-box;
-    scrollbar-width: none !important; /* Для Firefox */
-    -ms-overflow-style: none !important;  /* Для старого IE */
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
 }
 
-/* 🔥 ПРАВАЯ КОЛОНКА ДЛЯ КНОПОК — СТРОГО ВЕРТИКАЛЬНЫЙ СТЕК */
+/* 🔥 ПРАВАЯ КОЛОНКА — расширена под микрофон + отправку */
 .input-actions-col {
-    display: flex;
-    flex-direction: column; /* Выстраивает элементы друг над другом */
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px; /* Зазор между крестиком и стрелкой */
-    flex-shrink: 0; /* Защита от сжатия колонки */
-    width: 44px; /* Фиксируем общую ширину под размер кнопок */
-}
-
-/* Жесткий точечный разгон кнопок по краям */
-#input-area {
-    align-items: stretch !important; /* Насильно растягиваем правую колонку на всю высоту */
-}
-
-/* Находим ЛЮБОЙ блок внутри #input-area, который идет вторым (колонку кнопок) */
-#input-area > div:last-child {
     display: flex !important;
     flex-direction: column !important;
-    justify-content: space-between !important; /* Расталкивает крестик наверх, а стрелку вниз */
+    align-items: flex-end !important;
+    justify-content: space-between !important;
     height: 100% !important;
+    gap: 8px;
+    flex-shrink: 0;
+    width: 104px;
 }
 
-/* КНОПКА ОЧИСТКИ (КРЕСТИК) — СДЕЛАЛИ ОДИНАКОВОЙ С СИНЕЙ */
+/* Нижний ряд: микрофон + кнопка отправки горизонтально */
+.input-bottom-row {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 16px !important;
+    width: 100% !important;
+    justify-content: flex-end !important;
+    margin-top: auto !important;
+}
+
+/* КНОПКА МИКРОФОНА */
+.mic-btn {
+    width: 44px !important;
+    height: 44px !important;
+    border-radius: 50% !important;
+    background: #e2e8f0 !important;
+    border: none !important;
+    color: #4b5563 !important;
+    font-size: 18px !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transition: width 0.3s ease, transform 0.3s ease, background 0.2s ease, box-shadow 0.2s ease !important;
+    flex-shrink: 0 !important;
+    padding: 0 !important;
+    min-width: 44px !important;
+    box-sizing: border-box !important;
+}
+
+.mic-btn:hover {
+    background: #cbd5e1 !important;
+    color: #1f2937 !important;
+}
+
+.mic-btn.recording {
+    background: #ef4444 !important;
+    color: #ffffff !important;
+    animation: mic-pulse 1.5s infinite;
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.5) !important;
+}
+
+@keyframes mic-pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+/* КНОПКА ОЧИСТКИ (КРЕСТИК) */
 .clear-text-btn {
-    position: static !important; /* Никаких абсолютов и улетов по центру */
-    width: 44px !important;  /* 🔥 Точно такой же размер, как у send-btn */
-    height: 44px !important; /* 🔥 Точно такой же размер, как у send-btn */
+    position: static !important;
+    width: 44px !important;
+    height: 44px !important;
     border-radius: 50% !important;
     background: #e2e8f0 !important;
     border: none !important;
@@ -593,14 +630,23 @@ input:focus {
     font-size: 16px !important;
     font-weight: bold !important;
     cursor: pointer;
-    display: none; /* Контролируется твоим JS скриптом (flex при вводе) */
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
+    transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s ease !important;
     box-shadow: none !important;
     transform: none !important;
     padding: 0 !important;
     min-width: 44px !important;
+    opacity: 0;
+    visibility: hidden;
+    transform: scale(0.8);
+}
+
+.clear-text-btn.visible {
+    opacity: 1 !important;
+    visibility: visible !important;
+    transform: scale(1) !important;
 }
 
 .clear-text-btn:hover {
@@ -610,8 +656,10 @@ input:focus {
 
 /* КНОПКА ОТПРАВКИ (СИНЯЯ СТРЕЛКА) */
 #input-area .send-btn {
-    width: 44px !important;  /* 🔥 Фиксированный размер */
-    height: 44px !important; /* 🔥 Фиксированный размер */
+    width: 0 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    height: 44px !important;
     border-radius: 50% !important;
     background: #e2e8f0 !important;
     color: #94a3b8 !important;
@@ -621,28 +669,34 @@ input:focus {
     align-items: center !important;
     justify-content: center !important;
     font-size: 20px !important;
-    transition: all 0.2s ease;
-    padding: 0 !important;
-    min-width: 44px !important;
+    transition: width 0.3s ease, min-width 0.3s ease, padding 0.3s ease, opacity 0.3s ease, visibility 0.3s ease, box-shadow 0.2s ease, background 0.2s ease !important;
+    opacity: 0;
+    visibility: hidden;
     box-shadow: none !important;
-    transform: none !important;
-    margin-top: auto !important;
+    flex-shrink: 0;
 }
 
-/* Твоя рабочая активация ведомственного синего градиента ФНС */
-#input-area .send-btn:not(:disabled) {
+#input-area .send-btn.visible {
+    width: 44px !important;
+    min-width: 44px !important;
+    padding: 0 !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+
+#input-area .send-btn.visible:not(:disabled) {
     background: linear-gradient(135deg, #003366 0%, #004080 100%) !important;
     color: #ffffff !important;
     box-shadow: 0 4px 12px rgba(0, 51, 102, 0.35) !important;
 }
 
-#input-area .send-btn:not(:disabled):hover {
+#input-area .send-btn.visible:not(:disabled):hover {
     background: linear-gradient(135deg, #004080 0%, #00509e 100%) !important;
     transform: translateY(-2px) !important;
     box-shadow: 0 6px 15px rgba(0, 51, 102, 0.45) !important;
 }
 
-#input-area .send-btn:disabled {
+#input-area .send-btn.visible:disabled {
     opacity: 0.5 !important;
     cursor: not-allowed !important;
     background: #e2e8f0 !important;
@@ -684,6 +738,91 @@ button:active:not(:disabled) {
 button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+/* ============================================
+   КАСТОМНЫЕ ТУЛТИПЫ ДЛЯ КНОПОК
+   ============================================ */
+
+/* 💡 Общие стили для кнопок с тултипами — position: relative */
+#sendButton,
+#micBtn {
+    position: relative !important;
+}
+
+/* Общие стили псевдоэлементов */
+#sendButton[data-tooltip]::after,
+#sendButton[data-tooltip]::before,
+#micBtn[data-tooltip]::after,
+#micBtn[data-tooltip]::before {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Сам тултип (текст) */
+#sendButton[data-tooltip]::before,
+#micBtn[data-tooltip]::before {
+    content: attr(data-tooltip);
+    bottom: calc(100% + 14px);
+    left: 50%;
+    transform: translateX(-50%) translateY(6px);
+    padding: 8px 14px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #003366 0%, #004080 100%);
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    box-shadow: 0 6px 20px rgba(0, 51, 102, 0.35), 0 2px 6px rgba(0, 0, 0, 0.1);
+    z-index: 100;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Стрелочка тултипа (треугольник) */
+#sendButton[data-tooltip]::after,
+#micBtn[data-tooltip]::after {
+    content: '';
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%) translateY(6px);
+    border: 6px solid transparent;
+    border-top-color: #003366;
+    z-index: 100;
+}
+
+/* Показываем тултип при hover */
+#sendButton[data-tooltip]:hover::before,
+#sendButton[data-tooltip]:hover::after,
+#micBtn[data-tooltip]:hover::before,
+#micBtn[data-tooltip]:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* SendButton disabled — серый тултип */
+#sendButton[data-tooltip]:disabled::before {
+    content: "✋ Сначала введи текст";
+    background: linear-gradient(135deg, #64748b 0%, #475569 100%);
+    box-shadow: 0 6px 20px rgba(100, 116, 139, 0.35), 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+#sendButton[data-tooltip]:disabled::after {
+    border-top-color: #475569;
+}
+
+/* MicBtn recording — тултип "Нажмите чтобы остановить" */
+#micBtn.recording[data-tooltip]::before {
+    content: "⏹ Остановить запись";
+    background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+    box-shadow: 0 6px 20px rgba(220, 38, 38, 0.35), 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+#micBtn.recording[data-tooltip]::after {
+    border-top-color: #b91c1c;
 }
 
 /* Кнопка очистки истории чата верхняя — без изменений */
@@ -1082,3 +1221,4 @@ body.sidebar-collapsed #container {
         min-width: 40px;
     }
 }
+

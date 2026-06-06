@@ -23,7 +23,7 @@ logger = logging.getLogger("Qdrant_Indexer_Final")
 
 # Пути
 BASE_DIR = Path(__file__).resolve().parent
-MODEL_PATH = BASE_DIR.parent / "hf_cache" / "ru-en-RoSBERTa"
+MODEL_PATH = BASE_DIR.parent / "hf_cache" / "FRIDA"
 COLLECTION_NAME = "fns_collection"
 
 if not MODEL_PATH.exists():
@@ -126,7 +126,7 @@ logger.info(f"💣 Пересоздание коллекции {COLLECTION_NAME}
 q_client.recreate_collection(
     collection_name=COLLECTION_NAME,
     vectors_config=rest_models.VectorParams(
-        size=1024, # СТРОГО ПОД RoSBERTa LARGE
+        size=1536, # СТРОГО ПОД RoSBERTa LARGE
         distance=rest_models.Distance.COSINE
     )
 )

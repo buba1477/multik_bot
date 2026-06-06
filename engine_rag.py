@@ -11,13 +11,14 @@ from pathlib import Path
 from typing import List, Optional, Any, Tuple
 
 # LlamaIndex Core
-from llama_index.core import (
-    StorageContext, 
-    load_index_from_storage, 
-    Settings,
-    PromptTemplate, 
-    QueryBundle
-)
+# from llama_index.core import (
+#     StorageContext, 
+#     load_index_from_storage, 
+#     Settings,
+#     PromptTemplate, 
+#     QueryBundle
+# )
+
 from llama_index.core.schema import NodeWithScore, TextNode
 from llama_index.core.response_synthesizers import get_response_synthesizer, ResponseMode
 from llama_index.core.embeddings import BaseEmbedding
@@ -88,7 +89,7 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 # ========== ПУТИ (константы) ==========
 BASE_DIR    = Path(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH  = BASE_DIR / "hf_cache" / "ru-en-RoSBERTa"
+MODEL_PATH  = BASE_DIR / "hf_cache" / "FRIDA"
 PERSIST_DIR = BASE_DIR / "fns_rag_graph_final"
 IMG_FOLDER  = BASE_DIR / "images_cache"
 EMPLOYEES_FILE = BASE_DIR / "employees.txt"
@@ -101,14 +102,23 @@ else:
     logger.info(f"🚀 Использую RoSBERTa из {MODEL_PATH}")
  
 _QA_PROMPT_STR = """
-Ты — система точного поиска по законодательству РФ.
+Ты — ведущий эксперт ФНС России. Отвечай СТРОГО на русском языке.
 
-Отвечай только на основе контекста.
+ФОРМАТИРУЙ ОТВЕТ:
+- Выделяй **ключевые термины и названия статей жирным шрифтом** (**денежное содержание**, **служебный контракт**, **статья 15**)
+- Используй маркированные списки (с дефиса) для перечислений и характеристик
+- Используй нумерованные списки (1. 2. 3.) для последовательных шагов, этапов, условий
+- Разделяй смысловые блоки пустыми строками
+- Для табличных данных используй markdown-таблицы с | и ---
+- Пиши лаконично, структурированно, по существу вопроса
 
-Запрещено:
-- придумывать информацию;
-- использовать знания, которых нет в тексте;
-- давать общие рассуждения без опоры на текст;
+ПРАВИЛА:
+1. Отвечай только на основе предоставленного КОНТЕКСТА.
+2. ЗАПРЕЩЕНО придумывать информацию или использовать знания, которых нет в тексте.
+3. ЗАПРЕЩЕНО давать общие рассуждения без опоры на текст.
+4. ТЕСТЫ: Если в вопросе перечислены варианты ответов — выбери ОДИН самый точный по контексту. Не обобщай и не перечисляй всё подряд.
+5. Если информации нет в контексте — напиши: «БАЗА_ПУСТА: Информация отсутствует».
+6. Если вопрос не по теме ФНС/госслужбы — «БАЗА_ПУСТА: Я эксперт по вопросам ФНС России».
 
 ------------------------
 КОНТЕКСТ:
@@ -118,21 +128,21 @@ _QA_PROMPT_STR = """
 ВОПРОС:
 {query_str}
 
-ОТВЕТ:
+ОТВЕТ ЭКСПЕРТА:
 """
 
 qa_prompt = PromptTemplate(_QA_PROMPT_STR)
 
 
 # ========== ЭМБЕДДЕР ==========
-logger.info(f"✨ Загрузка эмбеддера RoSBERTa на CPU: {MODEL_PATH}")
+logger.info(f"✨ Загрузка эмбеддера FRIDA на CPU: {MODEL_PATH}")
 
 class SberRoSBERTaEmbedding(BaseEmbedding):
     _model: Any = PrivateAttr()
 
     def __init__(self, model_path: str, device: str = "cpu", **kwargs):
         super().__init__(**kwargs)
-        logger.info(f"✨ Загрузка эмбеддера RoSBERTa на {device}")
+        logger.info(f"✨ Загрузка эмбеддера FRIDA на {device}")
         word_embedding_model = models.Transformer(model_path)
         pooling_model = models.Pooling(
             word_embedding_model.get_word_embedding_dimension(), 
@@ -172,11 +182,11 @@ Settings.llm = Ollama(
     base_url=OLLAMA_HOST,
     request_timeout=300.0,
     temperature=0.0,        
-    context_window=6144,    # 🔥 Срезаем до безопасных 6К токенов для 6 ГБ VRAM
+    context_window=6144,    # 🔥 Чтобы чанки влезали: 5 чанков * ~800 токенов + промпт
     
     options={
         "seed": 42,
-        "num_ctx": 6144,     # 🔥 Жестко фиксируем 6К внутри движка Ollama
+        "num_ctx": 6144,     # 🔥 Синхронизировано с Modelfile
         "num_predict": 512,
         "repeat_penalty": 1.05,
         
@@ -243,6 +253,7 @@ class RerankedEngine:
     # CONFIG
     # =========================================================
 
+    
     VECTOR_WEIGHT = 0.45
     BM25_WEIGHT = 0.55
 
@@ -878,7 +889,7 @@ class RerankedEngine:
             top_5_reranked = reranked_nodes[:5]
             
             # И уже из этих 5 чанков отсекаем всё, что ниже порога 0.1
-            SCORE_THRESHOLD = 0.1
+            SCORE_THRESHOLD = 0.05
             final_nodes = [node for node in top_5_reranked if node.score >= SCORE_THRESHOLD]
             
             logger.info(
@@ -904,8 +915,9 @@ class RerankedEngine:
         q_lower = query_text.lower()
         if any(p in q_lower for p in self.NEGATIVE_PATTERNS):
             forced_query += (
-                "- вопрос содержит отрицание;\n"
-                "- ищи вариант который НЕ подтверждается;\n"
+                "- вопрос содержит отрицание (НЕ, кроме, исключением);\n"
+                "- определи, какой из перечисленных пунктов НЕ входит в перечень по контексту;\n"
+                "- выбери один пункт, который отсутствует в списке;\n"
                 "- отвечай только по контексту.\n"
             )
 
@@ -919,10 +931,6 @@ class RerankedEngine:
             self._dump_debug_info(query_text, norm_query, final_chunks, forced_query)
         else:
             logger.info("ℹ️ Debug dump skipped (Production mode)")
-
-        final_chunks = final_nodes[
-            : self.final_top_k
-        ]
 
         # Флаг для безопасной заглушки на случай пустого контекста
         is_empty_context = not final_chunks
@@ -1020,18 +1028,24 @@ def _collect_sources(nodes: list, max_sources: int = 3) -> list:
             break
         if not hasattr(node, "node"):
             continue
-        url = node.node.metadata.get("source_url", "")
-        if not url or url in seen_urls:
-            continue
+        # url = node.node.metadata.get("source_url", "")
+
+        
+        # if not url or url in seen_urls:
+        #     continue
         title = node.node.metadata.get("title", "Источник").strip()
+        if not title or title in seen_urls:
+            continue
+        url = node.node.metadata.get("source_url", "")
         if title.startswith(_TITLE_PREFIXES):
             title = title.split(". ", 1)[-1] if ". " in title else title
+            
         sources.append({
                 "url": url,
                 "title": title[:100],
                 "score": round(float(node.score), 4) if hasattr(node, "score") else None,
             })
-        seen_urls.add(url)
+        seen_urls.add(title)
     return sources
 
 def _find_photo(resp_lower: str, nodes: list) -> Optional[str]:
@@ -1113,7 +1127,7 @@ async def get_ai_streaming_response(query_text: str):
             payload = config["payload"]
             
             # Лупим ПРЯМОЙ POST-запрос в контейнер Ollama за монолитным JSON-ом
-            ollama_response = requests.post(chart_engine.ollama_url, json=payload, timeout=30)
+            ollama_response = requests.post(chart_engine.ollama_url, json=payload, timeout=(5, 300))
             ollama_response.raise_for_status()
             raw_json_text = ollama_response.json()["message"]["content"]
             
@@ -1131,7 +1145,10 @@ async def get_ai_streaming_response(query_text: str):
             # Сценарий Б: Стандартный стриминг текстовых токенов на фронт (Твой старый код)
             for token in response.response_gen:
                 tokens.append(token)
-                yield json.dumps({"type": "text", "content": token}, ensure_ascii=False) + "\n"
+                t = str(token)
+                yield json.dumps({"type": "text", "content": t}, ensure_ascii=False) + "\n"
+            
+            full_response_text = "".join(tokens)
 
         # Логируем скорость работы контейнера Ollama
         gen_time = time.time() - gen_start
@@ -1143,7 +1160,6 @@ async def get_ai_streaming_response(query_text: str):
         # ТВОЙ РОДНОЙ КОНТУР ПОДБОРА ФОТОГРАФИЙ (СТРОГО НА МЕСТЕ)
         # =========================================================
         if not is_chart_mode:
-            full_response_text = "".join(tokens)
             resp_lower = full_response_text.lower()
 
             is_empty = bool(_EMPTY_RESPONSE_RE.search(resp_lower))

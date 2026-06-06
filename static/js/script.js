@@ -56,18 +56,47 @@ function removeLoader() {
     if (loader) loader.remove();
 }
 
-function blockInput(block) {
-    const input = document.getElementById("messageText");
-    const button = document.getElementById("sendButton");
-    if (block) {
-        if (input) input.disabled = true;
-        if (button) button.disabled = true;
+function blockInput(status) {
+    const textarea = document.getElementById("messageText");
+    const sendButton = document.getElementById("sendButton");
+    const micButton = document.getElementById("micBtn");
+    const clearButton = document.getElementById("clearTextBtn");
+
+    if (status) {
+        // 🔥 ДЕАКТИВАЦИЯ ВСЕГО ИНТЕРФЕЙСА ВО ВРЕМЯ ГЕНЕРАЦИИ
+        if (textarea) textarea.disabled = true;
+        if (sendButton) sendButton.disabled = true;
+        
+        if (micButton) {
+            micButton.disabled = true;
+            micButton.style.opacity = "0.4"; // Визуально делаем серым
+            micButton.style.cursor = "not-allowed";
+        }
+        if (clearButton) {
+            clearButton.disabled = true;
+            clearButton.style.opacity = "0.4";
+            clearButton.style.cursor = "not-allowed";
+        }
     } else {
-        if (input) input.disabled = false;
-        if (button) button.disabled = false;
-        if (input) input.focus();
+        // ✅ ПОЛНАЯ РАЗБЛОКИРОВКА ПОСЛЕ ОКОНЧАНИЯ СТРИМА
+        if (textarea) textarea.disabled = false;
+        
+        if (micButton) {
+            micButton.disabled = false;
+            micButton.style.opacity = "1";
+            micButton.style.cursor = "pointer";
+        }
+        if (clearButton) {
+            clearButton.disabled = false;
+            clearButton.style.opacity = "1";
+            clearButton.style.cursor = "pointer";
+        }
+        
+        // Фокусируем инспектора обратно на поле ввода
+        if (textarea) textarea.focus();
     }
 }
+
 
 function clearInput() {
     // Сохраняем текущий чат перед очисткой
@@ -94,6 +123,230 @@ function clearInput() {
     chartInstances = [];
 }
 
+// ============================================
+// 🔥 ЕДИНАЯ ФУНКЦИЯ РЕНДЕРА ГРАФИКОВ
+// ============================================
+function initChart(chartId, chartConfig, container) {
+    // Если title пришёл строкой — превращаем в объект
+    if (chartConfig.title && typeof chartConfig.title === 'string') {
+        chartConfig = { ...chartConfig, title: { text: chartConfig.title } };
+    }
+
+    let isPie = false;
+    let categoryCount = 0;
+    if (chartConfig.series) {
+        const sArr = Array.isArray(chartConfig.series) ? chartConfig.series : [chartConfig.series];
+        isPie = sArr[0] && sArr[0].type === 'pie';
+        // Определяем количество категорий
+        if (isPie && sArr[0]?.data) {
+            categoryCount = sArr[0].data.length;
+        } else if (chartConfig.xAxis?.data) {
+            categoryCount = chartConfig.xAxis.data.length;
+        }
+    }
+
+    // Динамическая высота в зависимости от количества категорий
+    let chartHeight;
+    if (isPie) {
+        chartHeight = Math.max(450, Math.min(900, categoryCount * 50));
+    } else {
+        chartHeight = Math.max(350, Math.min(700, categoryCount * 50));
+    }
+
+    // Создаём wrapper с ЕДИНЫМИ стилями
+    const chartWrapper = document.createElement('div');
+    chartWrapper.className = 'chart-wrapper';
+    chartWrapper.style.cssText = 'width: 100%; margin: 10px 0; background: #ffffff; border: 1px solid #d1dce7; border-radius: 16px; border-top: 2px solid #00509e; padding: 20px 15px; box-shadow: 0 4px 16px rgba(0, 51, 102, 0.08); box-sizing: border-box; flex-shrink: 0;';
+
+    const chartDiv = document.createElement('div');
+    chartDiv.id = chartId;
+    chartDiv.style.cssText = `width: 100%; height: ${chartHeight}px;`;
+
+    chartWrapper.appendChild(chartDiv);
+    container.appendChild(chartWrapper);
+
+    // Инициализация ECharts
+    setTimeout(() => {
+        const dom = document.getElementById(chartId);
+        if (!dom || typeof echarts === 'undefined') return;
+
+        const myChart = echarts.init(dom);
+        chartInstances.push(myChart);
+
+        const gradientColors = [
+            new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#00d4ff' }, { offset: 1, color: '#00509e' }]),
+            new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#7c3aed' }, { offset: 1, color: '#4c1d95' }]),
+            new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#ffd700' }, { offset: 1, color: '#b8860b' }]),
+            new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#10b981' }, { offset: 1, color: '#059669' }]),
+            new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#f59e0b' }, { offset: 1, color: '#d97706' }])
+        ];
+
+        const pieColors = [
+            '#00d4ff', '#7c3aed', '#ffd700', '#10b981', '#f59e0b',
+            '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316'
+        ];
+
+        // Умный поворот подписей X — только если категорий много
+        const xRotate = categoryCount > 5 ? 30 : 0;
+        const xLabelSize = categoryCount > 8 ? 10 : 12;
+
+        // Базовые опции — ЕДИНЫЕ для всех графиков
+        const baseOption = {
+            backgroundColor: 'transparent',
+            textStyle: {
+                color: '#1a2c3e',
+                fontWeight: 500,
+                fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+            },
+            title: {
+                text: chartConfig.title?.text || 'Аналитика',
+                left: 'center',
+                top: 10,
+                textStyle: { color: '#003366', fontWeight: 700, fontSize: 16, fontFamily: "'Inter', sans-serif" }
+            },
+            tooltip: {
+                trigger: isPie ? 'item' : 'axis',
+                backgroundColor: 'rgba(255, 255, 255, 0.97)',
+                borderColor: '#d1dce7',
+                borderWidth: 1,
+                textStyle: { color: '#1a2c3e', fontWeight: 500 },
+                extraCssText: 'box-shadow: 0 4px 12px rgba(0, 51, 102, 0.15); padding: 12px; border-radius: 8px;'
+            },
+            grid: isPie ? undefined : { 
+                containLabel: true, 
+                bottom: '22%', 
+                top: '26%', 
+                left: '12%', 
+                right: '10%' 
+            },
+            legend: {
+                top: 38,
+                left: 'center',
+                itemWidth: 14,
+                itemHeight: 14,
+                textStyle: { fontSize: 12, fontWeight: 500 }
+            },
+            animationDuration: 800,
+            animationEasing: 'cubicOut'
+        };
+
+        if (isPie) {
+            const s = Array.isArray(chartConfig.series) ? chartConfig.series[0] : chartConfig.series;
+            // Адаптивный радиус: меньше категорий — больше пирог
+            s.radius = categoryCount > 8 ? '45%' : '55%';
+            s.center = ['50%', '62%'];
+            s.itemStyle = { borderRadius: 10, borderColor: '#ffffff', borderWidth: 3, shadowBlur: 15, shadowColor: 'rgba(0, 0, 0, 0.15)' };
+            s.label = { 
+                show: true, 
+                color: '#1a2c3e', 
+                formatter: '{b}: {d}%', 
+                fontSize: categoryCount > 6 ? 11 : 13, 
+                fontWeight: 600, 
+                fontFamily: "'Inter', sans-serif",
+                alignTo: 'labelLine',
+                distanceToLabelLine: 12
+            };
+            s.labelLine = { 
+                show: true, 
+                lineStyle: { color: '#1a2c3e', width: 2 }, 
+                smooth: 0.2, 
+                length: categoryCount > 6 ? 40 : 50, 
+                length2: categoryCount > 6 ? 15 : 22 
+            };
+            s.labelLayout = { hideOverlap: true };
+            s.emphasis = { itemStyle: { shadowBlur: 20, shadowOffsetX: 0, shadowColor: 'rgba(0, 51, 102, 0.3)' } };
+            if (s.data) {
+                s.data.forEach((item, index) => {
+                    if (typeof item === 'object' && !item.itemStyle) {
+                        item.itemStyle = { color: pieColors[index % pieColors.length], shadowBlur: 15, shadowColor: 'rgba(0, 0, 0, 0.2)' };
+                    }
+                });
+            }
+        } else {
+            // Оформление осей
+            if (chartConfig.xAxis) {
+                chartConfig.xAxis.axisLabel = { 
+                    color: '#1a2c3e', 
+                    rotate: xRotate, 
+                    fontSize: xLabelSize, 
+                    fontWeight: 600, 
+                    fontFamily: "'Inter', sans-serif", 
+                    margin: categoryCount > 5 ? 14 : 10 
+                };
+                chartConfig.xAxis.axisLine = { lineStyle: { color: '#d1dce7', width: 2 } };
+                chartConfig.xAxis.splitLine = { show: false };
+                chartConfig.xAxis.axisTick = { show: false };
+            }
+            if (chartConfig.yAxis) {
+                chartConfig.yAxis.axisLabel = { color: '#1a2c3e', fontSize: xLabelSize, fontWeight: 600, fontFamily: "'Inter', sans-serif", margin: 10 };
+                chartConfig.yAxis.axisLine = { show: false };
+                chartConfig.yAxis.axisTick = { show: false };
+                chartConfig.yAxis.splitLine = { lineStyle: { color: '#e8edf2', width: 1 } };
+            }
+            // Оформление series
+            if (chartConfig.series) {
+                const seriesArray = Array.isArray(chartConfig.series) ? chartConfig.series : [chartConfig.series];
+                seriesArray.forEach((s, index) => {
+                    if (s.type === 'bar') {
+                        s.itemStyle = { borderRadius: [6, 6, 0, 0], shadowBlur: 10, shadowColor: 'rgba(0, 51, 102, 0.2)' };
+                        s.label = { show: true, position: 'top', color: '#1a2c3e', fontSize: 11, fontWeight: 600, fontFamily: "'Inter', sans-serif", distance: 5 };
+                        s.barMaxWidth = 50;
+                        s.animationDelay = index * 100;
+                        // 🎨 Делаем каждый столбец разноцветным
+                        if (s.data && Array.isArray(s.data)) {
+                            const barColors = [
+                                '#00d4ff', '#7c3aed', '#f59e0b', '#10b981', '#ffd700',
+                                '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316',
+                                '#3b82f6', '#a855f7', '#22c55e', '#eab308', '#ef4444'
+                            ];
+                            s.data = s.data.map((item, i) => {
+                                const val = typeof item === 'object' ? item.value : item;
+                                return {
+                                    value: val,
+                                    itemStyle: {
+                                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                            { offset: 0, color: barColors[i % barColors.length] },
+                                            { offset: 1, color: barColors[i % barColors.length] + '99' }
+                                        ]),
+                                        borderRadius: [6, 6, 0, 0],
+                                        shadowBlur: 10,
+                                        shadowColor: 'rgba(0, 51, 102, 0.2)'
+                                    }
+                                };
+                            });
+                        }
+                    } else if (s.type === 'line') {
+                        s.itemStyle = { color: gradientColors[index % gradientColors.length], borderWidth: 2 };
+                        s.lineStyle = { width: 3, shadowBlur: 10, shadowColor: 'rgba(0, 51, 102, 0.2)' };
+                        s.symbol = 'circle';
+                        s.symbolSize = 10;
+                        s.smooth = true;
+                        s.areaStyle = { opacity: 0.1, color: gradientColors[index % gradientColors.length] };
+                        s.animationDelay = index * 100;
+                    }
+                });
+            }
+        }
+
+        const mergedOption = Object.assign({}, baseOption, chartConfig);
+        myChart.setOption(mergedOption, true);
+
+        // Плавное появление
+        myChart.setOption({ animationDuration: 1000, animationEasing: 'elasticOut' });
+
+        // Resize
+        const doResize = () => { myChart.resize(); };
+        setTimeout(doResize, 100);
+        setTimeout(doResize, 500);
+
+        const resizeHandler = () => myChart.resize();
+        window.addEventListener('resize', resizeHandler);
+        myChart.on('dispose', () => window.removeEventListener('resize', resizeHandler));
+    }, 300);
+
+    return chartWrapper;
+}
+
 function tryRenderChart(text, container) {
     const startTag = "[CHART_JSON]";
     const endTag = "[/CHART_JSON]";
@@ -115,7 +368,6 @@ function tryRenderChart(text, container) {
     rawJson = rawJson.replace(/(\{|\,)\s*([a-zA-Z0-9_]+)\s*:/g, '$1"$2":');
 
     // 🔥 ФИКС: модель иногда выдаёт два JSON-объекта подряд — берём только до конца первого
-    // Ищем баланс скобок: пропускаем вложенные { } до последнего закрывающего }
     let depth = 0;
     let jsonEnd = -1;
     for (let i = 0; i < rawJson.length; i++) {
@@ -124,7 +376,7 @@ function tryRenderChart(text, container) {
             depth--;
             if (depth === 0) {
                 jsonEnd = i + 1;
-                break; // нашли конец первого объекта
+                break;
             }
         }
     }
@@ -134,15 +386,7 @@ function tryRenderChart(text, container) {
 
     try {
         let chartConfig = JSON.parse(rawJson);
-        console.log('📊 Парсинг JSON ОК, series data:', 
-            chartConfig.series 
-                ? (Array.isArray(chartConfig.series) 
-                    ? chartConfig.series.map(s => s.data?.length || 0)
-                    : [(chartConfig.series.data?.length || 0)])
-                : 'нет series',
-            'config:', chartConfig);
         
-        // 🔥 УСИЛЕННЫЙ FALLBACK: проверяем, что в series есть данные
         function hasValidData(series) {
             if (!series) return false;
             const arr = Array.isArray(series) ? series : [series];
@@ -160,296 +404,10 @@ function tryRenderChart(text, container) {
                 series: [{ type: 'bar', data: [42, 38, 25, 18, 12, 30] }],
                 tooltip: { trigger: 'axis' }
             };
-            console.log('📊 Fallback config:', chartConfig);
         }
 
         const chartId = 'chart_' + Math.random().toString(36).substr(2, 9);
-        
-        // ========== ФИКС: если title пришёл строкой, превращаем в объект ==========
-        if (chartConfig.title && typeof chartConfig.title === 'string') {
-            chartConfig = {
-                ...chartConfig,
-                title: { text: chartConfig.title }
-            };
-        }
-        
-        let isPie = false;
-        if (chartConfig.series) {
-            const sArr = Array.isArray(chartConfig.series) ? chartConfig.series : [chartConfig.series];
-            isPie = sArr[0] && sArr[0].type === 'pie';
-        }
-
-        // Создаем контейнер для графика с анимацией
-        const chartWrapper = document.createElement('div');
-        chartWrapper.className = 'chart-wrapper';
-        chartWrapper.style.cssText = 'width: 100%; margin: 30px 0 30px 0; background: #ffffff; border: 1px solid #d1dce7; border-radius: 16px; border-top: 2px solid #00509e; padding: 20px 15px 20px 15px; box-shadow: 0 4px 16px rgba(0, 51, 102, 0.08); box-sizing: border-box; flex-shrink: 0;';
-        
-        const chartDiv = document.createElement('div');
-        chartDiv.id = chartId;
-        chartDiv.style.width = '100%';
-        chartDiv.style.height = isPie ? '500px' : '450px';
-        chartDiv.style.margin = '0 auto';
-        chartWrapper.appendChild(chartDiv);
-        container.appendChild(chartWrapper);
-
-        console.log('📊 chartWrapper добавлен в DOM, ID:', chartId);
-
-        // Ждём больше времени, чтобы DOM точно стабилизировался
-        setTimeout(() => {
-            const chartElement = document.getElementById(chartId);
-            if (!chartElement) {
-                console.error('❌ chartDiv не найден в DOM! ID:', chartId);
-                return;
-            }
-            // Визуально подсвечиваем, что элемент найден (убирается после инициализации)
-            chartElement.style.border = '2px dashed #ff6600';
-            chartElement.style.minHeight = '200px';
-            
-            if (typeof echarts !== 'undefined') {
-                console.log('📊 Инициализация ECharts...');
-                const myChart = echarts.init(chartElement, null, { renderer: 'canvas' });
-                
-                chartInstances.push(myChart);
-                
-                const gradientColors = [
-                    new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                        { offset: 0, color: '#00d4ff' },
-                        { offset: 1, color: '#00509e' }
-                    ]),
-                    new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                        { offset: 0, color: '#7c3aed' },
-                        { offset: 1, color: '#4c1d95' }
-                    ]),
-                    new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                        { offset: 0, color: '#ffd700' },
-                        { offset: 1, color: '#b8860b' }
-                    ]),
-                    new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                        { offset: 0, color: '#10b981' },
-                        { offset: 1, color: '#059669' }
-                    ]),
-                    new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                        { offset: 0, color: '#f59e0b' },
-                        { offset: 1, color: '#d97706' }
-                    ])
-                ];
-
-                
-                const baseOption = {
-                    backgroundColor: 'transparent',
-                    textStyle: {
-                        color: '#1a2c3e',
-                        fontWeight: 500,
-                        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-                    },
-                    title: {
-                        text: chartConfig.title?.text || 'Аналитика',
-                        left: 'center',
-                        top: 10,
-                        textStyle: { 
-                            color: '#003366', 
-                            fontWeight: 700,
-                            fontSize: 16,
-                            fontFamily: "'Inter', sans-serif"
-                        }
-                    },
-                    tooltip: { 
-                        trigger: isPie ? 'item' : 'axis',
-                        backgroundColor: 'rgba(255, 255, 255, 0.97)',
-                        borderColor: '#d1dce7',
-                        borderWidth: 1,
-                        textStyle: { 
-                            color: '#1a2c3e',
-                            fontWeight: 500
-                        },
-                        extraCssText: 'box-shadow: 0 4px 12px rgba(0, 51, 102, 0.15);'
-                    },
-                    grid: { 
-                        containLabel: true, 
-                        bottom: '10%', 
-                        top: '20%',
-                        left: '10%', 
-                        right: '10%' 
-                    },
-                    legend: {
-                        top: 40,
-                        left: 'center',
-                        itemWidth: 12,
-                        itemHeight: 12,
-                        textStyle: {
-                            fontSize: 12,
-                            fontWeight: 500
-                        }
-                    },
-                    animationDuration: 800,
-                    animationEasing: 'cubicOut'
-                };
-
-                if (isPie) {
-                    const s = Array.isArray(chartConfig.series) ? chartConfig.series[0] : chartConfig.series;
-                    s.radius = '65%';
-                    s.center = ['50%', '50%'];
-
-                    const pieColors = [
-                        '#00d4ff', '#7c3aed', '#ffd700', '#10b981', '#f59e0b',
-                        '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316'
-                    ];
-
-                    s.itemStyle = {
-                        borderRadius: 12,
-                        borderColor: '#ffffff',
-                        borderWidth: 3,
-                        shadowBlur: 15,
-                        shadowColor: 'rgba(0, 0, 0, 0.2)'
-                    };
-                    s.label = {
-                        show: true,
-                        color: '#1a2c3e',
-                        formatter: '{b}: {d}%',
-                        fontSize: 13,
-                        fontWeight: 600,
-                        fontFamily: "'Inter', sans-serif"
-                    };
-                    s.labelLine = {
-                        show: true,
-                        lineStyle: {
-                            color: '#1a2c3e',
-                            width: 2
-                        },
-                        smooth: 0.2,
-                        length: 15,
-                        length2: 10
-                    };
-                    s.emphasis = {
-                        itemStyle: {
-                            shadowBlur: 20,
-                            shadowOffsetX: 0,
-                            shadowColor: 'rgba(0, 51, 102, 0.3)'
-                        }
-                    };
-
-                    // Применяем яркие цвета к каждому сегменту
-                    if (s.data) {
-                        s.data.forEach((item, index) => {
-                            if (typeof item === 'object' && !item.itemStyle) {
-                                item.itemStyle = {
-                                    color: pieColors[index % pieColors.length],
-                                    shadowBlur: 15,
-                                    shadowColor: 'rgba(0, 0, 0, 0.2)'
-                                };
-                            }
-                        });
-                    }
-                } else {
-                    if (chartConfig.xAxis) {
-                        chartConfig.xAxis.axisLabel = { 
-                            color: '#1a2c3e', 
-                            rotate: 30,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            fontFamily: "'Inter', sans-serif",
-                            margin: 10
-                        };
-                        chartConfig.xAxis.axisLine = {
-                            lineStyle: { color: '#d1dce7', width: 2 }
-                        };
-                        chartConfig.xAxis.splitLine = {
-                            show: false
-                        };
-                        chartConfig.xAxis.axisTick = {
-                            show: false
-                        };
-                    }
-                    if (chartConfig.yAxis) {
-                        chartConfig.yAxis.axisLabel = { 
-                            color: '#1a2c3e',
-                            fontSize: 12,
-                            fontWeight: 600,
-                            fontFamily: "'Inter', sans-serif",
-                            margin: 10
-                        };
-                        chartConfig.yAxis.axisLine = {
-                            show: false
-                        };
-                        chartConfig.yAxis.axisTick = {
-                            show: false
-                        };
-                        chartConfig.yAxis.splitLine = {
-                            lineStyle: { color: '#e8edf2', width: 1 }
-                        };
-                    }
-                    
-                    if (chartConfig.series) {
-                        const seriesArray = Array.isArray(chartConfig.series) ? chartConfig.series : [chartConfig.series];
-                        seriesArray.forEach((s, index) => {
-                            if (s.type === 'bar') {
-                                s.colorBy = 'data';
-                                s.itemStyle = { 
-                                    borderRadius: [6, 6, 0, 0],
-                                    color: gradientColors[index % gradientColors.length],
-                                    shadowBlur: 10,
-                                    shadowColor: 'rgba(0, 51, 102, 0.2)'
-                                };
-                                s.label = { 
-                                    show: true, 
-                                    position: 'top', 
-                                    color: '#1a2c3e',
-                                    fontSize: 11,
-                                    fontWeight: 600,
-                                    fontFamily: "'Inter', sans-serif",
-                                    distance: 5
-                                };
-                                s.barMaxWidth = 50;
-                                s.animationDelay = index * 100;
-                            } else if (s.type === 'line') {
-                                s.itemStyle = { 
-                                    color: gradientColors[index % gradientColors.length],
-                                    borderWidth: 2
-                                };
-                                s.lineStyle = { width: 3, shadowBlur: 10, shadowColor: 'rgba(0, 51, 102, 0.2)' };
-                                s.symbol = 'circle';
-                                s.symbolSize = 10;
-                                s.smooth = true;
-                                s.areaStyle = {
-                                    opacity: 0.1,
-                                    color: gradientColors[index % gradientColors.length]
-                                };
-                                s.animationDelay = index * 100;
-                            }
-                        });
-                    }
-                }
-
-                const mergedOption = Object.assign({}, baseOption, chartConfig);
-                console.log('📊 Установка опций ECharts:', mergedOption);
-                myChart.setOption(mergedOption, true); // true = не мержить, заменить полностью
-                
-                // Плавное появление графика
-                myChart.setOption({
-                    animationDuration: 1000,
-                    animationEasing: 'elasticOut'
-                });
-
-                // Принудительный resize — делаем несколько раз с задержками
-                const doResize = () => {
-                    myChart.resize();
-                    chartElement.style.border = 'none';
-                    chartElement.style.minHeight = '';
-                };
-                setTimeout(doResize, 100);
-                setTimeout(doResize, 500);
-                
-                // resizer с авто-удалением при dispose
-                const resizeHandler = () => myChart.resize();
-                window.addEventListener('resize', resizeHandler);
-                myChart.on('dispose', () => {
-                    window.removeEventListener('resize', resizeHandler);
-                });
-            } else {
-                console.error('❌ ECharts не загружен!');
-            }
-        }, 300);
-        
+        initChart(chartId, chartConfig, container);
         return true;
     } catch (e) {
         console.error("❌ JSON Error:", e);
@@ -461,6 +419,14 @@ function tryRenderChart(text, container) {
 async function sendMessage() {
     if (isGenerating) return;
     
+    // Блокируем onresult и останавливаем голосовой ввод, если он активен
+    if (isListening && recognition) {
+        voiceInputBlocked = true;  // 🔥 финальный onresult не запишет текст обратно
+        if (silenceTimer) clearTimeout(silenceTimer);
+        recognition.stop();
+        // stopRecording() вызовется в onend автоматически
+    }
+    
     const input = document.getElementById("messageText");
     if (!input || !input.value.trim()) return;
 
@@ -470,13 +436,12 @@ async function sendMessage() {
     input.value = "";                 // очищаем текст
     input.style.height = "auto";      // сбрасываем высоту
     
-    // Прячем крестик очистки (если есть)
+    // Прячем крестик очистки и кнопку отправки
     const clearBtn = document.getElementById("clearTextBtn");
-    if (clearBtn) clearBtn.style.display = "none";
+    if (clearBtn) clearBtn.classList.remove('visible');
     
-    // Деактивируем кнопку отправки
     const sendButton = document.getElementById("sendButton");
-    if (sendButton) sendButton.disabled = true;
+    if (sendButton) sendButton.classList.remove('visible');
     // =============================================
     
     isGenerating = true;
@@ -560,42 +525,49 @@ async function sendMessage() {
                         }
 
                         const chartId = 'echarts_' + Math.random().toString(36).substr(2, 9);
-                        const chartWrapper = document.createElement('div');
-                        chartWrapper.className = 'chart-wrapper';
-                        chartWrapper.style.cssText = 'width: 100%; margin: 10px 0; background: #ffffff; border: 1px solid #d1dce7; border-radius: 16px; border-top: 2px solid #00509e; padding: 20px 15px; box-shadow: 0 4px 16px rgba(0, 51, 102, 0.08); box-sizing: border-box;';
-
-                        const chartDiv = document.createElement('div');
-                        chartDiv.id = chartId;
-                        const isPie = d.chart_type === 'pie';
-                        chartDiv.style.cssText = `width: 100%; height: ${isPie ? '500px' : '450px'};`;
                         
+                        // Преобразуем данные API в формат chartConfig для initChart
+                        const seriesArray = [];
+                        
+                        if (d.chart_type === 'pie') {
+                            // Круговая диаграмма
+                            const pieData = (d.x_axis || []).map((name, idx) => ({ 
+                                name, 
+                                value: (d.series_data || [])[idx] || 0 
+                            }));
+                            seriesArray.push({ 
+                                type: 'pie', 
+                                data: pieData, 
+                                name: d.series_name || 'Данные' 
+                            });
+                        } else {
+                            // Первый ряд данных
+                            seriesArray.push({ 
+                                type: d.chart_type || 'bar', 
+                                data: (d.series_data || []), 
+                                name: d.series_name || 'Данные' 
+                            });
+                            
+                            // Второй ряд данных (если есть)
+                            if (d.series_data_2 && d.series_data_2.length > 0) {
+                                seriesArray.push({ 
+                                    type: d.chart_type || 'bar', 
+                                    data: d.series_data_2, 
+                                    name: d.series_name_2 || 'Данные 2' 
+                                });
+                            }
+                        }
+
+                        const chartConfig = {
+                            title: d.title || 'График',
+                            xAxis: d.chart_type === 'pie' ? undefined : { data: d.x_axis || [] },
+                            yAxis: d.chart_type === 'pie' ? undefined : {},
+                            series: seriesArray
+                        };
+
+                        const chartWrapper = initChart(chartId, chartConfig, currentBotMsgDiv);
                         chartWrapper.dataset.chartData = JSON.stringify(d);
-                        chartWrapper.appendChild(chartDiv);
-                        currentBotMsgDiv.appendChild(chartWrapper);
                         scrollToBottom();
-
-                        setTimeout(() => {
-                            const dom = document.getElementById(chartId);
-                            if (!dom || typeof echarts === 'undefined') return;
-                            
-                            const myChart = echarts.init(dom);
-                            chartInstances.push(myChart);
-                            
-                            const seriesData = isPie
-                                ? (d.x_axis || []).map((name, idx) => ({ name, value: (d.series_data || [])[idx] || 0 }))
-                                : (d.series_data || []);
-
-                            const option = {
-                                title: { text: d.title || 'График', left: 'center', top: 10, textStyle: { color: '#003366', fontWeight: 700, fontSize: 16 } },
-                                tooltip: { trigger: isPie ? 'item' : 'axis', backgroundColor: 'rgba(255, 255, 255, 0.97)', borderColor: '#d1dce7', borderWidth: 1 },
-                                legend: isPie ? { orient: 'vertical', left: 'left', top: 40 } : undefined,
-                                xAxis: isPie ? undefined : { data: d.x_axis || [], axisLabel: { rotate: 30, fontSize: 12 } },
-                                yAxis: isPie ? undefined : { axisLabel: { fontSize: 12 } },
-                                series: [{ type: d.chart_type || 'bar', data: seriesData }]
-                            };
-                            myChart.setOption(option);
-                            setTimeout(() => myChart.resize(), 100);
-                        }, 300);
                     }
                     else if (data.type === "text") {
                         if (!firstChunkReceived) {
@@ -858,78 +830,55 @@ function loadChat(chatId) {
     // Вставляем сообщения напрямую, без appendMessage (чтобы не сохранять)
     messages.forEach(msg => {
         if (msg.type === 'chart_data' && msg.chartData && lastBotDiv) {
-            // Восстанавливаем график — создаём wrapper и вставляем в последний bot-div
             const d = msg.chartData;
             const chartId = 'echarts_' + Math.random().toString(36).substr(2, 9);
-            const chartWrapper = document.createElement('div');
-            chartWrapper.className = 'chart-wrapper';
-            chartWrapper.style.cssText = 'width: 100%; margin: 10px 0; background: #ffffff; border: 1px solid #d1dce7; border-radius: 16px; border-top: 2px solid #00509e; padding: 20px 15px; box-shadow: 0 4px 16px rgba(0, 51, 102, 0.08); box-sizing: border-box;';
-            chartWrapper.dataset.chartData = JSON.stringify(d);
-            const chartDiv = document.createElement('div');
-            chartDiv.id = chartId;
-            const isPie = d.chart_type === 'pie';
-            chartDiv.style.cssText = `width: 100%; height: ${isPie ? '500px' : '450px'};`;
-            chartWrapper.appendChild(chartDiv);
-
-            // Вставляем график ДО ссылок (если они есть)
-            const sourcesDiv = lastBotDiv.querySelector('div[style*="border-top"]');
-            if (sourcesDiv) {
-                lastBotDiv.insertBefore(chartWrapper, sourcesDiv);
+            
+            // Преобразуем данные API в формат chartConfig для initChart
+            const seriesArray = [];
+            
+            if (d.chart_type === 'pie') {
+                const pieData = (d.x_axis || []).map((name, idx) => ({ 
+                    name, 
+                    value: (d.series_data || [])[idx] || 0 
+                }));
+                seriesArray.push({ 
+                    type: 'pie', 
+                    data: pieData, 
+                    name: d.series_name || 'Данные' 
+                });
             } else {
-                lastBotDiv.appendChild(chartWrapper);
+                seriesArray.push({ 
+                    type: d.chart_type || 'bar', 
+                    data: (d.series_data || []), 
+                    name: d.series_name || 'Данные' 
+                });
+                
+                if (d.series_data_2 && d.series_data_2.length > 0) {
+                    seriesArray.push({ 
+                        type: d.chart_type || 'bar', 
+                        data: d.series_data_2, 
+                        name: d.series_name_2 || 'Данные 2' 
+                    });
+                }
             }
 
-            // Инициализация ECharts
-            setTimeout(() => {
-                const dom = document.getElementById(chartId);
-                if (!dom || typeof echarts === 'undefined') return;
-                const myChart = echarts.init(dom);
-                chartInstances.push(myChart);
-                const seriesData = isPie
-                    ? (d.x_axis || []).map((name, idx) => ({ name, value: (d.series_data || [])[idx] || 0 }))
-                    : (d.series_data || []);
+            const chartConfig = {
+                title: d.title || 'График',
+                xAxis: d.chart_type === 'pie' ? undefined : { data: d.x_axis || [] },
+                yAxis: d.chart_type === 'pie' ? undefined : {},
+                series: seriesArray
+            };
 
-                const pieColors = [
-                    '#00d4ff', '#7c3aed', '#ffd700', '#10b981', '#f59e0b',
-                    '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316'
-                ];
+            // Создаём wrapper в контейнере lastBotDiv, но initChart добавляет в конец
+            // Нам нужно вставить ДО ссылок — поэтому сначала создадим, потом переместим
+            const chartWrapper = initChart(chartId, chartConfig, lastBotDiv);
+            chartWrapper.dataset.chartData = JSON.stringify(d);
 
-                const option = {
-                    title: { text: d.title || 'График', left: 'center', top: 10, textStyle: { color: '#003366', fontWeight: 700, fontSize: 16 } },
-                    tooltip: { trigger: isPie ? 'item' : 'axis', backgroundColor: 'rgba(255, 255, 255, 0.97)', borderColor: '#d1dce7', borderWidth: 1 },
-                    legend: isPie ? { orient: 'vertical', left: 'left', top: 40 } : undefined,
-                    xAxis: isPie ? undefined : { data: d.x_axis || [], axisLabel: { color: '#1a2c3e', rotate: 30, fontSize: 12, fontWeight: 600 }, axisLine: { lineStyle: { color: '#d1dce7', width: 2 } }, splitLine: { show: false }, axisTick: { show: false } },
-                    yAxis: isPie ? undefined : { axisLabel: { color: '#1a2c3e', fontSize: 12, fontWeight: 600 }, axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: '#e8edf2', width: 1 } } },
-                    grid: isPie ? undefined : { containLabel: true, bottom: '10%', top: '20%', left: '10%', right: '10%' },
-                    series: [{
-                        name: d.series_name || 'Данные',
-                        type: d.chart_type || 'bar',
-                        radius: isPie ? '65%' : undefined,
-                        data: isPie ? seriesData.map((item, idx) => ({
-                            ...item,
-                            itemStyle: {
-                                color: pieColors[idx % pieColors.length],
-                                shadowBlur: 15,
-                                shadowColor: 'rgba(0, 0, 0, 0.2)'
-                            }
-                        })) : seriesData,
-                        colorBy: d.chart_type === 'bar' ? 'data' : undefined,
-                        itemStyle: isPie ? { borderRadius: 12, borderColor: '#ffffff', borderWidth: 3, shadowBlur: 15, shadowColor: 'rgba(0, 0, 0, 0.2)' } : d.chart_type === 'bar' ? { borderRadius: [4, 4, 0, 0] } : undefined,
-                        lineStyle: d.chart_type === 'line' ? { width: 3 } : undefined,
-                        label: isPie ? { show: true, color: '#1a2c3e', formatter: '{b}: {d}%', fontSize: 12, fontWeight: 600 } : d.chart_type === 'bar' ? { show: true, position: 'top', color: '#1a2c3e', fontSize: 11, fontWeight: 600 } : undefined,
-                        labelLine: isPie ? { show: true, lineStyle: { color: '#1a2c3e', width: 2 }, smooth: 0.2, length: 15, length2: 10 } : undefined,
-                        smooth: d.chart_type === 'line' ? true : undefined,
-                        symbol: d.chart_type === 'line' ? 'circle' : undefined,
-                        symbolSize: d.chart_type === 'line' ? 10 : undefined
-                    }]
-                };
-                myChart.setOption(option, true);
-                setTimeout(() => myChart.resize(), 100);
-                setTimeout(() => myChart.resize(), 500);
-                const resizeHandler = () => myChart.resize();
-                window.addEventListener('resize', resizeHandler);
-                myChart.on('dispose', () => window.removeEventListener('resize', resizeHandler));
-            }, 300);
+            // Перемещаем график ДО ссылок (если они есть)
+            const sourcesDiv = lastBotDiv.querySelector('div[style*="border-top"]');
+            if (sourcesDiv && lastBotDiv.lastElementChild === chartWrapper) {
+                lastBotDiv.insertBefore(chartWrapper, sourcesDiv);
+            }
             return;
         }
         const msgDiv = document.createElement('div');
@@ -1078,16 +1027,23 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Обновление кнопки отправки
     function updateSendButton() {
-        sendButton.disabled = textarea.value.trim().length === 0;
+        const hasText = textarea.value.trim().length > 0;
+        if (hasText) {
+            sendButton.classList.add('visible');
+            sendButton.disabled = false;
+        } else {
+            sendButton.classList.remove('visible');
+            sendButton.disabled = true;
+        }
     }
 
     // Обновление крестика
     function updateClearButton() {
         if (clearBtn) {
             if (textarea.value.trim().length > 0) {
-                clearBtn.style.display = 'inline-flex';
+                clearBtn.classList.add('visible');
             } else {
-                clearBtn.style.display = 'none';
+                clearBtn.classList.remove('visible');
             }
         }
     }
@@ -1113,3 +1069,105 @@ document.addEventListener("DOMContentLoaded", function () {
     updateSendButton();
     updateClearButton();
 });
+
+let recognition = null;
+let isListening = false;
+let silenceTimer = null; // 🔥 НАШ СКРЫТЫЙ ТАЙМЕР ТИШИНЫ
+let voiceInputBlocked = false; // 🔥 Блокировка onresult при отправке сообщения
+
+function toggleMic() {
+    const micBtn = document.getElementById("micBtn");
+    const textarea = document.getElementById("messageText");
+    const sendButton = document.getElementById("sendButton");
+    const clearBtn = document.getElementById("clearTextBtn");
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        alert("⚠️ Голосовой ввод не поддерживается в этом браузере.");
+        return;
+    }
+
+    if (!recognition) {
+        recognition = new SpeechRecognition();
+        recognition.lang = 'ru-RU';
+        // 🔥 ВАЖНО: interimResults оставляем true (чтобы видеть промежуточный текст),
+        // но continuous ставим true, чтобы браузер не выключал микрофон на коротких паузах между словами!
+        recognition.interimResults = true;
+        recognition.continuous = true;
+
+        recognition.onstart = () => {
+            isListening = true;
+            micBtn.classList.add("recording");
+            textarea.placeholder = "Слушаю вас, говорите...";
+            resetSilenceTimer(); // Запускаем стартовый таймер при включении
+        };
+
+        recognition.onresult = (event) => {
+            // 🔥 Если отправка сообщения — игнорируем все результаты распознавания
+            if (voiceInputBlocked) return;
+
+            // 🔥 Как только пришел ЛЮБОЙ звук или слово — сбрасываем и перезапускаем таймер заново!
+            resetSilenceTimer();
+
+            let resultText = "";
+            for (let i = 0; i < event.results.length; ++i) {
+                resultText += event.results[i][0].transcript;
+            }
+            
+            if (resultText) {
+                textarea.value = resultText;
+                
+                // Автовысота поля ввода
+                textarea.style.height = "auto";
+                textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
+                
+                if (sendButton) {
+                    sendButton.classList.add('visible');
+                    sendButton.disabled = false;
+                }
+                if (clearBtn) clearBtn.classList.add('visible');
+            }
+        };
+
+        // Функция сброса и старта таймера тишины
+        function resetSilenceTimer() {
+            if (silenceTimer) clearTimeout(silenceTimer);
+            
+            // 🔥 АВТО-ВЫКЛЮЧЕНИЕ ЧЕРЕЗ 3 СЕКУНДЫ ПОЛНОЙ ТИШИНЫ
+            silenceTimer = setTimeout(() => {
+                if (isListening && recognition) {
+                    console.log("⏱️ Обнаружена тишина в течение 3 секунд. Выключаю запись автоматически...");
+                    recognition.stop(); // Принудительно глушим микрофон
+                }
+            }, 3000); // 3000 мс = 3 секунды. Если хочешь 4 секунды — поставь 4000
+        }
+
+        recognition.onerror = (event) => {
+            console.error("Ошибка речи:", event.error);
+            stopRecording();
+        };
+
+        recognition.onend = () => {
+            stopRecording();
+        };
+    }
+
+    if (!isListening) {
+        try {
+            recognition.start();
+        } catch (e) {
+            console.error(e);
+        }
+    } else {
+        if (silenceTimer) clearTimeout(silenceTimer);
+        recognition.stop();
+    }
+
+    function stopRecording() {
+        isListening = false;
+        voiceInputBlocked = false; // 🔥 Сбрасываем блокировку при остановке записи
+        if (silenceTimer) clearTimeout(silenceTimer); // Чистим таймер при ручном стопе
+        if (micBtn) micBtn.classList.remove("recording");
+        if (textarea) textarea.placeholder = "Задай вопрос...";
+    }
+}

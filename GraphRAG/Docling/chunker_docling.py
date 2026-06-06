@@ -11,11 +11,11 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 # --- CONFIG ---
-MODEL_PATH = "/home/amlin04/multik_bot/hf_cache/multilingual-e5-large"
+MODEL_PATH = "/home/amlin04/multik_bot/hf_cache/FRIDA"
 # Добавляем local_files_only=True, чтобы токенизатор не стучался за обновлениями
 TOKENIZER = AutoTokenizer.from_pretrained(MODEL_PATH, local_files_only=True)
 MAX_TOKENS = 400
-INPUT_PDF = "79-FZ.pdf"
+INPUT_PDF = "79-ФЗ.pdf"
 OUTPUT_FILE = "79-FZ.jsonl"
 
 def count_tokens(text):
@@ -124,7 +124,7 @@ def main():
                     "title": clean_header,
                     "text": chunk_text.strip(),
                     "local_img": "",
-                    "url": "http://kremlin.ru"
+                    "url": "http://www.kremlin.ru/acts/bank/21210"
                 }
                 f_out.write(json.dumps(chunk, ensure_ascii=False) + '\n')
                 total += 1

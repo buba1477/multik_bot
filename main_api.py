@@ -107,7 +107,10 @@ async def get_chat_page():
     <!-- Правая зона: обе кнопки жестко в одной колонке -->
     <div class="input-actions-col">
         <button id="clearTextBtn" class="clear-text-btn" onclick="clearTextField()">✕</button>
-        <button id="sendButton" class="send-btn" onclick="sendMessage()" disabled>↑</button>
+    <div class="input-bottom-row">
+        <button id="sendButton" class="send-btn" onclick="sendMessage()" disabled data-tooltip="Отправить запрос">↑</button>
+        <button id="micBtn" class="mic-btn" onclick="toggleMic()" data-tooltip="Голосовой ввод">🎤</button>
+    </div>
     </div>
 </div>
 

@@ -1,8 +1,7 @@
 import json
 import re
-import requests
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 
 # =========================================================
 # CONTRACT SCHEMA (Жесткая структура для Apache ECharts)
@@ -12,7 +11,10 @@ class EChartsConfig(BaseModel):
     chart_type: str = Field(description="Тип графика: строго 'bar' (столбчатый), 'line' (линейный) или 'pie' (круговая диаграмма).")
     x_axis: List[str] = Field(description="Массив названий категорий для оси X (для 'pie' это будут названия секторов).")
     series_name: str = Field(description="Название серии данных, например: 'Календарные дни'.")
-    series_data: List[int] = Field(description="Массив числовых значений для оси Y (строго целые числа).")
+    series_data: List[float] = Field(description="Массив числовых значений для оси Y. Только плоский массив чисел, БЕЗ вложенных списков.")
+    series_name_2: Optional[str] = Field(default=None, description="Название второй серии данных (для двух рядов на одном графике).")
+    series_data_2: Optional[List[float]] = Field(default=None, description="Массив числовых значений для второй серии данных (для двух рядов на одном графике).")
+    x_axis_2: Optional[List[str]] = Field(default=None, description="Массив названий категорий для второй оси X (если отличается).")
 
 # =========================================================
 # CORE MODULE
@@ -34,21 +36,35 @@ class DynamicChartEngine:
         if is_chart:
             return """Ты — аналитик ФНС. Извлеки показатели из текста и верни СТРОГО чистый JSON-объект по шаблону, без markdown-оберток (```json) и пояснений.
 
-                Шаблон:
+                Шаблон (простой график, один ряд данных):
                 {
                 "title": "Заголовок на русском",
-                "chart_type": "bar или line или pie",
+                "chart_type": "bar, line или pie",
                 "x_axis": ["Категория 1", "Категория 2"],
-                "series_name": "Единица измерения",
+                "series_name": "Название серии",
                 "series_data": [число_1, число_2]
                 }
 
-                Правила выбора 'chart_type':
-                - 'pie' (Круговая): для долей, частей, структуры, процентов или если явно просят "пирог/круговой".
-                - 'line' (Линейный): для динамики, трендов, изменения по годам/месяцам или если просят "линию".
-                - 'bar' (Столбчатый): дефолт для сравнения независимых категорий или если просят просто "график".
+                Шаблон (сравнение, два ряда данных на одном графике):
+                {
+                "title": "Заголовок на русском",
+                "chart_type": "bar или line",
+                "x_axis": ["2023", "2024"],
+                "series_name": "Первый показатель",
+                "series_data": [100, 200],
+                "series_name_2": "Второй показатель",
+                "series_data_2": [300, 400]
+                }
 
-                Важно: числа в 'series_data' строго целые (int). Размерность 'x_axis' и 'series_data' должна строго совпадать."""
+                СТРОГИЕ ПРАВИЛА:
+                1. series_data и series_data_2 — это ТОЛЬКО плоский массив чисел, например [7150, 8120].
+                   ЗАПРЕЩЕНО использовать вложенные списки: [[2023, 7150], [2024, 8120]] — это ОШИБКА.
+                2. Если в данных есть годы (например, 2023, 2024), вынеси их в x_axis, а значения — в series_data.
+                3. Если нужно сравнить два разных показателя за одни и те же годы, используй series_name_2 и series_data_2.
+                4. Числа могут быть как целыми, так и дробными (например, 8120.4).
+                5. Размерность x_axis и series_data / series_data_2 должна строго совпадать.
+
+                ВАЖНО: Никогда не помещай годы внутрь series_data!"""
         else:
             return "Ты — официальный ИИ-ассистент ФНС. Отвечай строго по фактам из Базы знаний. Пиши лаконично, используй списки."
 
@@ -72,11 +88,9 @@ class DynamicChartEngine:
         sys_prompt = self.get_system_prompt(is_chart)
         user_content = f"БАЗА ЗНАНИЙ ФНС:\n{rag_context}\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ: {query}"
         
-        if is_chart:
-            # Передаём в промпт уже определённый тип графика вместо "выбери_правильный_тип"
-            sys_prompt = sys_prompt.replace("выбери_правильный_тип", chart_type)
-            # Раскомментируем инструкцию по типу
-            sys_prompt = sys_prompt.replace('"выбери_правильный_тип"', f'"{chart_type}"')
+        if is_chart and chart_type:
+            # Принудительно проставляем тип графика в конец промпта
+            sys_prompt = sys_prompt + f'\nОБЯЗАТЕЛЬНО: chart_type должен быть "{chart_type}". Строго следуй этому типу!'
         
         payload = {
             "model": model_name,
@@ -98,20 +112,45 @@ class DynamicChartEngine:
         return {"is_chart": is_chart, "payload": payload, "chart_type": chart_type}
 
     def _sanitize_json(self, content: str) -> str:
-        """Санитизирует JSON перед Pydantic: null → 0, float → int через round()"""
+        """Санитизирует JSON перед Pydantic: null → 0, float → int через round(), распаковывает вложенные списки"""
         try:
             obj = json.loads(content)
-            # Проходим по series_data и заменяем null/None на 0, float округляем
-            if "series_data" in obj and isinstance(obj["series_data"], list):
-                cleaned = []
-                for v in obj["series_data"]:
+            
+            def flatten_series(values):
+                """Преобразует [2023, 7150] в 7150, оставляет числа как есть"""
+                if not isinstance(values, list):
+                    return []
+                result = []
+                for v in values:
                     if v is None:
-                        cleaned.append(0)
-                    elif isinstance(v, float):
-                        cleaned.append(int(round(v)))
+                        result.append(0)
+                    elif isinstance(v, list):
+                        # Вложенный список [год, значение] → берём только значение
+                        if len(v) >= 2:
+                            val = v[1] if v[1] is not None else 0
+                            # Если второй элемент тоже список — рекурсивно берём последний не-список
+                            while isinstance(val, list):
+                                val = val[-1] if val else 0
+                            result.append(float(val) if isinstance(val, (int, float)) else 0)
+                        else:
+                            result.append(0)
+                    elif isinstance(v, (int, float)):
+                        result.append(float(v))
                     else:
-                        cleaned.append(v)
-                obj["series_data"] = cleaned
+                        try:
+                            result.append(float(v))
+                        except (ValueError, TypeError):
+                            result.append(0)
+                return result
+            
+            # Обрабатываем series_data
+            if "series_data" in obj and isinstance(obj["series_data"], list):
+                obj["series_data"] = flatten_series(obj["series_data"])
+            
+            # Обрабатываем series_data_2, если есть
+            if "series_data_2" in obj and isinstance(obj["series_data_2"], list):
+                obj["series_data_2"] = flatten_series(obj["series_data_2"])
+            
             return json.dumps(obj, ensure_ascii=False)
         except json.JSONDecodeError:
             return content

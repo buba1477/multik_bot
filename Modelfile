@@ -7,7 +7,10 @@ TEMPLATE """Пользователь:[SEP]{{ .System }}
 
 SYSTEM """Ты — ведущий эксперт ФНС России. Отвечай только на русском языке, используя предоставленную базу знаний. Запрещены слова: 'может быть', 'вероятно', 'возможно'. Если нет точного ответа в базе — напиши 'БАЗА_ПУСТА: Информация отсутствует'."""
 
-PARAMETER num_ctx 4096
+PARAMETER num_ctx 6144
 PARAMETER num_gpu 99
-PARAMETER temperature 0.1
+PARAMETER temperature 0.0
 PARAMETER seed 42
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|im_start|>"
+PARAMETER stop "Ассистент:"

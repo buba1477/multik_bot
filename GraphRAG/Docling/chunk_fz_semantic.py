@@ -11,13 +11,14 @@ import os
 # =========================================================
 
 MODEL_PATH = "/home/amlin04/multik_bot/hf_cache/ru-en-RoSBERTa"
-INPUT_PDF = "146-ФЗ .pdf"
-OUTPUT_FILE = "146-FZ-semantic.jsonl"
-URL = "http://kremlin.ru"
+INPUT_PDF = "79-ФЗ.pdf"
+OUTPUT_FILE = "79-FZ-semantic.jsonl"
+URL = "http://www.kremlin.ru/acts/bank/21210"
 
 MAX_TOKENS = 512
+SAFE_MAX_TOKENS = 460
 TARGET_TOKENS = 350
-MIN_TOKENS = 50
+MIN_TOKENS = 0
 ABSOLUTE_MAX_TOKENS = 512
 
 # =========================================================
@@ -32,17 +33,19 @@ os.environ.update({
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, local_files_only=True)
 
+
 # =========================================================
-# UTILITIES & BOOK RECIPE 2.3 (TOKEN MANAGEMENT)
+# UTILITIES
 # =========================================================
 
 def count_tokens(text: str) -> int:
     return len(tokenizer.encode(text, add_special_tokens=False))
 
+
 def truncate_to_limit(text: str, max_tokens: int) -> str:
     """
     [BOOK RECIPE 2.3] Безопасно обрезает русский текст строго по лимиту токенов,
-    полностью исключая появление битых символов-ромбиков () в UTF-8.
+    полностью исключая появление битых символов-ромбиков в UTF-8.
     """
     if not text:
         return ""
@@ -51,6 +54,7 @@ def truncate_to_limit(text: str, max_tokens: int) -> str:
         return text
     truncated_tokens = tokens[:max_tokens]
     return tokenizer.decode(truncated_tokens, skip_special_tokens=True).strip()
+
 
 def normalize_text(text: str) -> str:
     if not text:
@@ -61,11 +65,13 @@ def normalize_text(text: str) -> str:
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
+
 def is_garbage(line: str) -> bool:
     s = line.strip().lower()
     garbage = {"события", "структура", "контакты", "документы", "поиск",
                "rutube", "telegram", "youtube", "введите запрос", "найти", "для сми"}
     return len(s) < 2 or s in garbage or s.startswith("http") or "pravo.gov.ru" in s
+
 
 def is_orphan_number(text: str) -> bool:
     """Проверяет, является ли чанк одиноким номером пункта"""
@@ -77,6 +83,7 @@ def is_orphan_number(text: str) -> bool:
     if len(cleaned) < 10 and re.match(r'^\d+(?:\.\d+)*$', cleaned):
         return True
     return False
+
 
 # =========================================================
 # TEXT CLEANING
@@ -125,9 +132,10 @@ def clean_legal_text(text: str) -> str:
 
     return text.strip()
 
+
 def extract_article_title(text: str):
     text = normalize_text(text)
-    m = re.search(r'Статья\s+([\d\.\-\s]+)', text)
+    m = re.search(r'Статья\s+([\d.\s\-]+)', text)
     if not m:
         return None, None
 
@@ -144,6 +152,7 @@ def extract_article_title(text: str):
 
     return art_num, full_title
 
+
 def normalize_article_number(num: str) -> str:
     num = re.sub(r'<[^>]+>', '', num)
     num = num.replace("-", ".")
@@ -152,15 +161,43 @@ def normalize_article_number(num: str) -> str:
     num = re.sub(r'\.+$', '.', num)
     return num.strip(".")
 
+
 # =========================================================
-# TEXT SPLITTING — АВТОНОМНАЯ ЛОКАЛЬНАЯ ВЕРСИЯ
+# TEXT SPLITTING — ИСПРАВЛЕННАЯ ВЕРСИЯ
 # =========================================================
+
+def is_dictionary_article(text: str) -> bool:
+    """
+    Определяет, является ли статья словарём терминов (много определений вида "X) ... - ...")
+    Такие статьи нельзя резать по пунктам — будут дубликаты.
+    """
+    # Ищем паттерн "цифра) текст - текст"
+    definition_pattern = r'\d+\)\s*[^-]+\s*-\s*\S+'
+    definition_matches = len(re.findall(definition_pattern, text))
+    
+    # Если больше 3 определений — это словарь
+    if definition_matches >= 3:
+        return True
+    
+    # Доп. проверка: если заголовок содержит "основные термины", "понятия" и т.д.
+    title_lower = text[:500].lower()
+    dict_keywords = ["основные термины", "понятия", "термины и определения", "используемые термины"]
+    if any(keyword in title_lower for keyword in dict_keywords):
+        return True
+    
+    return False
+
 
 def split_by_paragraphs(text: str):
     if not text:
         return []
     
+    # 🛡️ ЗАЩИТА ОТ СТАТЕЙ-СЛОВАРЕЙ — не режем их вообще
+    if is_dictionary_article(text):
+        return [text]
+    
     protected = {}
+    
     def protect(m):
         idx = len(protected)
         placeholder = f"__PROTECTED_{idx}__"
@@ -181,8 +218,13 @@ def split_by_paragraphs(text: str):
         part = part.strip()
         if len(part) > 20:
             result.append(part)
-            
+    
+    # Если после разбиения получился 1 кусок — не режем
+    if len(result) <= 1:
+        return [text]
+    
     return result
+
 
 def split_large_paragraph(para: str, limit_tokens: int):
     sentences = re.split(r'(?<=[\.\!\?;])\s+(?=[А-ЯA-Z0-9])', para)
@@ -199,11 +241,12 @@ def split_large_paragraph(para: str, limit_tokens: int):
     
     if current:
         chunks.append(" ".join(current))
-        
+    
     return chunks
 
-def build_chunks_respectful(paragraphs, prefix, max_tokens=MAX_TOKENS):
-    """Собирает чанки локально, ПРЕДОТВРАЩАЯ появление оторванных сирот"""
+
+def build_chunks_respectful(paragraphs, prefix, max_tokens=SAFE_MAX_TOKENS):
+    """Собирает чанки локально с учетом безопасного лимита под метаданные"""
     chunks = []
     current = []
     prefix_tokens = count_tokens(prefix)
@@ -211,7 +254,7 @@ def build_chunks_respectful(paragraphs, prefix, max_tokens=MAX_TOKENS):
     for para in paragraphs:
         if not para.strip():
             continue
-            
+        
         para_with_prefix = prefix + "\n\n" + para
         para_tokens = count_tokens(para_with_prefix)
         
@@ -236,53 +279,47 @@ def build_chunks_respectful(paragraphs, prefix, max_tokens=MAX_TOKENS):
             if current:
                 chunks.append(prefix + "\n\n" + "\n\n".join(current))
             current = [para]
-            
-    # Защита финальных хвостов статей
+    
     if current:
         last_chunk = prefix + "\n\n" + "\n\n".join(current)
-        if count_tokens(last_chunk) < MIN_TOKENS and chunks:
-            prev_chunk = chunks.pop()
-            clean_tail = "\n\n".join(current)
-            merged_chunk = prev_chunk + "\n\n" + clean_tail
-            
-            if count_tokens(merged_chunk) <= ABSOLUTE_MAX_TOKENS:
-                chunks.append(merged_chunk)
-            else:
-                chunks.append(prev_chunk)
-                safe_last = truncate_to_limit(last_chunk, ABSOLUTE_MAX_TOKENS)
-                chunks.append(safe_last)
-        else:
-            safe_last = truncate_to_limit(last_chunk, ABSOLUTE_MAX_TOKENS)
-            chunks.append(safe_last)
-            
-    return chunks
+        safe_last = truncate_to_limit(last_chunk, ABSOLUTE_MAX_TOKENS)
+        chunks.append(safe_last)
+    
+    # Дедупликация на уровне чанков
+    unique_chunks = []
+    seen_content = set()
+    for chunk in chunks:
+        chunk_hash = hash(chunk)
+        if chunk_hash not in seen_content:
+            seen_content.add(chunk_hash)
+            unique_chunks.append(chunk)
+    
+    return unique_chunks
+
 
 def validate_chunks(chunks):
     seen, final = set(), []
-
+    
     for chunk in chunks:
         chunk = normalize_text(chunk)
-
         if not chunk:
             continue
-
+        
         token_count = count_tokens(chunk)
-
         if token_count < MIN_TOKENS:
             continue
-
         if token_count > ABSOLUTE_MAX_TOKENS:
             continue
-
         if is_orphan_number(chunk):
             continue
-
+        
         chunk_hash = hash(chunk)
         if chunk_hash not in seen:
             seen.add(chunk_hash)
             final.append(chunk)
-
+    
     return final
+
 
 # =========================================================
 # MAIN PROCESSING
@@ -290,75 +327,74 @@ def validate_chunks(chunks):
 
 def main():
     print(f"🚀 Processing: {INPUT_PDF}")
-
+    
     if not Path(INPUT_PDF).exists():
         print(f"❌ File {INPUT_PDF} not found!")
         return
-
+    
     converter = DocumentConverter(format_options={
         "pdf": PdfFormatOption(pipeline_options=PdfPipelineOptions(enable_remote_services=False))
     })
-
+    
     try:
         markdown = converter.convert(INPUT_PDF).document.export_to_markdown()
     except Exception as e:
         print(f"❌ Conversion error: {e}")
         return
-
+    
     print(f"📄 Content length: {len(markdown)} chars")
-
+    
     clean_lines = [line for line in markdown.split("\n") if not is_garbage(line)]
     clean_md = clean_legal_text("\n".join(clean_lines))
-
-    articles = re.split(r'(?=Статья\s+[\d.-\s]+)', clean_md)
+    
+    articles = re.split(r'(?=Статья\s+[\d.\s-]+)', clean_md)
     print(f"📑 Found {len(articles)} sections")
-
+    
     doc_id = Path(INPUT_PDF).stem.lower().replace(" ", "_").strip()
     total_chunks = 0
     small_chunks = []
-
+    
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         for article in articles:
             article = normalize_text(article)
-            if len(article) < 50:
+            if len(article) < 10:
                 continue
-
-            article_match = re.match(r'(Статья\s+[\d.-\s]+.?\s*[^\n]*)', article, flags=re.I)
+            
+            article_match = re.match(r'(Статья\s+[\d.\s-]+)', article, flags=re.I)
             if not article_match:
                 continue
-
-            art_num, title = extract_article_title(article_match.group(1).strip())
+            
+            art_num, title = extract_article_title(article)
             if not art_num:
                 continue
-
+            
             body = clean_legal_text(article[len(article_match.group(1)):].strip())
-            if not body or len(body) < 30:
-                continue
-
+            if not body:
+                body = "Положение статьи временно отсутствует или утратило силу."
+            
             prefix = f"[{doc_id.upper()}] [{title}]"
             full_text = prefix + "\n\n" + body
             total_tokens = count_tokens(full_text)
-
             print(f"📌 Article {art_num}: {total_tokens} tokens")
-
+            
             paragraphs = split_by_paragraphs(body)
             if not paragraphs:
                 paragraphs = [p.strip() for p in body.split('\n\n') if p.strip()]
-
-            if total_tokens <= MAX_TOKENS:
+            
+            if total_tokens <= SAFE_MAX_TOKENS:
                 chunks = [full_text]
             else:
                 chunks = build_chunks_respectful(paragraphs, prefix)
-
+            
             chunks = validate_chunks(chunks)
             safe_art_num = art_num.replace(".", "_")
-
+            
             for idx, chunk in enumerate(chunks, 1):
                 token_count = count_tokens(chunk)
                 if token_count < MIN_TOKENS:
                     small_chunks.append((f"{doc_id}_st{safe_art_num}_c{idx}", token_count))
                     continue
-
+                
                 node = {
                     "id": f"{doc_id}_st{safe_art_num}_c{idx}",
                     "title": title,
@@ -368,18 +404,15 @@ def main():
                 }
                 f.write(json.dumps(node, ensure_ascii=False) + "\n")
                 total_chunks += 1
-
+            
             print(f"✅ Created {len(chunks)} valid chunks")
-
-    print(f"\n{'='*50}")
-    print(f"📊 ИТОГИ ПРОВЕРКИ:")
-    print(f"✅ Всего чанков: {total_chunks}")
+    
+    print(f"\n{'=' * 50}")
+    print(f"📊 ИТОГИ СЕМАНТИЧЕСКОГО ЧАНКИНГА:")
+    print(f"✅ Всего чанков зашито в базу: {total_chunks}")
     print(f"🚩 Отфильтровано малышей (<{MIN_TOKENS}): {len(small_chunks)}")
-    if small_chunks:
-        print(f"⚠️ Примеры отфильтрованных:")
-        for sid, scount in small_chunks[:10]:
-            print(f" - {sid}: {scount} токенов")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
+
 
 if __name__ == "__main__":
     main()
