@@ -436,7 +436,10 @@ async function sendMessage() {
     input.value = "";                 // очищаем текст
     input.style.height = "auto";      // сбрасываем высоту
     
-    // Прячем крестик очистки и кнопку отправки
+    // Прячем крестик очистки, кнопку отправки, возвращаем микрофон
+    const micBtn = document.getElementById("micBtn");
+    if (micBtn) micBtn.classList.remove('moved');
+    
     const clearBtn = document.getElementById("clearTextBtn");
     if (clearBtn) clearBtn.classList.remove('visible');
     
@@ -642,6 +645,24 @@ async function sendMessage() {
 // Обработчик отправки по Enter
 document.getElementById("messageText").addEventListener("keypress", (e) => {
     if (e.key === "Enter" && !isGenerating) sendMessage();
+});
+
+// Отслеживание состояния инпута
+document.getElementById("messageText").addEventListener("input", (e) => {
+    const textarea = e.target;
+    const micBtn = document.getElementById("micBtn");
+    const sendBtn = document.getElementById("sendButton");
+    const clearBtn = document.getElementById("clearTextBtn");
+
+    if (textarea.value.trim().length > 0) {
+        micBtn.classList.add('moved');
+        sendBtn.classList.add('visible');
+        clearBtn.classList.add('visible');
+    } else {
+        micBtn.classList.remove('moved');
+        sendBtn.classList.remove('visible');
+        clearBtn.classList.remove('visible');
+    }
 });
 
 // Очистка графики при загрузке страницы
@@ -1121,6 +1142,7 @@ function toggleMic() {
                 textarea.style.height = "auto";
                 textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
                 
+                micBtn.classList.add('moved');
                 if (sendButton) {
                     sendButton.classList.add('visible');
                     sendButton.disabled = false;

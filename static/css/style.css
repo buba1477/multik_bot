@@ -593,11 +593,16 @@ input:focus {
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    transition: width 0.3s ease, transform 0.3s ease, background 0.2s ease, box-shadow 0.2s ease !important;
+    transition: width 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background 0.2s ease, box-shadow 0.2s ease !important;
     flex-shrink: 0 !important;
     padding: 0 !important;
     min-width: 44px !important;
     box-sizing: border-box !important;
+    margin-left: -60px; /* микрофон стоять поверх кнопки отправки */
+}
+
+.mic-btn.moved {
+    transform: translateX(-60px) !important; /* уезжает влево, освобождая место для sendBtn */
 }
 
 .mic-btn:hover {
