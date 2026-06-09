@@ -495,7 +495,7 @@ header h2 .subtext {
 
 #input-area:focus-within {
     box-shadow: 0 8px 24px rgba(0, 51, 102, 0.15);
-    border-color: #003366;
+    border-color: #cbd5e1;
     background: #ffffff;
 }
 
@@ -579,13 +579,12 @@ input:focus {
     justify-content: flex-end !important;
     margin-top: auto !important;
 }
-
 /* КНОПКА МИКРОФОНА */
 .mic-btn {
     width: 44px !important;
     height: 44px !important;
-    border-radius: 50% !important;
-    background: #e2e8f0 !important;
+    border-radius: 9999px !important;
+    background: transparent !important;
     border: none !important;
     color: #4b5563 !important;
     font-size: 18px !important;
@@ -593,43 +592,57 @@ input:focus {
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    transition: width 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background 0.2s ease, box-shadow 0.2s ease !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
     flex-shrink: 0 !important;
     padding: 0 !important;
     min-width: 44px !important;
     box-sizing: border-box !important;
-    margin-left: -60px; /* микрофон стоять поверх кнопки отправки */
+    margin-left: -60px;
 }
 
 .mic-btn.moved {
-    transform: translateX(-60px) !important; /* уезжает влево, освобождая место для sendBtn */
+    transform: translateX(-60px) !important;
 }
 
-.mic-btn:hover {
+/* 🔥 СТИЛЬ ПРИ ЗАПИСИ — КРАСНЫЙ ФОН, БЕЗ ПУЛЬСАЦИИ КНОПКИ */
+.mic-btn.recording,
+.mic-btn.recording.moved {
+    background: #dc2626 !important;
+    box-shadow: 0 0 20px rgba(220, 38, 38, 0.7) !important;
+    border: 2px solid #ff0000 !important;
+}
+
+/* 🔥 ЕДИНАЯ ПУЛЬСАЦИЯ ТОЛЬКО У ИКОНКИ */
+.mic-btn.recording svg {
+    animation: mic-icon-pulse 0.8s ease-in-out infinite !important;
+    color: #ffffff !important;
+    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.8));
+}
+
+.mic-btn:hover:not(.recording) {
     background: #cbd5e1 !important;
     color: #1f2937 !important;
 }
 
-.mic-btn.recording {
-    background: #ef4444 !important;
-    color: #ffffff !important;
-    animation: mic-pulse 1.5s infinite;
-    box-shadow: 0 0 12px rgba(239, 68, 68, 0.5) !important;
+/* Убираем старый ключевой кадр mic-pulse, оставляем только mic-icon-pulse */
+@keyframes mic-icon-pulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.15);
+    }
 }
 
-@keyframes mic-pulse {
-    0% { transform: scale(1); }
-    50% { transform: scale(1.05); }
-    100% { transform: scale(1); }
-}
 
 /* КНОПКА ОЧИСТКИ (КРЕСТИК) */
 .clear-text-btn {
     position: static !important;
     width: 44px !important;
     height: 44px !important;
-    border-radius: 50% !important;
-    background: #e2e8f0 !important;
+    border-radius: 0 !important;
+    border-radius: 9999px !important;
+    background: transparent !important;
     border: none !important;
     color: #64748b !important;
     font-size: 16px !important;
@@ -665,8 +678,9 @@ input:focus {
     min-width: 0 !important;
     padding: 0 !important;
     height: 44px !important;
-    border-radius: 50% !important;
-    background: #e2e8f0 !important;
+    border-radius: 0 !important;
+    border-radius: 9999px !important;
+    background: transparent !important;
     color: #94a3b8 !important;
     border: none !important;
     cursor: pointer;
@@ -704,7 +718,7 @@ input:focus {
 #input-area .send-btn.visible:disabled {
     opacity: 0.5 !important;
     cursor: not-allowed !important;
-    background: #e2e8f0 !important;
+    background: transparent !important;
     color: #94a3b8 !important;
     box-shadow: none !important;
     transform: none !important;
@@ -819,15 +833,24 @@ button:disabled {
     border-top-color: #475569;
 }
 
-/* MicBtn recording — тултип "Нажмите чтобы остановить" */
+/* MicBtn recording — красный тултип (текст берётся из data-tooltip в JS) */
 #micBtn.recording[data-tooltip]::before {
-    content: "⏹ Остановить запись";
     background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
     box-shadow: 0 6px 20px rgba(220, 38, 38, 0.35), 0 2px 6px rgba(0, 0, 0, 0.1);
 }
 
 #micBtn.recording[data-tooltip]::after {
     border-top-color: #b91c1c;
+}
+
+/* MicBtn disabled — серый тултип (текст берётся из data-tooltip в JS) */
+#micBtn[data-tooltip]:disabled::before {
+    background: linear-gradient(135deg, #64748b 0%, #475569 100%);
+    box-shadow: 0 6px 20px rgba(100, 116, 139, 0.35), 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+#micBtn[data-tooltip]:disabled::after {
+    border-top-color: #475569;
 }
 
 /* Кнопка очистки истории чата верхняя — без изменений */

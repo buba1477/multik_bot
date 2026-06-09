@@ -44,7 +44,7 @@ function showLoader() {
             <div class="dot"></div>
             <div class="dot"></div>
         </div>
-        <div class="loader-text">Нейроинспектор ищет по базе ФНС</div>
+        <div class="loader-text">Нейроконсультант ищет по базе ФНС</div>
     `;
     chat.appendChild(loaderDiv);
     scrollToBottom();
@@ -54,6 +54,25 @@ function showLoader() {
 function removeLoader() {
     const loader = document.getElementById("loading-indicator");
     if (loader) loader.remove();
+}
+
+function updateInputButtons() {
+    const textarea = document.getElementById("messageText");
+    const micBtn = document.getElementById("micBtn");
+    const sendBtn = document.getElementById("sendButton");
+    const clearBtn = document.getElementById("clearTextBtn");
+
+    if (!textarea || !micBtn || !sendBtn || !clearBtn) return;
+
+    if (textarea.value.trim().length > 0) {
+        micBtn.classList.add('moved');
+        sendBtn.classList.add('visible');
+        clearBtn.classList.add('visible');
+    } else {
+        micBtn.classList.remove('moved');
+        sendBtn.classList.remove('visible');
+        clearBtn.classList.remove('visible');
+    }
 }
 
 function blockInput(status) {
@@ -71,6 +90,7 @@ function blockInput(status) {
             micButton.disabled = true;
             micButton.style.opacity = "0.4"; // Визуально делаем серым
             micButton.style.cursor = "not-allowed";
+            micButton.setAttribute("data-tooltip", "⏳ Подождите, идёт генерация ответа");
         }
         if (clearButton) {
             clearButton.disabled = true;
@@ -85,6 +105,7 @@ function blockInput(status) {
             micButton.disabled = false;
             micButton.style.opacity = "1";
             micButton.style.cursor = "pointer";
+            micButton.setAttribute("data-tooltip", "Микрофон");
         }
         if (clearButton) {
             clearButton.disabled = false;
@@ -109,6 +130,7 @@ function clearInput() {
         input.value = "";
         input.focus();
     }
+    updateInputButtons();
 
     if (chat) {
         chat.innerHTML = "";
@@ -145,12 +167,12 @@ function initChart(chartId, chartConfig, container) {
         }
     }
 
-    // Динамическая высота в зависимости от количества категорий
+    // Динамическая высота: много категорий = высокий график
     let chartHeight;
     if (isPie) {
         chartHeight = Math.max(450, Math.min(900, categoryCount * 50));
     } else {
-        chartHeight = Math.max(350, Math.min(700, categoryCount * 50));
+        chartHeight = categoryCount > 12 ? 750 : (categoryCount > 8 ? 650 : (categoryCount > 5 ? 450 : 350));
     }
 
     // Создаём wrapper с ЕДИНЫМИ стилями
@@ -186,9 +208,12 @@ function initChart(chartId, chartConfig, container) {
             '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316'
         ];
 
-        // Умный поворот подписей X — только если категорий много
+        // ECharts сам выбирает interval для X — показывает столько подписей, сколько влезает
+        // Полную информацию можно увидеть в тултипе при наведении
         const xRotate = categoryCount > 5 ? 30 : 0;
         const xLabelSize = categoryCount > 8 ? 10 : 12;
+        const xMargin = categoryCount > 5 ? 14 : 10;
+        const gridBottom = categoryCount > 8 ? '26%' : '22%';
 
         // Базовые опции — ЕДИНЫЕ для всех графиков
         const baseOption = {
@@ -214,7 +239,7 @@ function initChart(chartId, chartConfig, container) {
             },
             grid: isPie ? undefined : { 
                 containLabel: true, 
-                bottom: '22%', 
+                bottom: gridBottom, 
                 top: '26%', 
                 left: '12%', 
                 right: '10%' 
@@ -271,7 +296,7 @@ function initChart(chartId, chartConfig, container) {
                     fontSize: xLabelSize, 
                     fontWeight: 600, 
                     fontFamily: "'Inter', sans-serif", 
-                    margin: categoryCount > 5 ? 14 : 10 
+                    margin: xMargin
                 };
                 chartConfig.xAxis.axisLine = { lineStyle: { color: '#d1dce7', width: 2 } };
                 chartConfig.xAxis.splitLine = { show: false };
@@ -435,16 +460,7 @@ async function sendMessage() {
     // ========== ВОЗВРАЩАЕМ ПОЛЕ В ДЕФОЛТ ==========
     input.value = "";                 // очищаем текст
     input.style.height = "auto";      // сбрасываем высоту
-    
-    // Прячем крестик очистки, кнопку отправки, возвращаем микрофон
-    const micBtn = document.getElementById("micBtn");
-    if (micBtn) micBtn.classList.remove('moved');
-    
-    const clearBtn = document.getElementById("clearTextBtn");
-    if (clearBtn) clearBtn.classList.remove('visible');
-    
-    const sendButton = document.getElementById("sendButton");
-    if (sendButton) sendButton.classList.remove('visible');
+    updateInputButtons();
     // =============================================
     
     isGenerating = true;
@@ -648,21 +664,8 @@ document.getElementById("messageText").addEventListener("keypress", (e) => {
 });
 
 // Отслеживание состояния инпута
-document.getElementById("messageText").addEventListener("input", (e) => {
-    const textarea = e.target;
-    const micBtn = document.getElementById("micBtn");
-    const sendBtn = document.getElementById("sendButton");
-    const clearBtn = document.getElementById("clearTextBtn");
-
-    if (textarea.value.trim().length > 0) {
-        micBtn.classList.add('moved');
-        sendBtn.classList.add('visible');
-        clearBtn.classList.add('visible');
-    } else {
-        micBtn.classList.remove('moved');
-        sendBtn.classList.remove('visible');
-        clearBtn.classList.remove('visible');
-    }
+document.getElementById("messageText").addEventListener("input", () => {
+    updateInputButtons();
 });
 
 // Очистка графики при загрузке страницы
@@ -921,6 +924,7 @@ function loadChat(chatId) {
     
     document.getElementById('messageText').value = '';
     document.getElementById('messageText').focus();
+    updateInputButtons();
     scrollToBottom();
 }
 
@@ -1076,6 +1080,7 @@ document.addEventListener("DOMContentLoaded", function () {
         updateSendButton();
         updateClearButton();
         textarea.focus();
+        updateInputButtons();
     };
 
     // Событие ввода текста
@@ -1108,26 +1113,37 @@ function toggleMic() {
         return;
     }
 
+    micBtn.setAttribute("data-tooltip", "Микрофон");
+
     if (!recognition) {
         recognition = new SpeechRecognition();
         recognition.lang = 'ru-RU';
-        // 🔥 ВАЖНО: interimResults оставляем true (чтобы видеть промежуточный текст),
-        // но continuous ставим true, чтобы браузер не выключал микрофон на коротких паузах между словами!
         recognition.interimResults = true;
         recognition.continuous = true;
 
         recognition.onstart = () => {
             isListening = true;
             micBtn.classList.add("recording");
+            
+            const micSvg = micBtn.querySelector('svg');
+            
+            // 🔥 ДОБАВЛЯЕМ КЛАСС ДЛЯ ПУЛЬСАЦИИ — ОН БУДЕТ РАБОТАТЬ ВСЕГДА!
+            if (micSvg) {
+                // Убираем старый класс text-slate-500, который мог мешать
+                micSvg.classList.remove("text-slate-500");
+                // Добавляем классы для пульсации (они не зависят от hover)
+                micSvg.classList.add("mic-recording", "text-red-500", "drop-shadow-[0_0_10px_rgba(239,68,68,0.7)]");
+                // Если ты используешь Tailwind с анимациями — добавь:
+                micSvg.classList.add("animate-pulse");
+            }
+            
+            micBtn.setAttribute("data-tooltip", "⏹ Остановить запись");
             textarea.placeholder = "Слушаю вас, говорите...";
-            resetSilenceTimer(); // Запускаем стартовый таймер при включении
+            resetSilenceTimer();
         };
 
         recognition.onresult = (event) => {
-            // 🔥 Если отправка сообщения — игнорируем все результаты распознавания
             if (voiceInputBlocked) return;
-
-            // 🔥 Как только пришел ЛЮБОЙ звук или слово — сбрасываем и перезапускаем таймер заново!
             resetSilenceTimer();
 
             let resultText = "";
@@ -1137,8 +1153,6 @@ function toggleMic() {
             
             if (resultText) {
                 textarea.value = resultText;
-                
-                // Автовысота поля ввода
                 textarea.style.height = "auto";
                 textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
                 
@@ -1151,17 +1165,14 @@ function toggleMic() {
             }
         };
 
-        // Функция сброса и старта таймера тишины
         function resetSilenceTimer() {
             if (silenceTimer) clearTimeout(silenceTimer);
-            
-            // 🔥 АВТО-ВЫКЛЮЧЕНИЕ ЧЕРЕЗ 3 СЕКУНДЫ ПОЛНОЙ ТИШИНЫ
             silenceTimer = setTimeout(() => {
                 if (isListening && recognition) {
-                    console.log("⏱️ Обнаружена тишина в течение 3 секунд. Выключаю запись автоматически...");
-                    recognition.stop(); // Принудительно глушим микрофон
+                    console.log("⏱️ Тишина 3 секунды. Выключаю запись...");
+                    recognition.stop();
                 }
-            }, 3000); // 3000 мс = 3 секунды. Если хочешь 4 секунды — поставь 4000
+            }, 3000);
         }
 
         recognition.onerror = (event) => {
@@ -1187,9 +1198,22 @@ function toggleMic() {
 
     function stopRecording() {
         isListening = false;
-        voiceInputBlocked = false; // 🔥 Сбрасываем блокировку при остановке записи
-        if (silenceTimer) clearTimeout(silenceTimer); // Чистим таймер при ручном стопе
-        if (micBtn) micBtn.classList.remove("recording");
+        voiceInputBlocked = false;
+        if (silenceTimer) clearTimeout(silenceTimer);
+        
+        if (micBtn) {
+            micBtn.classList.remove("recording");
+            
+            const micSvg = micBtn.querySelector('svg');
+            
+            // 🔥 УБИРАЕМ ВСЕ КЛАССЫ ПУЛЬСАЦИИ И ВОЗВРАЩАЕМ ОБЫЧНЫЙ СТИЛЬ
+            if (micSvg) {
+                micSvg.classList.remove("mic-recording", "text-red-500", "drop-shadow-[0_0_10px_rgba(239,68,68,0.7)]", "animate-pulse");
+                micSvg.classList.add("text-slate-500");
+            }
+            
+            micBtn.setAttribute("data-tooltip", "Микрофон");
+        }
         if (textarea) textarea.placeholder = "Задай вопрос...";
     }
 }

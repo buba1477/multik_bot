@@ -182,11 +182,11 @@ Settings.llm = Ollama(
     base_url=OLLAMA_HOST,
     request_timeout=300.0,
     temperature=0.0,        
-    context_window=6144,    # 🔥 Чтобы чанки влезали: 5 чанков * ~800 токенов + промпт
+    context_window=4096,    # 🔥 Чтобы чанки влезали: 5 чанков * ~800 токенов + промпт
     
     options={
         "seed": 42,
-        "num_ctx": 6144,     # 🔥 Синхронизировано с Modelfile
+        "num_ctx": 4096,     # 🔥 Синхронизировано с Modelfile
         "num_predict": 512,
         "repeat_penalty": 1.05,
         

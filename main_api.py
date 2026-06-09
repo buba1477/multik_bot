@@ -108,8 +108,12 @@ async def get_chat_page():
     <div class="input-actions-col">
         <button id="clearTextBtn" class="clear-text-btn" onclick="clearTextField()">✕</button>
     <div class="input-bottom-row">
-        <button id="sendButton" class="send-btn" onclick="sendMessage()" disabled data-tooltip="Отправить запрос">↑</button>
-        <button id="micBtn" class="mic-btn" onclick="toggleMic()" data-tooltip="Голосовой ввод">🎤</button>
+        <button id="sendButton" class="send-btn" onclick="sendMessage()" disabled data-tooltip="Отправить">↑</button>
+        <button id="micBtn" class="mic-btn flex items-center justify-center h-10 w-10 rounded-full bg-transparent text-slate-500 hover:bg-slate-500/10 hover:text-slate-800 transition-all duration-200 ease-in-out focus:outline-none" onclick="toggleMic()" data-tooltip="Микрофон" style="box-shadow: none !important;">
+  <svg xmlns="http://w3.org" fill="none" viewBox="-5 -5 35 35" stroke="currentColor" class="w-5 h-5">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+  </svg>
+</button>
     </div>
     </div>
 </div>
