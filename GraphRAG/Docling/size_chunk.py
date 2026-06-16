@@ -3,7 +3,7 @@ from transformers import AutoTokenizer
 
 # Путь к модели и файлу
 MODEL_PATH = "/home/amlin04/multik_bot/hf_cache/FRIDA"
-JSONL_FILE = "58-ФЗ.jsonl"
+JSONL_FILE = "79-ФЗ.jsonl"
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
 

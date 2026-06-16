@@ -172,7 +172,7 @@ function initChart(chartId, chartConfig, container) {
     if (isPie) {
         chartHeight = Math.max(450, Math.min(900, categoryCount * 50));
     } else {
-        chartHeight = categoryCount > 12 ? 750 : (categoryCount > 8 ? 650 : (categoryCount > 5 ? 450 : 350));
+        chartHeight = categoryCount > 12 ? 650 : (categoryCount > 8 ? 550 : (categoryCount > 5 ? 420 : 350));
     }
 
     // Создаём wrapper с ЕДИНЫМИ стилями
@@ -210,10 +210,14 @@ function initChart(chartId, chartConfig, container) {
 
         // ECharts сам выбирает interval для X — показывает столько подписей, сколько влезает
         // Полную информацию можно увидеть в тултипе при наведении
-        const xRotate = categoryCount > 5 ? 30 : 0;
+        const xRotate = categoryCount > 5 ? 25 : 0;
         const xLabelSize = categoryCount > 8 ? 10 : 12;
         const xMargin = categoryCount > 5 ? 14 : 10;
-        const gridBottom = categoryCount > 8 ? '26%' : '22%';
+        const gridBottom = categoryCount > 8 ? '18%' : '14%';
+
+        // Достаём единицу измерения из chartConfig (если есть)
+        const unitLabel = chartConfig.unit || '';
+        const yAxisLabel = chartConfig.y_axis_label || '';
 
         // Базовые опции — ЕДИНЫЕ для всех графиков
         const baseOption = {
@@ -235,14 +239,27 @@ function initChart(chartId, chartConfig, container) {
                 borderColor: '#d1dce7',
                 borderWidth: 1,
                 textStyle: { color: '#1a2c3e', fontWeight: 500 },
-                extraCssText: 'box-shadow: 0 4px 12px rgba(0, 51, 102, 0.15); padding: 12px; border-radius: 8px;'
+                extraCssText: 'box-shadow: 0 4px 12px rgba(0, 51, 102, 0.15); padding: 12px; border-radius: 8px;',
+                formatter: isPie 
+                    ? unitLabel 
+                        ? function(params) { return params.name + '<br/>' + params.value + ' ' + unitLabel; }
+                        : undefined
+                    : unitLabel
+                        ? function(params) {
+                            let result = '<b>' + params[0].axisValue + '</b>';
+                            params.forEach(function(p) {
+                                result += '<br/>' + p.marker + ' ' + p.seriesName + ': ' + p.value + ' ' + unitLabel;
+                            });
+                            return result;
+                        }
+                        : undefined
             },
             grid: isPie ? undefined : { 
                 containLabel: true, 
                 bottom: gridBottom, 
-                top: '26%', 
-                left: '12%', 
-                right: '10%' 
+                top: '28%', 
+                left: '10%', 
+                right: '8%' 
             },
             legend: {
                 top: 38,
@@ -264,7 +281,7 @@ function initChart(chartId, chartConfig, container) {
             s.label = { 
                 show: true, 
                 color: '#1a2c3e', 
-                formatter: '{b}: {d}%', 
+                formatter: unitLabel ? function(params) { return params.name + ': ' + params.percent + '%'; } : '{b}: {c}',
                 fontSize: categoryCount > 6 ? 11 : 13, 
                 fontWeight: 600, 
                 fontFamily: "'Inter', sans-serif",
@@ -303,7 +320,14 @@ function initChart(chartId, chartConfig, container) {
                 chartConfig.xAxis.axisTick = { show: false };
             }
             if (chartConfig.yAxis) {
-                chartConfig.yAxis.axisLabel = { color: '#1a2c3e', fontSize: xLabelSize, fontWeight: 600, fontFamily: "'Inter', sans-serif", margin: 10 };
+                chartConfig.yAxis.axisLabel = { 
+                    color: '#1a2c3e', 
+                    fontSize: xLabelSize, 
+                    fontWeight: 600, 
+                    fontFamily: "'Inter', sans-serif", 
+                    margin: 10,
+                    formatter: unitLabel ? function(val) { return val + ' ' + unitLabel; } : undefined
+                };
                 chartConfig.yAxis.axisLine = { show: false };
                 chartConfig.yAxis.axisTick = { show: false };
                 chartConfig.yAxis.splitLine = { lineStyle: { color: '#e8edf2', width: 1 } };
@@ -314,7 +338,16 @@ function initChart(chartId, chartConfig, container) {
                 seriesArray.forEach((s, index) => {
                     if (s.type === 'bar') {
                         s.itemStyle = { borderRadius: [6, 6, 0, 0], shadowBlur: 10, shadowColor: 'rgba(0, 51, 102, 0.2)' };
-                        s.label = { show: true, position: 'top', color: '#1a2c3e', fontSize: 11, fontWeight: 600, fontFamily: "'Inter', sans-serif", distance: 5 };
+                        s.label = { 
+                            show: true, 
+                            position: 'top', 
+                            color: '#1a2c3e', 
+                            fontSize: 11, 
+                            fontWeight: 600, 
+                            fontFamily: "'Inter', sans-serif", 
+                            distance: 5,
+                            formatter: unitLabel ? function(params) { return params.value + ' ' + unitLabel; } : undefined
+                        };
                         s.barMaxWidth = 50;
                         s.animationDelay = index * 100;
                         // 🎨 Делаем каждый столбец разноцветным
@@ -350,6 +383,55 @@ function initChart(chartId, chartConfig, container) {
                         s.animationDelay = index * 100;
                     }
                 });
+                // 🔥 Разбивка bar-серии на отдельные серии для кликабельной легенды
+                if (!isPie && chartConfig.series && chartConfig.xAxis && chartConfig.xAxis.data && chartConfig.xAxis.data.length > 0) {
+                    const sArr = Array.isArray(chartConfig.series) ? chartConfig.series : [chartConfig.series];
+                    // Только для одиночной bar-серии (не grouped bar с двумя рядами)
+                    if (sArr.length === 1 && sArr[0].type === 'bar') {
+                        const originalSeries = sArr[0];
+                        const categories = chartConfig.xAxis.data;
+                        const barColors = [
+                            '#00d4ff', '#7c3aed', '#f59e0b', '#10b981', '#ffd700',
+                            '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316',
+                            '#3b82f6', '#a855f7', '#22c55e', '#eab308', '#ef4444'
+                        ];
+                        const newSeries = categories.map((catName, idx) => {
+                            const dataItem = Array.isArray(originalSeries.data) ? originalSeries.data[idx] : null;
+                            const value = typeof dataItem === 'object' ? dataItem.value : (dataItem != null ? dataItem : 0);
+                            const origItemStyle = typeof dataItem === 'object' && dataItem.itemStyle ? dataItem.itemStyle : undefined;
+                            
+                            // Создаём массив где только на позиции idx стоит значение, остальные — null
+                            const seriesData = new Array(categories.length).fill(null);
+                            seriesData[idx] = value;
+                            
+                            return {
+                                type: 'bar',
+                                name: catName, // имя категории → автоматически попадает в легенду!
+                                data: seriesData,
+                                barGap: '-100%',  // все серии строго в центре категории
+                                barWidth: '70%',   // одинаковая ширина как у обычного bar
+                                itemStyle: origItemStyle || {
+                                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                        { offset: 0, color: barColors[idx % barColors.length] },
+                                        { offset: 1, color: barColors[idx % barColors.length] + '99' }
+                                    ]),
+                                    borderRadius: [6, 6, 0, 0],
+                                    shadowBlur: 10,
+                                    shadowColor: 'rgba(0, 51, 102, 0.2)'
+                                },
+                                label: originalSeries.label ? { ...originalSeries.label } : undefined,
+                                barMaxWidth: originalSeries.barMaxWidth || 50,
+                                animationDelay: idx * 100
+                            };
+                        });
+                        chartConfig.series = newSeries;
+                        // Меняем trigger на 'item', чтобы тултип показывал только один столбик при наведении
+                        baseOption.tooltip.trigger = 'item';
+                        baseOption.tooltip.formatter = function(params) {
+                            return params.name + '<br/>' + params.value + (unitLabel ? ' ' + unitLabel : '');
+                        };
+                    }
+                }
             }
         }
 
@@ -581,7 +663,9 @@ async function sendMessage() {
                             title: d.title || 'График',
                             xAxis: d.chart_type === 'pie' ? undefined : { data: d.x_axis || [] },
                             yAxis: d.chart_type === 'pie' ? undefined : {},
-                            series: seriesArray
+                            series: seriesArray,
+                            unit: d.unit || '',
+                            y_axis_label: d.y_axis_label || ''
                         };
 
                         const chartWrapper = initChart(chartId, chartConfig, currentBotMsgDiv);
@@ -890,7 +974,9 @@ function loadChat(chatId) {
                 title: d.title || 'График',
                 xAxis: d.chart_type === 'pie' ? undefined : { data: d.x_axis || [] },
                 yAxis: d.chart_type === 'pie' ? undefined : {},
-                series: seriesArray
+                series: seriesArray,
+                unit: d.unit || '',
+                y_axis_label: d.y_axis_label || ''
             };
 
             // Создаём wrapper в контейнере lastBotDiv, но initChart добавляет в конец

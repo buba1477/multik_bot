@@ -14,8 +14,8 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 MODEL_PATH = "/home/amlin04/multik_bot/hf_cache/FRIDA"
 TOKENIZER = AutoTokenizer.from_pretrained(MODEL_PATH, local_files_only=True)
 MAX_TOKENS = 400
-INPUT_PDF = "58-ФЗ.pdf"
-OUTPUT_FILE = "58-ФЗ.jsonl"
+INPUT_PDF = "79-ФЗ.pdf"
+OUTPUT_FILE = "79-ФЗ.jsonl"
 
 def count_tokens(text):
     return len(TOKENIZER.encode(text, add_special_tokens=False))
@@ -129,8 +129,13 @@ def split_text_strictly(text, prefix, max_t):
 def main():
     print(f"🧐 Взламываю {INPUT_PDF} в режиме OFFLINE...")
     
+    # === ХИРУРГИЧЕСКАЯ НАСТРОЙКА ПАЙПЛАЙНА DOCLING (БЕЗ ИИ-ГЛЮКОВ ТАБЛИЦ) ===
     pipeline_options = PdfPipelineOptions()
-    pipeline_options.enable_remote_services = False
+    pipeline_options.enable_remote_services = False # Полный локальный офлайн
+    
+    # Отключаем ИИ-распознавание табличной структуры, так как в законах таблицы набраны символами.
+    # Это заставит Docling читать документ строго линейно, как человек: сверху вниз, строка за строкой.
+    pipeline_options.do_table_structure = False  
     
     converter = DocumentConverter(
         format_options={"pdf": PdfFormatOption(pipeline_options=pipeline_options)}
@@ -139,15 +144,21 @@ def main():
     result = converter.convert(INPUT_PDF)
     content = result.document.export_to_markdown()
     
-    # Зачистка мусора разметки
+    # === АНТИ-ГРЯЗЬ ФИЛЬТР (DATA HYGIENE PIPELINE) ===
+    # Намертво выжигаем технические сноски страниц типа "Стр. 68 из 104" или "Страница 12"
+    content = re.sub(r'(?i)Стр\.\s+\d+\s+из\s+\d+', '', content)
+    content = re.sub(r'(?i)Страница\s+\d+', '', content)
+    
+    # Зачистка мусора разметки списков и отступов
     content = re.sub(r'(?m)^\s*\d+\.\s+([а-яА-Яa-zA-Z]\))', r'\1', content)
     content = re.sub(r'(?m)^\s*\d+\.\s+(\d+\))', r'\1', content)
     content = re.sub(r'[ \t]+', ' ', content)
     content = re.sub(r'\r\n?', '\n', content)
     content = re.sub(r'\n{3,}', '\n\n', content)
     
-    # Разделение по статьям
-    sections = re.split(r'\n(?=###\s+Статья|##\s+Статья|^Статья\s+\d+)', content)
+    # Разделение по статьям (пуленепробиваемый многострочный режим)
+    sections = re.split(r'\n(?=###\s+Статья|##\s+Статья|^Статья\s+\d+)', content, flags=re.MULTILINE)
+
     doc_id = Path(INPUT_PDF).stem.lower().replace(" ", "_").strip()
     total = 0
     
@@ -185,7 +196,7 @@ def main():
                     "title": clean_header,
                     "text": chunk_text.strip(),
                     "local_img": "",
-                    "url": "http://www.kremlin.ru/acts/bank/19524"
+                    "url": "http://www.kremlin.ru/acts/bank/19524"  # ССЫЛКА НА РОДНОМ МЕСТЕ, КАК И ПРОСИЛ
                 }
                 f_out.write(json.dumps(chunk, ensure_ascii=False) + '\n')
                 total += 1
