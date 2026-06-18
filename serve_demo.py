@@ -46,7 +46,9 @@ class MyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     <script src="/static/js/echarts.min.js"></script>
 </head>
 <body>
-<!-- 🔥 БОКОВАЯ ПАНЕЛЬ ИСТОРИИ -->
+<!-- 🔥 Кнопка переключения темы — фиксированная, правый верхний угол -->
+<button id="themeToggle" class="theme-toggle" onclick="toggleDarkMode()">🌙</button>
+
 <div id="sidebar" class="sidebar">
     <div class="sidebar-header">
         <h3>📋 История</h3>

@@ -90,6 +90,8 @@ async def get_chat_page():
         <h2 style="margin: 0; color: #003366; display: flex; align-items: center; font-size: 22px; position: absolute; left: 50%; transform: translateX(-50%);">
             Нейроконсультант <span style="font-weight: 200; color: #003366; margin-left: 8px;">| ФНС России</span>
         </h2>
+        <!-- 🔥 Кнопка переключения темы -->
+        <button id="themeToggle" class="theme-toggle" onclick="toggleDarkMode()">🌙</button>
     </header>
     
     <div id="chat"></div>

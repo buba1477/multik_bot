@@ -219,11 +219,21 @@ function initChart(chartId, chartConfig, container) {
         const unitLabel = chartConfig.unit || '';
         const yAxisLabel = chartConfig.y_axis_label || '';
 
+        // 🌗 Определяем цвета в зависимости от темы
+        const isDarkMode = document.body.classList.contains('dark-mode');
+        const textColor = isDarkMode ? '#ffffff' : '#1a2c3e';
+        const titleColor = isDarkMode ? '#93c5fd' : '#003366';
+        const axisColor = isDarkMode ? '#e5e7eb' : '#1a2c3e';
+        const labelColor = isDarkMode ? '#ffffff' : '#1a2c3e';
+        const tooltipBg = isDarkMode ? 'rgba(45, 45, 45, 0.97)' : 'rgba(255, 255, 255, 0.97)';
+        const tooltipBorder = isDarkMode ? '#4a4a4a' : '#d1dce7';
+        const tooltipText = isDarkMode ? '#ffffff' : '#1a2c3e';
+
         // Базовые опции — ЕДИНЫЕ для всех графиков
         const baseOption = {
             backgroundColor: 'transparent',
             textStyle: {
-                color: '#1a2c3e',
+                color: textColor,
                 fontWeight: 500,
                 fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
             },
@@ -231,15 +241,17 @@ function initChart(chartId, chartConfig, container) {
                 text: chartConfig.title?.text || 'Аналитика',
                 left: 'center',
                 top: 10,
-                textStyle: { color: '#003366', fontWeight: 700, fontSize: 16, fontFamily: "'Inter', sans-serif" }
+                textStyle: { color: titleColor, fontWeight: 700, fontSize: 16, fontFamily: "'Inter', sans-serif" }
             },
             tooltip: {
                 trigger: isPie ? 'item' : 'axis',
-                backgroundColor: 'rgba(255, 255, 255, 0.97)',
-                borderColor: '#d1dce7',
+                backgroundColor: tooltipBg,
+                borderColor: tooltipBorder,
                 borderWidth: 1,
-                textStyle: { color: '#1a2c3e', fontWeight: 500 },
-                extraCssText: 'box-shadow: 0 4px 12px rgba(0, 51, 102, 0.15); padding: 12px; border-radius: 8px;',
+                textStyle: { color: tooltipText, fontWeight: 500 },
+                extraCssText: isDarkMode
+                    ? 'box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); padding: 12px; border-radius: 8px;'
+                    : 'box-shadow: 0 4px 12px rgba(0, 51, 102, 0.15); padding: 12px; border-radius: 8px;',
                 formatter: isPie 
                     ? unitLabel 
                         ? function(params) { return params.name + '<br/>' + params.value + ' ' + unitLabel; }
@@ -266,7 +278,7 @@ function initChart(chartId, chartConfig, container) {
                 left: 'center',
                 itemWidth: 14,
                 itemHeight: 14,
-                textStyle: { fontSize: 12, fontWeight: 500 }
+                textStyle: { color: textColor, fontSize: 12, fontWeight: 500 }
             },
             animationDuration: 800,
             animationEasing: 'cubicOut'
@@ -280,7 +292,7 @@ function initChart(chartId, chartConfig, container) {
             s.itemStyle = { borderRadius: 10, borderColor: '#ffffff', borderWidth: 3, shadowBlur: 15, shadowColor: 'rgba(0, 0, 0, 0.15)' };
             s.label = { 
                 show: true, 
-                color: '#1a2c3e', 
+                color: labelColor, 
                 formatter: unitLabel ? function(params) { return params.name + ': ' + params.percent + '%'; } : '{b}: {c}',
                 fontSize: categoryCount > 6 ? 11 : 13, 
                 fontWeight: 600, 
@@ -290,7 +302,7 @@ function initChart(chartId, chartConfig, container) {
             };
             s.labelLine = { 
                 show: true, 
-                lineStyle: { color: '#1a2c3e', width: 2 }, 
+                lineStyle: { color: axisColor, width: 2 }, 
                 smooth: 0.2, 
                 length: categoryCount > 6 ? 40 : 50, 
                 length2: categoryCount > 6 ? 15 : 22 
@@ -308,7 +320,7 @@ function initChart(chartId, chartConfig, container) {
             // Оформление осей
             if (chartConfig.xAxis) {
                 chartConfig.xAxis.axisLabel = { 
-                    color: '#1a2c3e', 
+                    color: axisColor, 
                     rotate: xRotate, 
                     fontSize: xLabelSize, 
                     fontWeight: 600, 
@@ -321,7 +333,7 @@ function initChart(chartId, chartConfig, container) {
             }
             if (chartConfig.yAxis) {
                 chartConfig.yAxis.axisLabel = { 
-                    color: '#1a2c3e', 
+                    color: axisColor, 
                     fontSize: xLabelSize, 
                     fontWeight: 600, 
                     fontFamily: "'Inter', sans-serif", 
@@ -341,7 +353,7 @@ function initChart(chartId, chartConfig, container) {
                         s.label = { 
                             show: true, 
                             position: 'top', 
-                            color: '#1a2c3e', 
+                            color: labelColor, 
                             fontSize: 11, 
                             fontWeight: 600, 
                             fontFamily: "'Inter', sans-serif", 
@@ -1303,3 +1315,102 @@ function toggleMic() {
         if (textarea) textarea.placeholder = "Задай вопрос...";
     }
 }
+
+// ============================================
+// 🌗 ПЕРЕКЛЮЧЕНИЕ ТЕМЫ (DARK MODE)
+// ============================================
+
+function toggleDarkMode() {
+    const body = document.body;
+    const toggleButton = document.getElementById('themeToggle');
+    
+    body.classList.toggle('dark-mode');
+    
+    // Сохраняем выбор в localStorage
+    const isDarkMode = body.classList.contains('dark-mode');
+    localStorage.setItem('fns_dark_mode', isDarkMode ? '1' : '0');
+    
+    // Меняем иконку кнопки
+    if (toggleButton) {
+        toggleButton.textContent = isDarkMode ? '☀️' : '🌙';
+    }
+    
+ 
+    // 🔥 Ультимативное обновление ВСЕХ элементов ECharts под темную тему
+
+        const textColor = isDarkMode ? '#E2E8F0' : '#1a2c3e';     // Цифры и метки
+    const titleColor = isDarkMode ? '#93c5fd' : '#003366';    // Заголовок
+    const axisLineColor = isDarkMode ? '#475569' : '#cbd5e1'; // Линии осей
+    const splitLineColor = isDarkMode ? '#334155' : '#f1f5f9';// Сетка
+
+    // 🔥 Новая неоновая палитра для секторов КРУГОВОЙ диаграммы на темной теме
+    const darkPieColors = ['#3b82f6', '#60a5fa', '#93c5fd', '#38bdf8', '#0ea5e9'];
+    const lightPieColors = ['#003366', '#004080', '#0059b3', '#0073e6', '#3399ff'];
+    const piePalette = isDarkMode ? darkPieColors : lightPieColors;
+
+    chartInstances.forEach(ch => {
+        if (!ch || typeof ch.setOption !== 'function') return;
+        try {
+            // Базовый конфиг, общий для всех графиков
+            let optionConfig = {
+                textStyle: { color: textColor },
+                title: { textStyle: { color: titleColor } },
+                legend: { textStyle: { color: textColor } },
+                tooltip: {
+                    backgroundColor: isDarkMode ? '#1e293b' : '#ffffff',
+                    borderColor: isDarkMode ? '#475569' : '#cbd5e1',
+                    textStyle: { color: textColor }
+                }
+            };
+
+            // Проверяем, есть ли в этом графике круговая диаграмма (pie)
+            const currentOption = ch.getOption();
+            const hasPie = currentOption && currentOption.series && currentOption.series.some(s => s.type === 'pie');
+
+            if (hasPie) {
+                // 🧩 Специфичный конфиг для КРУГОВОЙ диаграммы
+                optionConfig.color = piePalette; // Меняем цвета самих секторов круга
+                optionConfig.series = [{
+                    label: { color: textColor }, // Белый текст подписей долей снаружи круга
+                    labelLine: { lineStyle: { color: axisLineColor } } // Светлые линии-выноски
+                }];
+            } else {
+                // 📊 Конфиг для СТОЛБЧАТЫХ и линейных графиков (оси X и Y)
+                optionConfig.xAxis = {
+                    axisLabel: { color: textColor },
+                    axisLine: { lineStyle: { color: axisLineColor } }
+                };
+                optionConfig.yAxis = {
+                    axisLabel: { color: textColor },
+                    axisLine: { lineStyle: { color: axisLineColor } },
+                    splitLine: { lineStyle: { color: splitLineColor } }
+                };
+            }
+
+            // Перерисовываем холст по новому точечному чертежу
+            ch.setOption(optionConfig);
+            ch.resize();
+        } catch(e) {
+            console.error("Ошибка обновления графика:", e);
+        }
+    });
+
+}
+
+// Восстанавливаем тему при загрузке
+document.addEventListener('DOMContentLoaded', function() {
+    const savedTheme = localStorage.getItem('fns_dark_mode');
+    const toggleButton = document.getElementById('themeToggle');
+    
+    if (savedTheme === '1') {
+        document.body.classList.add('dark-mode');
+        if (toggleButton) {
+            toggleButton.textContent = '☀️';
+        }
+    } else {
+        document.body.classList.remove('dark-mode');
+        if (toggleButton) {
+            toggleButton.textContent = '🌙';
+        }
+    }
+});
