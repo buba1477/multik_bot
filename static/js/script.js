@@ -148,10 +148,15 @@ function clearInput() {
 // ============================================
 // 🔥 ЕДИНАЯ ФУНКЦИЯ РЕНДЕРА ГРАФИКОВ
 // ============================================
-function initChart(chartId, chartConfig, container) {
+function initChart(chartId, chartConfig, container, isDarkMode = null) {
     // Если title пришёл строкой — превращаем в объект
     if (chartConfig.title && typeof chartConfig.title === 'string') {
         chartConfig = { ...chartConfig, title: { text: chartConfig.title } };
+    }
+
+    // 🔥 ОПРЕДЕЛЯЕМ ТЕМУ ДО setTimeout
+    if (isDarkMode === null) {
+        isDarkMode = document.body.classList.contains('dark-mode');
     }
 
     let isPie = false;
@@ -159,7 +164,6 @@ function initChart(chartId, chartConfig, container) {
     if (chartConfig.series) {
         const sArr = Array.isArray(chartConfig.series) ? chartConfig.series : [chartConfig.series];
         isPie = sArr[0] && sArr[0].type === 'pie';
-        // Определяем количество категорий
         if (isPie && sArr[0]?.data) {
             categoryCount = sArr[0].data.length;
         } else if (chartConfig.xAxis?.data) {
@@ -167,7 +171,6 @@ function initChart(chartId, chartConfig, container) {
         }
     }
 
-    // Динамическая высота: много категорий = высокий график
     let chartHeight;
     if (isPie) {
         chartHeight = Math.max(450, Math.min(900, categoryCount * 50));
@@ -175,10 +178,15 @@ function initChart(chartId, chartConfig, container) {
         chartHeight = categoryCount > 12 ? 650 : (categoryCount > 8 ? 550 : (categoryCount > 5 ? 420 : 350));
     }
 
-    // Создаём wrapper с ЕДИНЫМИ стилями
     const chartWrapper = document.createElement('div');
     chartWrapper.className = 'chart-wrapper';
-    chartWrapper.style.cssText = 'width: 100%; margin: 10px 0; background: #ffffff; border: 1px solid #d1dce7; border-radius: 16px; border-top: 2px solid #00509e; padding: 20px 15px; box-shadow: 0 4px 16px rgba(0, 51, 102, 0.08); box-sizing: border-box; flex-shrink: 0;';
+    
+    const wrapperBg = isDarkMode ? '#1e293b' : '#ffffff';
+    const wrapperBorder = isDarkMode ? '#334155' : '#d1dce7';
+    const wrapperShadow = isDarkMode ? '0 4px 16px rgba(0, 0, 0, 0.4)' : '0 4px 16px rgba(0, 51, 102, 0.08)';
+    const wrapperBorderTop = isDarkMode ? '#3b82f6' : '#00509e';
+    
+    chartWrapper.style.cssText = `width: 100%; margin: 10px 0; background: ${wrapperBg}; border: 1px solid ${wrapperBorder}; border-radius: 16px; border-top: 2px solid ${wrapperBorderTop}; padding: 20px 15px; box-shadow: ${wrapperShadow}; box-sizing: border-box; flex-shrink: 0;`;
 
     const chartDiv = document.createElement('div');
     chartDiv.id = chartId;
@@ -187,15 +195,46 @@ function initChart(chartId, chartConfig, container) {
     chartWrapper.appendChild(chartDiv);
     container.appendChild(chartWrapper);
 
-    // Инициализация ECharts
+    // 🔥 ЗАПОМИНАЕМ isDarkMode ДЛЯ ИСПОЛЬЗОВАНИЯ В setTimeout
+    // 🔥 ТЕПЕРЬ ДАРКМОД ЖЕСТКО БЕРЕТСЯ ИЗ ХРАНИЛИЩА ПРИ ЛЮБОМ ОБНОВЛЕНИИ
+    const darkMode = localStorage.getItem('fns_dark_mode') === '1';
+
+
     setTimeout(() => {
         const dom = document.getElementById(chartId);
         if (!dom || typeof echarts === 'undefined') return;
+        
+        dom.style.height = '450px'; 
 
         const myChart = echarts.init(dom);
         chartInstances.push(myChart);
 
-        const gradientColors = [
+        // 🔥 ИСПОЛЬЗУЕМ darkMode ВМЕСТО document.body.classList.contains('dark-mode')
+        const textColor = darkMode ? '#E2E8F0' : '#1a2c3e';
+        const titleColor = darkMode ? '#93c5fd' : '#003366';
+        const axisColor = darkMode ? '#94a3b8' : '#1a2c3e';
+        const labelColor = darkMode ? '#E2E8F0' : '#1a2c3e';
+        const tooltipBg = darkMode ? 'rgba(30, 41, 59, 0.97)' : 'rgba(255, 255, 255, 0.97)';
+        const tooltipBorder = darkMode ? '#475569' : '#d1dce7';
+        const tooltipText = darkMode ? '#E2E8F0' : '#1a2c3e';
+        const splitLineColor = darkMode ? '#334155' : '#e8edf2';
+        const axisLineColor = darkMode ? '#475569' : '#d1dce7';
+
+        const darkPieColors = ['#3b82f6', '#60a5fa', '#93c5fd', '#38bdf8', '#0ea5e9', '#2563eb', '#7c3aed', '#8b5cf6'];
+        const lightPieColors = ['#00d4ff', '#7c3aed', '#ffd700', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#8b5cf6'];
+        const pieColors = darkMode ? darkPieColors : lightPieColors;
+
+        const darkBarColors = ['#3b82f6', '#60a5fa', '#93c5fd', '#38bdf8', '#0ea5e9', '#2563eb', '#7c3aed', '#8b5cf6', '#f59e0b', '#10b981'];
+        const lightBarColors = ['#00d4ff', '#7c3aed', '#f59e0b', '#10b981', '#ffd700', '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316', '#3b82f6', '#a855f7'];
+        const barColors = darkMode ? darkBarColors : lightBarColors;
+
+        const gradientColors = darkMode ? [
+            new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#3b82f6' }, { offset: 1, color: '#1e40af' }]),
+            new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#8b5cf6' }, { offset: 1, color: '#5b21b6' }]),
+            new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#f59e0b' }, { offset: 1, color: '#b45309' }]),
+            new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#10b981' }, { offset: 1, color: '#065f46' }]),
+            new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#ec4899' }, { offset: 1, color: '#be185d' }])
+        ] : [
             new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#00d4ff' }, { offset: 1, color: '#00509e' }]),
             new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#7c3aed' }, { offset: 1, color: '#4c1d95' }]),
             new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#ffd700' }, { offset: 1, color: '#b8860b' }]),
@@ -203,33 +242,13 @@ function initChart(chartId, chartConfig, container) {
             new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#f59e0b' }, { offset: 1, color: '#d97706' }])
         ];
 
-        const pieColors = [
-            '#00d4ff', '#7c3aed', '#ffd700', '#10b981', '#f59e0b',
-            '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316'
-        ];
-
-        // ECharts сам выбирает interval для X — показывает столько подписей, сколько влезает
-        // Полную информацию можно увидеть в тултипе при наведении
         const xRotate = categoryCount > 5 ? 25 : 0;
         const xLabelSize = categoryCount > 8 ? 10 : 12;
         const xMargin = categoryCount > 5 ? 14 : 10;
         const gridBottom = categoryCount > 8 ? '18%' : '14%';
 
-        // Достаём единицу измерения из chartConfig (если есть)
         const unitLabel = chartConfig.unit || '';
-        const yAxisLabel = chartConfig.y_axis_label || '';
 
-        // 🌗 Определяем цвета в зависимости от темы
-        const isDarkMode = document.body.classList.contains('dark-mode');
-        const textColor = isDarkMode ? '#ffffff' : '#1a2c3e';
-        const titleColor = isDarkMode ? '#93c5fd' : '#003366';
-        const axisColor = isDarkMode ? '#e5e7eb' : '#1a2c3e';
-        const labelColor = isDarkMode ? '#ffffff' : '#1a2c3e';
-        const tooltipBg = isDarkMode ? 'rgba(45, 45, 45, 0.97)' : 'rgba(255, 255, 255, 0.97)';
-        const tooltipBorder = isDarkMode ? '#4a4a4a' : '#d1dce7';
-        const tooltipText = isDarkMode ? '#ffffff' : '#1a2c3e';
-
-        // Базовые опции — ЕДИНЫЕ для всех графиков
         const baseOption = {
             backgroundColor: 'transparent',
             textStyle: {
@@ -249,7 +268,7 @@ function initChart(chartId, chartConfig, container) {
                 borderColor: tooltipBorder,
                 borderWidth: 1,
                 textStyle: { color: tooltipText, fontWeight: 500 },
-                extraCssText: isDarkMode
+                extraCssText: darkMode
                     ? 'box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); padding: 12px; border-radius: 8px;'
                     : 'box-shadow: 0 4px 12px rgba(0, 51, 102, 0.15); padding: 12px; border-radius: 8px;',
                 formatter: isPie 
@@ -266,15 +285,15 @@ function initChart(chartId, chartConfig, container) {
                         }
                         : undefined
             },
-            grid: isPie ? undefined : { 
+                grid: isPie ? undefined : { 
                 containLabel: true, 
-                bottom: gridBottom, 
-                top: '28%', 
-                left: '10%', 
+                top: '24%',         // 🎨 Возвращаем простор сверху
+                bottom: '5%',      // 🎨 Даем место для подписей осей
+                left: '10%',         
                 right: '8%' 
             },
             legend: {
-                top: 38,
+                top: 40,            // 🎨 Опускаем легенду пониже от заголовка
                 left: 'center',
                 itemWidth: 14,
                 itemHeight: 14,
@@ -286,51 +305,80 @@ function initChart(chartId, chartConfig, container) {
 
         if (isPie) {
             const s = Array.isArray(chartConfig.series) ? chartConfig.series[0] : chartConfig.series;
-            // Адаптивный радиус: меньше категорий — больше пирог
-            s.radius = categoryCount > 8 ? '45%' : '55%';
-            s.center = ['50%', '62%'];
-            s.itemStyle = { borderRadius: 10, borderColor: '#ffffff', borderWidth: 3, shadowBlur: 15, shadowColor: 'rgba(0, 0, 0, 0.15)' };
+            
+            // 🔥 РЕШЕНИЕ 1: Уменьшаем радиус круга (было 55%), чтобы освободить место по бокам для текста
+            s.radius = categoryCount > 8 ? '50%' : '58%';
+            s.center = ['50%', '58%']; // Чуть приподнимаем к центру нового холста
+            
+            s.itemStyle = { 
+                borderRadius: 10, 
+                borderColor: darkMode ? '#1e293b' : '#ffffff', 
+                borderWidth: 3, 
+                shadowBlur: 15, 
+                shadowColor: darkMode ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.15)' 
+            };
             s.label = { 
                 show: true, 
                 color: labelColor, 
-                formatter: unitLabel ? function(params) { return params.name + ': ' + params.percent + '%'; } : '{b}: {c}',
-                fontSize: categoryCount > 6 ? 11 : 13, 
-                fontWeight: 600, 
+                // 🎨 Текст категории сверху, процент снизу через перенос строки \n
+                formatter: '{b}\n{d}%', 
+                fontSize: categoryCount > 6 ? 11 : 12, 
+                fontWeight: 400, 
                 fontFamily: "'Inter', sans-serif",
+                
+                // 🔥 РЕШЕНИЕ 2: Жестко запрещаем обрезать текст троеточием!
+                overflow: 'break', 
+                width: 140,         // Максимальная ширина текстового блока в пикселях перед переносом строки
+                
                 alignTo: 'labelLine',
-                distanceToLabelLine: 12
+                distanceToLabelLine: 10
             };
             s.labelLine = { 
                 show: true, 
                 lineStyle: { color: axisColor, width: 2 }, 
                 smooth: 0.2, 
-                length: categoryCount > 6 ? 40 : 50, 
-                length2: categoryCount > 6 ? 15 : 22 
+                // 🔥 РЕШЕНИЕ 3: Сокращаем ублюдочные длинные линии (было 40-50 пикселей!)
+                length: categoryCount > 6 ? 15 : 20, 
+                length2: categoryCount > 6 ? 10 : 12 
             };
             s.labelLayout = { hideOverlap: true };
-            s.emphasis = { itemStyle: { shadowBlur: 20, shadowOffsetX: 0, shadowColor: 'rgba(0, 51, 102, 0.3)' } };
+            s.emphasis = { 
+                itemStyle: { 
+                    shadowBlur: 20, 
+                    shadowOffsetX: 0, 
+                    shadowColor: darkMode ? 'rgba(59, 130, 246, 0.4)' : 'rgba(0, 51, 102, 0.3)' 
+                } 
+            };
             if (s.data) {
                 s.data.forEach((item, index) => {
                     if (typeof item === 'object' && !item.itemStyle) {
-                        item.itemStyle = { color: pieColors[index % pieColors.length], shadowBlur: 15, shadowColor: 'rgba(0, 0, 0, 0.2)' };
+                        item.itemStyle = { 
+                            color: pieColors[index % pieColors.length], 
+                            shadowBlur: 15, 
+                            shadowColor: darkMode ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.2)' 
+                        };
                     }
                 });
             }
+            
         } else {
-            // Оформление осей
             if (chartConfig.xAxis) {
                 chartConfig.xAxis.axisLabel = { 
                     color: axisColor, 
-                    rotate: xRotate, 
-                    fontSize: xLabelSize, 
+                    rotate: 35,            // 🔥 Снижаем угол до 35 градусов (так текст займет меньше места по высоте)
+                    fontSize: 11,          // 🔥 Чуть-чуть уменьшаем шрифт для идеальной компактности
                     fontWeight: 600, 
                     fontFamily: "'Inter', sans-serif", 
-                    margin: xMargin
+                    margin: 18,            // 🔥 Сдвигаем текст вниз от синей линии осей, чтобы буквы не пересекали её
+                    interval: 0,           
+                    overflow: 'break',     
+                    width: 140             // 🔥 РЕШЕНИЕ: Увеличиваем ширину до 140px! Теперь «Консолидированный» влезет целиком!
                 };
-                chartConfig.xAxis.axisLine = { lineStyle: { color: '#d1dce7', width: 2 } };
+                chartConfig.xAxis.axisLine = { lineStyle: { color: axisLineColor, width: 2 } };
                 chartConfig.xAxis.splitLine = { show: false };
                 chartConfig.xAxis.axisTick = { show: false };
             }
+
             if (chartConfig.yAxis) {
                 chartConfig.yAxis.axisLabel = { 
                     color: axisColor, 
@@ -342,14 +390,17 @@ function initChart(chartId, chartConfig, container) {
                 };
                 chartConfig.yAxis.axisLine = { show: false };
                 chartConfig.yAxis.axisTick = { show: false };
-                chartConfig.yAxis.splitLine = { lineStyle: { color: '#e8edf2', width: 1 } };
+                chartConfig.yAxis.splitLine = { lineStyle: { color: splitLineColor, width: 1 } };
             }
-            // Оформление series
             if (chartConfig.series) {
                 const seriesArray = Array.isArray(chartConfig.series) ? chartConfig.series : [chartConfig.series];
                 seriesArray.forEach((s, index) => {
                     if (s.type === 'bar') {
-                        s.itemStyle = { borderRadius: [6, 6, 0, 0], shadowBlur: 10, shadowColor: 'rgba(0, 51, 102, 0.2)' };
+                        s.itemStyle = { 
+                            borderRadius: [6, 6, 0, 0], 
+                            shadowBlur: 10, 
+                            shadowColor: darkMode ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 51, 102, 0.2)' 
+                        };
                         s.label = { 
                             show: true, 
                             position: 'top', 
@@ -362,13 +413,7 @@ function initChart(chartId, chartConfig, container) {
                         };
                         s.barMaxWidth = 50;
                         s.animationDelay = index * 100;
-                        // 🎨 Делаем каждый столбец разноцветным
                         if (s.data && Array.isArray(s.data)) {
-                            const barColors = [
-                                '#00d4ff', '#7c3aed', '#f59e0b', '#10b981', '#ffd700',
-                                '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316',
-                                '#3b82f6', '#a855f7', '#22c55e', '#eab308', '#ef4444'
-                            ];
                             s.data = s.data.map((item, i) => {
                                 const val = typeof item === 'object' ? item.value : item;
                                 return {
@@ -376,18 +421,18 @@ function initChart(chartId, chartConfig, container) {
                                     itemStyle: {
                                         color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
                                             { offset: 0, color: barColors[i % barColors.length] },
-                                            { offset: 1, color: barColors[i % barColors.length] + '99' }
+                                            { offset: 1, color: barColors[i % barColors.length] + (darkMode ? '66' : '99') }
                                         ]),
                                         borderRadius: [6, 6, 0, 0],
                                         shadowBlur: 10,
-                                        shadowColor: 'rgba(0, 51, 102, 0.2)'
+                                        shadowColor: darkMode ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 51, 102, 0.2)'
                                     }
                                 };
                             });
                         }
                     } else if (s.type === 'line') {
                         s.itemStyle = { color: gradientColors[index % gradientColors.length], borderWidth: 2 };
-                        s.lineStyle = { width: 3, shadowBlur: 10, shadowColor: 'rgba(0, 51, 102, 0.2)' };
+                        s.lineStyle = { width: 3, shadowBlur: 10, shadowColor: darkMode ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 51, 102, 0.2)' };
                         s.symbol = 'circle';
                         s.symbolSize = 10;
                         s.smooth = true;
@@ -395,41 +440,33 @@ function initChart(chartId, chartConfig, container) {
                         s.animationDelay = index * 100;
                     }
                 });
-                // 🔥 Разбивка bar-серии на отдельные серии для кликабельной легенды
                 if (!isPie && chartConfig.series && chartConfig.xAxis && chartConfig.xAxis.data && chartConfig.xAxis.data.length > 0) {
                     const sArr = Array.isArray(chartConfig.series) ? chartConfig.series : [chartConfig.series];
-                    // Только для одиночной bar-серии (не grouped bar с двумя рядами)
                     if (sArr.length === 1 && sArr[0].type === 'bar') {
                         const originalSeries = sArr[0];
                         const categories = chartConfig.xAxis.data;
-                        const barColors = [
-                            '#00d4ff', '#7c3aed', '#f59e0b', '#10b981', '#ffd700',
-                            '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316',
-                            '#3b82f6', '#a855f7', '#22c55e', '#eab308', '#ef4444'
-                        ];
                         const newSeries = categories.map((catName, idx) => {
                             const dataItem = Array.isArray(originalSeries.data) ? originalSeries.data[idx] : null;
                             const value = typeof dataItem === 'object' ? dataItem.value : (dataItem != null ? dataItem : 0);
                             const origItemStyle = typeof dataItem === 'object' && dataItem.itemStyle ? dataItem.itemStyle : undefined;
                             
-                            // Создаём массив где только на позиции idx стоит значение, остальные — null
                             const seriesData = new Array(categories.length).fill(null);
                             seriesData[idx] = value;
                             
                             return {
                                 type: 'bar',
-                                name: catName, // имя категории → автоматически попадает в легенду!
+                                name: catName,
                                 data: seriesData,
-                                barGap: '-100%',  // все серии строго в центре категории
-                                barWidth: '70%',   // одинаковая ширина как у обычного bar
+                                barGap: '-100%',
+                                barWidth: '70%',
                                 itemStyle: origItemStyle || {
                                     color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
                                         { offset: 0, color: barColors[idx % barColors.length] },
-                                        { offset: 1, color: barColors[idx % barColors.length] + '99' }
+                                        { offset: 1, color: barColors[idx % barColors.length] + (darkMode ? '66' : '99') }
                                     ]),
                                     borderRadius: [6, 6, 0, 0],
                                     shadowBlur: 10,
-                                    shadowColor: 'rgba(0, 51, 102, 0.2)'
+                                    shadowColor: darkMode ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 51, 102, 0.2)'
                                 },
                                 label: originalSeries.label ? { ...originalSeries.label } : undefined,
                                 barMaxWidth: originalSeries.barMaxWidth || 50,
@@ -437,7 +474,6 @@ function initChart(chartId, chartConfig, container) {
                             };
                         });
                         chartConfig.series = newSeries;
-                        // Меняем trigger на 'item', чтобы тултип показывал только один столбик при наведении
                         baseOption.tooltip.trigger = 'item';
                         baseOption.tooltip.formatter = function(params) {
                             return params.name + '<br/>' + params.value + (unitLabel ? ' ' + unitLabel : '');
@@ -449,11 +485,8 @@ function initChart(chartId, chartConfig, container) {
 
         const mergedOption = Object.assign({}, baseOption, chartConfig);
         myChart.setOption(mergedOption, true);
-
-        // Плавное появление
         myChart.setOption({ animationDuration: 1000, animationEasing: 'elasticOut' });
 
-        // Resize
         const doResize = () => { myChart.resize(); };
         setTimeout(doResize, 100);
         setTimeout(doResize, 500);
@@ -933,12 +966,9 @@ function createNewChat() {
 }
 
 function loadChat(chatId) {
-    if (currentChatId === chatId) return; // Если уже открыт
+    if (currentChatId === chatId) return;
     
-    // Сохраняем текущий чат перед переключением
     persistCurrentChat();
-    
-    // Включаем флаг загрузки — appendMessage не будет сохранять
     _loadingChat = true;
     
     currentChatId = chatId;
@@ -947,13 +977,15 @@ function loadChat(chatId) {
     
     const messages = getChatMessages(chatId);
     let lastBotDiv = null;
-    // Вставляем сообщения напрямую, без appendMessage (чтобы не сохранять)
+    
+    // 🌗 Определяем текущую тему ДО загрузки графиков
+    const isDarkMode = document.body.classList.contains('dark-mode');
+    
     messages.forEach(msg => {
         if (msg.type === 'chart_data' && msg.chartData && lastBotDiv) {
             const d = msg.chartData;
             const chartId = 'echarts_' + Math.random().toString(36).substr(2, 9);
             
-            // Преобразуем данные API в формат chartConfig для initChart
             const seriesArray = [];
             
             if (d.chart_type === 'pie') {
@@ -991,12 +1023,10 @@ function loadChat(chatId) {
                 y_axis_label: d.y_axis_label || ''
             };
 
-            // Создаём wrapper в контейнере lastBotDiv, но initChart добавляет в конец
-            // Нам нужно вставить ДО ссылок — поэтому сначала создадим, потом переместим
-            const chartWrapper = initChart(chartId, chartConfig, lastBotDiv);
+            // 🎨 Передаём текущую тему в initChart
+            const chartWrapper = initChart(chartId, chartConfig, lastBotDiv, isDarkMode);
             chartWrapper.dataset.chartData = JSON.stringify(d);
 
-            // Перемещаем график ДО ссылок (если они есть)
             const sourcesDiv = lastBotDiv.querySelector('div[style*="border-top"]');
             if (sourcesDiv && lastBotDiv.lastElementChild === chartWrapper) {
                 lastBotDiv.insertBefore(chartWrapper, sourcesDiv);
@@ -1017,9 +1047,7 @@ function loadChat(chatId) {
     });
     
     _loadingChat = false;
-    
     updateHistoryUI();
-    
     document.getElementById('messageText').value = '';
     document.getElementById('messageText').focus();
     updateInputButtons();
@@ -1320,30 +1348,13 @@ function toggleMic() {
 // 🌗 ПЕРЕКЛЮЧЕНИЕ ТЕМЫ (DARK MODE)
 // ============================================
 
-function toggleDarkMode() {
-    const body = document.body;
-    const toggleButton = document.getElementById('themeToggle');
-    
-    body.classList.toggle('dark-mode');
-    
-    // Сохраняем выбор в localStorage
-    const isDarkMode = body.classList.contains('dark-mode');
-    localStorage.setItem('fns_dark_mode', isDarkMode ? '1' : '0');
-    
-    // Меняем иконку кнопки
-    if (toggleButton) {
-        toggleButton.textContent = isDarkMode ? '☀️' : '🌙';
-    }
-    
- 
-    // 🔥 Ультимативное обновление ВСЕХ элементов ECharts под темную тему
+// 1. Выносим ультимативное обновление графиков в отдельную функцию
+function applyChartsTheme(isDarkMode) {
+    const textColor = isDarkMode ? '#E2E8F0' : '#1a2c3e';     
+    const titleColor = isDarkMode ? '#93c5fd' : '#003366';    
+    const axisLineColor = isDarkMode ? '#475569' : '#cbd5e1'; 
+    const splitLineColor = isDarkMode ? '#334155' : '#f1f5f9';
 
-        const textColor = isDarkMode ? '#E2E8F0' : '#1a2c3e';     // Цифры и метки
-    const titleColor = isDarkMode ? '#93c5fd' : '#003366';    // Заголовок
-    const axisLineColor = isDarkMode ? '#475569' : '#cbd5e1'; // Линии осей
-    const splitLineColor = isDarkMode ? '#334155' : '#f1f5f9';// Сетка
-
-    // 🔥 Новая неоновая палитра для секторов КРУГОВОЙ диаграммы на темной теме
     const darkPieColors = ['#3b82f6', '#60a5fa', '#93c5fd', '#38bdf8', '#0ea5e9'];
     const lightPieColors = ['#003366', '#004080', '#0059b3', '#0073e6', '#3399ff'];
     const piePalette = isDarkMode ? darkPieColors : lightPieColors;
@@ -1351,7 +1362,6 @@ function toggleDarkMode() {
     chartInstances.forEach(ch => {
         if (!ch || typeof ch.setOption !== 'function') return;
         try {
-            // Базовый конфиг, общий для всех графиков
             let optionConfig = {
                 textStyle: { color: textColor },
                 title: { textStyle: { color: titleColor } },
@@ -1363,19 +1373,16 @@ function toggleDarkMode() {
                 }
             };
 
-            // Проверяем, есть ли в этом графике круговая диаграмма (pie)
             const currentOption = ch.getOption();
             const hasPie = currentOption && currentOption.series && currentOption.series.some(s => s.type === 'pie');
 
             if (hasPie) {
-                // 🧩 Специфичный конфиг для КРУГОВОЙ диаграммы
-                optionConfig.color = piePalette; // Меняем цвета самих секторов круга
+                optionConfig.color = piePalette;
                 optionConfig.series = [{
-                    label: { color: textColor }, // Белый текст подписей долей снаружи круга
-                    labelLine: { lineStyle: { color: axisLineColor } } // Светлые линии-выноски
+                    label: { color: textColor },
+                    labelLine: { lineStyle: { color: axisLineColor } }
                 }];
             } else {
-                // 📊 Конфиг для СТОЛБЧАТЫХ и линейных графиков (оси X и Y)
                 optionConfig.xAxis = {
                     axisLabel: { color: textColor },
                     axisLine: { lineStyle: { color: axisLineColor } }
@@ -1387,15 +1394,53 @@ function toggleDarkMode() {
                 };
             }
 
-            // Перерисовываем холст по новому точечному чертежу
             ch.setOption(optionConfig);
             ch.resize();
         } catch(e) {
             console.error("Ошибка обновления графика:", e);
         }
     });
-
 }
+
+// 2. Основная функция переключения по клику
+function toggleDarkMode() {
+    const body = document.body;
+    const toggleButton = document.getElementById('themeToggle');
+    
+    body.classList.toggle('dark-mode');
+    
+    const isDarkMode = body.classList.contains('dark-mode');
+    localStorage.setItem('fns_dark_mode', isDarkMode ? '1' : '0');
+    
+    if (toggleButton) {
+        toggleButton.textContent = isDarkMode ? '☀️' : '🌙';
+    }
+    
+    // Дергаем перекраску графиков
+    applyChartsTheme(isDarkMode);
+}
+
+// 3. Восстанавливаем тему при загрузке страницы
+document.addEventListener('DOMContentLoaded', function() {
+    const savedTheme = localStorage.getItem('fns_dark_mode');
+    const toggleButton = document.getElementById('themeToggle');
+    const isDarkMode = (savedTheme === '1');
+    
+    if (isDarkMode) {
+        document.body.classList.add('dark-mode');
+        if (toggleButton) toggleButton.textContent = '☀️';
+    } else {
+        document.body.classList.remove('dark-mode');
+        if (toggleButton) toggleButton.textContent = '🌙';
+    }
+    
+    // ТАКТИЧЕСКИЙ ХАК: Даем ECharts 100 миллисекунд, чтобы они успели инициализироваться на странице,
+    // и сразу после этого жестко накатываем нужные цвета из localStorage
+    setTimeout(() => {
+        applyChartsTheme(isDarkMode);
+    }, 100);
+});
+
 
 // Восстанавливаем тему при загрузке
 document.addEventListener('DOMContentLoaded', function() {
