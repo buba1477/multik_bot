@@ -480,19 +480,6 @@ header h2 .subtext {
     50% { opacity: 1; }
 }
 
-/* #input-area {
-    background: #ffffff;
-    padding: 12px 18px;
-    border-radius: 28px;
-    display: flex;
-    align-items: stretch !important;
-    gap: 12px;
-    border: 2px solid var(--border-color);
-    margin-top: 20px;
-    box-shadow: 0 4px 12px rgba(0, 51, 102, 0.08);
-    transition: all 0.3s ease;
-} */
-
 #input-area:focus-within {
     box-shadow: 0 8px 24px rgba(0, 51, 102, 0.15);
     border-color: #cbd5e1;
@@ -642,7 +629,6 @@ input:focus {
     position: static !important;
     width: 44px !important;
     height: 44px !important;
-    border-radius: 0 !important;
     border-radius: 9999px !important;
     background: transparent !important;
     border: none !important;
@@ -680,7 +666,6 @@ input:focus {
     min-width: 0 !important;
     padding: 0 !important;
     height: 44px !important;
-    border-radius: 0 !important;
     border-radius: 9999px !important;
     background: transparent !important;
     color: #94a3b8 !important;

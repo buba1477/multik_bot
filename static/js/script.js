@@ -1442,20 +1442,3 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 
-// Восстанавливаем тему при загрузке
-document.addEventListener('DOMContentLoaded', function() {
-    const savedTheme = localStorage.getItem('fns_dark_mode');
-    const toggleButton = document.getElementById('themeToggle');
-    
-    if (savedTheme === '1') {
-        document.body.classList.add('dark-mode');
-        if (toggleButton) {
-            toggleButton.textContent = '☀️';
-        }
-    } else {
-        document.body.classList.remove('dark-mode');
-        if (toggleButton) {
-            toggleButton.textContent = '🌙';
-        }
-    }
-});
