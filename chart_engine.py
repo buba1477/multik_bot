@@ -72,6 +72,7 @@ class DynamicChartEngine:
                 6. ВАЖНО: Если в данных явно указаны единицы измерения (%, руб., млн руб., чел., тыс. руб. и т.д.), ОБЯЗАТЕЛЬНО заполни поля "y_axis_label" (например "Доля, %") и "unit" (например "%"). Если единиц нет — оставь null.
                 7. ВАЖНО: Если chart_type равен "pie" (круговая диаграмма), поле "x_axis" все равно ОБЯЗАНО быть заполненным массивом категорий (например: ["Категория 1", "Категория 2"]). ЗАПРЕЩЕНО возвращать null или пустую строку в поле "x_axis".
                 8. СТРОГО: Извлекай числа и единицы измерения ТОЧНО как в тексте. ЗАПРЕЩЕНО переводить размерности: триллионы в миллиарды, миллиарды в миллионы, миллионы в тысячи и т.д. ЕСЛИ в тексте написано "3,5 трлн руб." — в series_data пиши 3500000000000, а в unit пиши "руб." (или "трлн руб." как в тексте). НЕ МЕНЯЙ единицы измерения.
+                9. ЖЁСТКОЕ ПРАВИЛО: Запрещено писать в series_data сокращённые числа (например "3.5" или "3,5" для триллиона). Если в исходном тексте указано "3,5 трлн руб." — в series_data должно быть ПОЛНОЕ число 3500000000000 (триллионы = количество нулей). Никогда не оставляй десятичную точку для триллионов, миллиардов, миллионов. Пример: "1,2 млрд" → 1200000000, "500 млн" → 500000000, "2,5 трлн" → 2500000000000. Запомни: числа в series_data — это абсолютные значения без сокращений.
                 ВАЖНО: Никогда не помещай годы внутрь series_data!"""
         else:
             return "Ты — официальный ИИ-ассистент ФНС. Отвечай строго по фактам из Базы знаний. Пиши лаконично, используй списки."
@@ -119,6 +120,29 @@ class DynamicChartEngine:
             
         return {"is_chart": is_chart, "payload": payload, "chart_type": chart_type}
 
+    def _expand_short_numbers(self, obj: dict) -> dict:
+        """Пост-обработка: если unit содержит 'трлн'/'млрд'/'млн'/'тыс',
+        а series_data содержит подозрительно маленькие числа — домножаем до полного значения"""
+        unit = (obj.get("unit") or "").lower()
+        multiplier = None
+        if "трлн" in unit:
+            multiplier = 1_000_000_000_000
+        elif "млрд" in unit:
+            multiplier = 1_000_000_000
+        elif "млн" in unit:
+            multiplier = 1_000_000
+        elif "тыс" in unit:
+            multiplier = 1_000
+        
+        if multiplier is not None:
+            for key in ["series_data", "series_data_2"]:
+                if key in obj and isinstance(obj[key], list):
+                    obj[key] = [
+                        v * multiplier if isinstance(v, (int, float)) and abs(v) < multiplier / 1000 else v
+                        for v in obj[key]
+                    ]
+        return obj
+
     def _sanitize_json(self, content: str) -> str:
         """Санитизирует JSON перед Pydantic: null → 0, float → int через round(), распаковывает вложенные списки"""
         try:
@@ -158,6 +182,9 @@ class DynamicChartEngine:
             # Обрабатываем series_data_2, если есть
             if "series_data_2" in obj and isinstance(obj["series_data_2"], list):
                 obj["series_data_2"] = flatten_series(obj["series_data_2"])
+            
+            # 🔥 Пост-обработка: исправляем сокращённые числа (трлн, млрд, млн, тыс)
+            obj = self._expand_short_numbers(obj)
             
             return json.dumps(obj, ensure_ascii=False)
         except json.JSONDecodeError:

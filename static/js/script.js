@@ -487,6 +487,34 @@ function initChart(chartId, chartConfig, container, isDarkMode = null) {
         myChart.setOption(mergedOption, true);
         myChart.setOption({ animationDuration: 1000, animationEasing: 'elasticOut' });
 
+        // 🔥 ФИКС: при клике на легенду скрывать/показывать подписи оси X
+        if (!isPie && chartConfig.xAxis && chartConfig.xAxis.data) {
+            const sArrCheck = Array.isArray(chartConfig.series) ? chartConfig.series : [chartConfig.series];
+            // Проверяем, что это трансформация "категория → отдельная серия"
+            if (sArrCheck.length > 1 && sArrCheck.every(s => s.type === 'bar')) {
+                const cats = chartConfig.xAxis.data;
+                const seriesNames = sArrCheck.map(s => s.name);
+                const isPerCategory = seriesNames.every(n => cats.includes(n));
+                if (isPerCategory) {
+                    let legendState = {};
+                    cats.forEach(c => { legendState[c] = true; });
+
+                    myChart.on('legendselectchanged', function(params) {
+                        legendState = params.selected;
+                        myChart.setOption({
+                            xAxis: {
+                                axisLabel: {
+                                    formatter: function(value) {
+                                        return legendState[value] !== false ? value : '';
+                                    }
+                                }
+                            }
+                        });
+                    });
+                }
+            }
+        }
+
         const doResize = () => { myChart.resize(); };
         setTimeout(doResize, 100);
         setTimeout(doResize, 500);
