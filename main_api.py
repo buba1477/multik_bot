@@ -1,7 +1,7 @@
 import time
-import logging
+import traceback
 from fastapi.responses import HTMLResponse
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 import re
 import asyncio
@@ -10,20 +10,89 @@ import json
 import os
 import hashlib
 import unicodedata
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from engine_rag import get_ai_streaming_response 
 from ollama import AsyncClient
-from fastapi import Request 
 from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
 from dotenv import load_dotenv
-
-# Настраиваем логирование
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from app_logger import logger, set_request_id, get_request_id
 
 load_dotenv()
 
 app = FastAPI(title="Мультик RAG API")
+
+# =========================================================
+# ГЛОБАЛЬНЫЙ EXCEPTION HANDLER
+# =========================================================
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Перехватывает любые необработанные исключения.
+    В лог пишется полный traceback, пользователю — безопасный JSON."""
+    request_id = get_request_id()
+    logger.error(
+        f"❌ CRITICAL: {type(exc).__name__}: {exc}\n"
+        f"   Path: {request.url.path}\n"
+        f"   Method: {request.method}\n"
+        f"   Traceback:\n{traceback.format_exc()}"
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "type": "error",
+            "message": "⚠️ Произошла внутренняя ошибка сервера. Инцидент зафиксирован. Пожалуйста, попробуйте позже.",
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Перехватывает Pydantic validation errors — без утечки схемы."""
+    request_id = get_request_id()
+    logger.warning(
+        f"⚠️ Validation error: {exc.errors()} | "
+        f"Path: {request.url.path} | request_id={request_id}"
+    )
+    return JSONResponse(
+        status_code=422,
+        content={
+            "type": "error",
+            "message": "Некорректный формат запроса. Проверьте введённые данные.",
+        },
+    )
+
+
+# =========================================================
+# MIDDLEWARE: request_id + время
+# =========================================================
+@app.middleware("http")
+async def add_request_id_and_process_time(request: Request, call_next):
+    # Генерируем request_id для каждого входящего запроса
+    request_id = set_request_id()
+    start_time = time.time()
+    
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        # Если ExceptionHandler не сработал (например, в StreamingResponse)
+        logger.error(f"❌ Unhandled in middleware: {exc}\n{traceback.format_exc()}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "type": "error",
+                "message": "⚠️ Произошла внутренняя ошибка сервера. Инцидент зафиксирован.",
+            },
+        )
+    
+    process_time = time.time() - start_time
+    query = request.query_params.get('query', '')[:50]
+    logger.info(f"⏱️ Запрос '{query}...' выполнен за {process_time:.2f} сек | request_id={request_id}")
+    
+    response.headers["X-Process-Time"] = str(process_time)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 app.mount("/images", StaticFiles(directory="/app/images_cache"), name="images")
 
 redis_host = os.getenv("REDIS_HOST", "127.0.0.1") 
@@ -35,21 +104,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Ollama клиент для Мультика
 ollama_client = AsyncClient(host="http://localhost:11434")
-
-# Middleware для замера времени всех запросов
-@app.middleware("http")
-async def add_process_time_header(request, call_next):
-    start_time = time.time()
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    
-    # Логируем с временем
-    query = request.query_params.get('query', '')[:50]
-    logger.info(f"⏱️ Запрос '{query}...' выполнен за {process_time:.2f} сек")
-    
-    # Добавляем время в заголовок (опционально)
-    response.headers["X-Process-Time"] = str(process_time)
-    return response
 
 @app.get("/", response_class=HTMLResponse)
 async def get_chat_page():
@@ -241,7 +295,7 @@ def is_malicious_query(query: str) -> bool:
     
     for w1, w2 in dangerous_combos:
         if w1 in q_norm and w2 in q_norm:
-            print(f"🚨 КОМБО-БАН: {w1} + {w2}")
+            logger.warning(f"🚨 КОМБО-БАН: {w1} + {w2}")
             return True
 
     # Анти-пробел
@@ -252,21 +306,21 @@ def is_malicious_query(query: str) -> bool:
     ]
     for dangerous in dangerous_no_spaces:
         if dangerous in no_spaces:
-            print(f"🚨 АНТИ-ПРОБЕЛ БАН: {dangerous}")
+            logger.warning(f"🚨 АНТИ-ПРОБЕЛ БАН: {dangerous}")
             return True
 
     # Полный regex список
     for pattern in BAD_PATTERNS:
         try:
             if re.search(pattern, query, re.IGNORECASE):
-                print(f"⚠️ REGEX-БАН: {pattern}")
+                logger.warning(f"⚠️ REGEX-БАН: {pattern}")
                 return True
         except re.error:
             continue
     
     # Защита от длинных запросов
     if len(query) > 2000:
-        print(f"🚨 ДЛИННЫЙ ЗАПРОС: {len(query)} символов")
+        logger.warning(f"🚨 ДЛИННЫЙ ЗАПРОС: {len(query)} символов")
         return True
     
     # Защита от Unicode-омофонов
@@ -280,7 +334,7 @@ def is_malicious_query(query: str) -> bool:
     
     for w1, w2 in dangerous_combos:
         if w1 in q_lower and w2 in q_lower:
-            print(f"🚨 UNICODE-ОМОФОН БАН: {w1} + {w2}")
+            logger.warning(f"🚨 UNICODE-ОМОФОН БАН: {w1} + {w2}")
             return True
     
     return False

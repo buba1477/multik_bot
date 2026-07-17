@@ -77,11 +77,11 @@ try:
     BM25_AVAILABLE = True
 except ImportError:
     BM25_AVAILABLE = False
-    print("⚠️ rank-bm25 не установлен. Ставь: pip install rank-bm25")
+    logger.warning("⚠️ rank-bm25 не установлен. Ставь: pip install rank-bm25")
 
 # ========== ЛОГИРОВАНИЕ ==========
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("engine_rag")
+from app_logger import logger as app_logger
+logger = app_logger
 
 # СТРОГИЙ ОФФЛАЙН
 os.environ["HF_HUB_OFFLINE"] = "1"
@@ -874,10 +874,10 @@ class RerankedEngine:
             combined_nodes = sorted(boosted_nodes, key=lambda x: x.score, reverse=True)
 
         # ДЕБАГ ХАЙБРИД
-        print(f"\n{'='*20} HYBRID TOP-10 {'='*20}")
+        logger.info(f"\n{'='*20} HYBRID TOP-10 {'='*20}")
         for i, n in enumerate(combined_nodes[:10]):
-            print(f"Rank {i+1}: [{n.score:.4f}] ID: {n.node.id_}")
-        print("=" * 55 + "\n")
+            logger.info(f"Rank {i+1}: [{n.score:.4f}] ID: {n.node.id_}")
+        logger.info("=" * 55 + "\n")
 
         # 4. RERANK & STRICT SCORE FILTERING (ФИЛЬТРАЦИЯ МУСОРА ПО СКОРУ ДЛЯ BAAI BGE)
         if self.reranker and combined_nodes:
@@ -902,10 +902,10 @@ class RerankedEngine:
             final_nodes = combined_nodes[:self.final_top_k]
 
         # ДЕБАГ РЕРАНК
-        print(f"{'='*20} RERANKED TOP-5 {'='*20}")
+        logger.info(f"\n{'='*20} RERANKED TOP-5 {'='*20}")
         for i, n in enumerate(final_nodes[:5]):
-            print(f"Rank {i+1}: [{n.score:.4f}] ID: {n.node.id_}")
-        print("=" * 55 + "\n")
+            logger.info(f"Rank {i+1}: [{n.score:.4f}] ID: {n.node.id_}")
+        logger.info("=" * 55 + "\n")
 
         # 5. FORCED QUERY
         forced_query = (
@@ -1116,32 +1116,60 @@ async def get_ai_streaming_response(query_text: str):
         if is_chart_mode:
             logger.info("🎯 [API]: Включаем изолированный Pydantic-контур генерации графика.")
             
-            # Собираем найденный в Qdrant текстовый контекст из нод в одну чистую строку
-            rag_context = "\n\n".join([node.node.get_content() for node in nodes])
-            
-            # Формируем payload для Ollama, где огромный промпт встает в поле system
-            # и больше не отсвечивает в векторизаторе. Мы вызываем его тут!
-            config = chart_engine.process_llm_payload(
-                query=query_text, 
-                rag_context=rag_context, 
-                model_name="yagpt5_fns:latest"
-            )
-            payload = config["payload"]
-            
-            # Лупим ПРЯМОЙ POST-запрос в контейнер Ollama за монолитным JSON-ом
-            ollama_response = requests.post(chart_engine.ollama_url, json=payload, timeout=(5, 300))
-            ollama_response.raise_for_status()
-            raw_json_text = ollama_response.json()["message"]["content"]
-            
-            # Наполняем массив для корректной работы логов
-            tokens = list(raw_json_text)
-            
-            # Валидируем получившийся монолит через Pydantic-контракт
-            parsed_chart_node = chart_engine.validate_and_parse(raw_json_text)
-            
-            # Отправляем готовый график на фронт за один раз
-            yield json.dumps(parsed_chart_node, ensure_ascii=False) + "\n"
-            logger.info("📊 График успешно отвалидирован и отправлен на фронт.")
+            if not has_real_context:
+                # Если данных нет — не пытаемся рисовать график, сразу текстовый fallback
+                logger.warning("⚠️ [CHART]: Нет данных для графика, переключаюсь на текстовый ответ.")
+                for token in response.response_gen:
+                    tokens.append(token)
+                    t = str(token)
+                    yield json.dumps({"type": "text", "content": t}, ensure_ascii=False) + "\n"
+                full_response_text = "".join(tokens)
+            else:
+                # Собираем найденный в Qdrant текстовый контекст из нод в одну чистую строку
+                rag_context = "\n\n".join([node.node.get_content() for node in nodes])
+                
+                # Формируем payload для Ollama, где огромный промпт встает в поле system
+                # и больше не отсвечивает в векторизаторе. Мы вызываем его тут!
+                config = chart_engine.process_llm_payload(
+                    query=query_text, 
+                    rag_context=rag_context, 
+                    model_name="yagpt5_fns:latest"
+                )
+                payload = config["payload"]
+                
+                # Лупим ПРЯМОЙ POST-запрос в контейнер Ollama за монолитным JSON-ом
+                try:
+                    ollama_response = requests.post(chart_engine.ollama_url, json=payload, timeout=(5, 300))
+                    ollama_response.raise_for_status()
+                    raw_json_text = ollama_response.json()["message"]["content"]
+                except Exception as chart_err:
+                    logger.error(f"❌ [CHART] Ошибка вызова Ollama: {chart_err}")
+                    # Fallback на текстовый ответ
+                    for token in response.response_gen:
+                        tokens.append(token)
+                        t = str(token)
+                        yield json.dumps({"type": "text", "content": t}, ensure_ascii=False) + "\n"
+                    full_response_text = "".join(tokens)
+                    # Пропускаем остаток блока is_chart_mode
+                    is_chart_mode = False  # чтобы не заходить в последующие проверки is_chart_mode
+                    yield json.dumps({"type": "metadata", "note": "График не построен, показан текстовый ответ"}, ensure_ascii=False) + "\n"
+                    # Не делаем return — продолжаем к общей логике end и фотографий
+                
+                # Наполняем массив для корректной работы логов
+                tokens = list(raw_json_text)
+                
+                # Валидируем получившийся монолит через Pydantic-контракт
+                parsed_chart_node = chart_engine.validate_and_parse(raw_json_text)
+                
+                # Если валидация не удалась — отправляем ошибку на фронт (response_gen уже мог быть исчерпан)
+                if parsed_chart_node["type"] == "chart_error":
+                    logger.warning(f"⚠️ [CHART] Валидация не прошла: {parsed_chart_node['message']}. Отправляю ошибку на фронт.")
+                    yield json.dumps(parsed_chart_node, ensure_ascii=False) + "\n"
+                    full_response_text = ""
+                else:
+                    # Отправляем готовый график на фронт за один раз
+                    yield json.dumps(parsed_chart_node, ensure_ascii=False) + "\n"
+                    logger.info("📊 График успешно отвалидирован и отправлен на фронт.")
             
         else:
             # Сценарий Б: Стандартный стриминг текстовых токенов на фронт (Твой старый код)

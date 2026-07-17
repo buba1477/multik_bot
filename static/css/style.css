@@ -103,9 +103,10 @@ body {
     padding-bottom: var(--spacing-md);
     box-sizing: border-box;
     margin-left: 260px;
+    transition: margin-left 0.3s ease, width 0.3s ease;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 768px) {
     #container {
         width: 100%;
         margin-left: 0;
@@ -976,10 +977,7 @@ body.sidebar-collapsed .sidebar-toggle-btn {
 .sidebar.collapsed + .sidebar-overlay {
     display: none;
 }
-body.sidebar-collapsed #container {
-    width: 100%;
-    margin-left: 0;
-}
+
 
 /* Шапка — только текст */
 .sidebar-header {
@@ -1097,7 +1095,7 @@ body.sidebar-collapsed #container {
 }
 
 /* Мобилки */
-@media (max-width: 900px) {
+@media (max-width: 768px) {
     .sidebar-toggle-btn {
         display: none !important;
     }
@@ -1105,12 +1103,12 @@ body.sidebar-collapsed #container {
         overflow: hidden;
     }
     .sidebar {
-        left: -280px;
+        left: -100%;
         width: 100%;
-        max-width: calc(100vw - 60px);
+        max-width: 320px;
     }
     .sidebar.open { left: 0; }
-    .sidebar.collapsed { left: -280px; }
+    .sidebar.collapsed { left: -100%; }
     .menu-toggle-btn {
         display: flex !important;
     }
@@ -1121,10 +1119,6 @@ body.sidebar-collapsed #container {
         margin-left: 0;
         padding: var(--spacing-md);
         width: 100%;
-    }
-    body.sidebar-open #container {
-        margin-left: 260px;
-        width: calc(100% - 260px);
     }
     header {
         padding: 10px 12px;
@@ -1190,12 +1184,6 @@ body.sidebar-collapsed #container {
     display: none;
 }
 
-@media (max-width: 520px) {
-    body.sidebar-open #container {
-        margin-left: 0;
-        width: 100%;
-    }
-}
 
 @media (max-width: 480px) {
     #container {

@@ -863,6 +863,19 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // 🔥 САЙДБАР: при ресайзе на десктоп (> 768px) закрываем мобильное меню
+    window.addEventListener('resize', function() {
+        if (window.innerWidth > 768) {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebarOverlay');
+            if (sidebar && sidebar.classList.contains('open')) {
+                sidebar.classList.remove('open');
+                overlay.classList.remove('open');
+                document.body.classList.remove('sidebar-open');
+            }
+        }
+    });
+
     // 🔥 ИНИЦИАЛИЗАЦИЯ ИСТОРИИ ЧАТОВ
     initializeChatHistory();
 });
