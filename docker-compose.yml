@@ -1,42 +1,29 @@
 version: '3.8'
 
-networks:
-  secure_internal_net:
-    driver: bridge
-
 services:
-  # 0. REDIS (Кэш) 🧠
+  # 0. REDIS (Возвращаем локальный кэш, доступный отовсюду) 🧠
   redis:
     image: redis:7-alpine
     container_name: redis_cache
     restart: always
     ports:
-      - "127.0.0.1:6380:6379" # Локалхост-онли, в сеть ФНС не улетит
-    expose:
-      - "6379"
-    networks:
-      - secure_internal_net
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+      - "6381:6379" # Открыт настежь, как раньше
 
-  # 1. OLLAMA (Изолирована + Проверка готовности)
+  # 1. OLLAMA (Твоя видеокарта снова открыта для туннеля)
   ollama:
     image: ollama/ollama:latest
     container_name: ollama_container
     restart: always
-    expose:
-      - "11434" 
+    ports:
+      - "11434:11434" # Твой туннель из Амстердама снова увидит Олламу напрямую!
     volumes:
       - /home/amlin04/.ollama:/root/.ollama
     environment:
       - OLLAMA_MAX_QUEUE=128
       - OLLAMA_KEEP_ALIVE=-1
       - OLLAMA_FLASH_ATTENTION=1
-      - OLLAMA_NUM_PARALLEL=1      # Под твою текущую карту (на H200 поменяешь на 4)
-      - OLLAMA_KV_CACHE_TYPE=q8_0   # Под твою текущую карту (на H200 поменяешь на f16)
+      - OLLAMA_NUM_PARALLEL=1 
+      - OLLAMA_KV_CACHE_TYPE=q8_0     
     deploy:
       resources:
         reservations:
@@ -44,49 +31,35 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    networks:
-      - secure_internal_net
 
-  # 2. QDRANT (Векторная база данных кадров + Хелсчек от Cline) 🚀
+  # 2. QDRANT (База данных кадров снова доступна для бота напрямую) 🚀
   qdrant:
     image: qdrant/qdrant:latest
     container_name: qdrant_db
     restart: always
-    expose:
-      - "6333"
-      - "6334"
+    ports:
+      - "6333:6333" # HTTP API открыт
+      - "6344:6334" # gRPC открыт
     volumes:
       - ./qdrant_storage:/qdrant/storage
-    networks:
-      - secure_internal_net
 
-  # 3. FASTAPI (Идеально защищенный шлюз)
+  # 3. FASTAPI (Старый добрый шлюз без сетевых ограничений)
   api:
     build: .
     image: multik-core:latest
     container_name: multik_api
     restart: always
-    # КРИТИЧЕСКИЙ ФИКС: depends_on с условиями готовности сервисов
-    depends_on:
-      redis:
-        condition: service_started
-      qdrant:
-        condition: service_started
-      ollama:
-        condition: service_healthy
-    # РЕКОМЕНДАЦИЯ CLINE: привязка строго к 127.0.0.1 (безопасность уровня Космос)
+    extra_hosts:
+      - "host.docker.internal:host-gateway" 
     ports:
-      - "127.0.0.1:8000:8000"
+      - "8000:8000" # Открыт для Tailscale настежь
     command: uvicorn main_api:app --host 0.0.0.0 --port 8000 
     env_file: [.env]
     volumes:
       - ./:/app
       - ./hf_cache:/root/.cache/huggingface
+      # Оставляем этот фикс волюма, чтобы питон не ругался на отсутствие FRIDA
+      - ./hf_cache:/app/hf_cache 
       - ./static:/app/static 
       - ./images_cache:/app/images_cache
     environment:
@@ -96,6 +69,3 @@ services:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - REDIS_HOST=redis
-    # КРИТИЧЕСКИЙ ФИКС: подключили API к нашей сети!
-    networks:
-      - secure_internal_net

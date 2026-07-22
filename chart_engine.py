@@ -128,21 +128,34 @@ class DynamicChartEngine:
         return {"is_chart": is_chart, "payload": payload, "chart_type": chart_type}
 
     def _expand_short_numbers(self, obj: dict) -> dict:
-        """Пост-обработка чисел из series_data.
-        
-        УБИРАЕМ умножение на миллионы/миллиарды/триллионы, так как оно ломает масштаб осей.
-        Вместо этого гарантируем, что правильная единица измерения запишется в y_axis_label,
-        а числа останутся компактными (например, 3.5 или 7102.4).
         """
-        unit = (obj.get("unit") or "").strip()
+        ЖЕСТКИЙ ПОСТ-ПРОЦЕССИНГ ДЛЯ ИСПРАВЛЕНИЯ БАГА С ТРИЛЛИОНАМИ.
+        Если модель выдала гигантские миллиарды (>= 1000) для круговой диаграммы,
+        мы переводим их в человеческие триллионы.
+        """
+        unit = (obj.get("unit") or "").strip().lower()
         
-        if unit:
-            # Если модель заполнила unit (например, "трлн руб."), но забыла сделать красивую подпись для оси Y
-            if not obj.get("y_axis_label"):
-                obj["y_axis_label"] = f"Значение, {unit}"
+        # Перехватываем косяк: если числа в миллиардах и они больше или равны 1000 (например, 3500 млрд)
+        if "млрд" in unit and "series_data" in obj and isinstance(obj["series_data"], list):
+            if any(v >= 1000 for v in obj["series_data"] if isinstance(v, (int, float))):
+                
+                # Переводим числа в триллионы (делим на 1000)
+                obj["series_data"] = [round(v / 1000, 2) for v in obj["series_data"]]
+                
+                # Если есть второй ряд данных — его тоже переводим
+                if "series_data_2" in obj and isinstance(obj["series_data_2"], list):
+                    obj["series_data_2"] = [round(v / 1000, 2) for v in obj["series_data_2"]]
+                
+                # Корректируем единицу измерения на триллионы
+                unit = unit.replace("млрд", "трлн")
+                obj["unit"] = unit
+                if obj.get("y_axis_label"):
+                    obj["y_axis_label"] = obj["y_axis_label"].lower().replace("млрд", "трлн")
         
-        # Мы просто возвращаем объект с оригинальными компактными числами от LLM.
-        # Если модель выдала 3.5, на графике будет 3.5, а на оси Y будет написано "Значение, трлн руб."
+        # Гарантируем заполнение y_axis_label, если unit есть, а подписи нет
+        if unit and not obj.get("y_axis_label"):
+            obj["y_axis_label"] = f"Значение, {obj.get('unit')}"
+            
         return obj
 
     def _sanitize_json(self, content: str) -> str:
@@ -240,8 +253,8 @@ class DynamicChartEngine:
             min_val = min(pos_values)
             max_val = max(pos_values)
             
-            # Если разница в порядках > 100 — это разные таблицы
-            if min_val > 0 and max_val / min_val > 100:
+            # Если разница в порядках > 5000 — это разные таблицы
+            if min_val > 0 and max_val / min_val > 5000:
                 return False, (
                     f"Данные имеют слишком большой разброс значений "
                     f"(мин={min_val}, макс={max_val}, соотношение={max_val/min_val:.0f}x). "
@@ -250,7 +263,7 @@ class DynamicChartEngine:
         
         return True, ""
     
-    def validate_and_parse(self, raw_content: str) -> dict:
+    def validate_and_parse(self, raw_content: str, rag_context: str = "") -> dict:
         """Валидирует JSON через контракт Pydantic и страхует фронтенд от краша"""
         content = raw_content.strip()
         if content.startswith("```"):
@@ -260,7 +273,7 @@ class DynamicChartEngine:
         try:
             test_obj = json.loads(content)
             # Если ключевые поля пустые — значит данных в тексте не было
-            if not test_obj.get("series_data") or test_obj.get("series_data") == []:
+            if test_obj.get("series_data") == []:
                 return {
                     "type": "chart_error",
                     "message": "⚠️ В базе знаний нет числовых данных для построения этого графика. Пожалуйста, уточните запрос или проверьте контекст.",
@@ -270,6 +283,13 @@ class DynamicChartEngine:
             pass
 
         content = self._sanitize_json(content)
+
+        try:
+            fixed_obj = json.loads(content)
+            fixed_obj = self._expand_short_numbers(fixed_obj)
+            content = json.dumps(fixed_obj, ensure_ascii=False)
+        except Exception:
+            pass
             
         try:
             validated_data = EChartsConfig.model_validate_json(content)

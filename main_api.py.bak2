@@ -1,6 +1,5 @@
 import time
 import traceback
-from contextlib import asynccontextmanager
 from fastapi.responses import HTMLResponse
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
@@ -22,37 +21,7 @@ from redis.asyncio import Redis
 
 load_dotenv()
 
-# Глобальные переменные (инициализируются в lifespan)
-cache = None
-ollama_client = None
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global cache, ollama_client
-    logger.info("🚀 Запуск приложения...")
-    
-    # Redis
-    redis_host = os.getenv("REDIS_HOST", "127.0.0.1")
-    REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
-    try:
-        cache = Redis(host=redis_host, port=6379, db=0, password=REDIS_PASSWORD, decode_responses=True)
-        logger.info("✅ Redis подключен")
-    except Exception as e:
-        cache = None
-        logger.warning(f"⚠️ Redis недоступен: {e}")
-    
-    # Ollama
-    ollama_client = AsyncClient(host="http://localhost:11434")
-    
-    yield
-    
-    logger.info("🛑 Остановка приложения...")
-    if ollama_client:
-        await ollama_client.close()
-    if cache:
-        await cache.close()
-
-app = FastAPI(title="Мультик RAG API", lifespan=lifespan)
+app = FastAPI(title="Мультик RAG API")
 
 # =========================================================
 # ГЛОБАЛЬНЫЙ EXCEPTION HANDLER
@@ -127,9 +96,20 @@ async def add_request_id_and_process_time(request: Request, call_next):
 
 app.mount("/images", StaticFiles(directory="/app/images_cache"), name="images")
 
+redis_host = os.getenv("REDIS_HOST", "127.0.0.1") 
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+try:
+    cache = Redis(host=redis_host, port=6379, db=0, password=REDIS_PASSWORD, decode_responses=True)
+    logger.info("✅ Redis подключен")
+except Exception as e:
+    cache = None
+    logger.warning(f"⚠️ Redis недоступен: {e}")
+
 # Монтируем папку для markdown
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Ollama клиент для Мультика
+ollama_client = AsyncClient(host="http://localhost:11434")
 
 @app.get("/", response_class=HTMLResponse)
 async def get_chat_page():
@@ -352,8 +332,6 @@ def is_malicious_query(query: str) -> bool:
     
     return False
 
-
-
 # ========== ОСНОВНОЙ ЭНДПОИНТ ==========
 @app.post("/api/v1/predict/stream")
 async def ask_stream(request: ChatRequest):
@@ -374,16 +352,16 @@ async def ask_stream(request: ChatRequest):
     normalized_query = user_query.strip()
     query_lower = normalized_query.lower()
     
-    # Если запрос на график — идём в RAG (там уже есть chart-режим в engine_rag)
-    if chart_engine.is_chart_request(query_lower):
-        pass  # просто не заходим в мультик-ветку, уходим в RAG ниже
-    
-    # 👇 МАРШРУТИЗАЦИЯ
+    # Определяем тип запроса
     has_fns_keyword = any(kw in query_lower for kw in ['ндс', 'фнс', 'налог', '79-фз', 'регламент', 'инструкция', 'документ', 'наложик'])
     is_multik = 'мультик' in query_lower and not has_fns_keyword
     
+    # Если запрос на график — идём в RAG (там уже есть chart-режим)
+    if chart_engine.is_chart_request(query_lower):
+        pass  # просто не заходим в мультик-ветку, уходим в RAG ниже
+    
     # Если Мультик — идём в Ollama
-    if is_multik:
+    elif is_multik:
         async def multik_stream():
             try:
                 stream = await ollama_client.chat(
@@ -401,7 +379,7 @@ async def ask_stream(request: ChatRequest):
                     if content:
                         yield json.dumps({"type": "text", "content": content}, ensure_ascii=False) + "\n"
             except Exception as e:
-                logger.error(f"Ollama error: {e}\n{traceback.format_exc()} | request_id={get_request_id()}")
+                logger.error(f"Ollama error: {e}")
                 yield json.dumps({"type": "text", "content": f"Ошибка связи с Мультиком: {e}"}, ensure_ascii=False) + "\n"
         return StreamingResponse(multik_stream(), media_type="text/event-stream")
     
@@ -423,16 +401,11 @@ async def ask_stream(request: ChatRequest):
                 yield output
                 full_chunks_list.append(output)
         except Exception as e:
-            logger.error(f"Gen error: {e}\n{traceback.format_exc()} | request_id={get_request_id()}")
+            logger.error(f"Gen error: {e}")
             yield json.dumps({"type": "text", "content": "Ошибка обработки"}, ensure_ascii=False) + "\n"
         
         if cache and full_chunks_list:
-            # Фильтр: не кэшируем пустые ответы, ошибки и заглушки
-            joined = "".join(full_chunks_list)
-            if "error" in joined.lower() or "база_пуста" in joined.lower() or "информация отсутствует" in joined.lower():
-                logger.info(f"⏭️ Пропуск кэширования: ответ содержит ошибку/заглушку | request_id={get_request_id()}")
-            else:
-                await cache.set(normalized_query.lower(), json.dumps(full_chunks_list, ensure_ascii=False), ex=86400)
+            await cache.set(normalized_query.lower(), json.dumps(full_chunks_list, ensure_ascii=False), ex=86400)
     
     return StreamingResponse(stream_and_cache_generator(normalized_query), media_type="text/event-stream")
 

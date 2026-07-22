@@ -6,11 +6,19 @@ import asyncio
 import time
 import urllib.parse
 import numpy as np
-import requests
+import requests 
 from pathlib import Path
 from typing import List, Optional, Any, Tuple
 
 # LlamaIndex Core
+# from llama_index.core import (
+#     StorageContext, 
+#     load_index_from_storage, 
+#     Settings,
+#     PromptTemplate, 
+#     QueryBundle
+# )
+
 from llama_index.core.schema import NodeWithScore, TextNode
 from llama_index.core.response_synthesizers import get_response_synthesizer, ResponseMode
 from llama_index.core.embeddings import BaseEmbedding
@@ -20,6 +28,7 @@ from llama_index.llms.ollama import Ollama
 from llama_index.core.postprocessor import SentenceTransformerRerank
 
 # Гибридный поиск и лингвистика
+
 from nltk.stem import SnowballStemmer
 from sentence_transformers import SentenceTransformer, models
 
@@ -27,33 +36,31 @@ from ollama import ChatResponse
 from datetime import datetime
 import pickle
 
-from llama_index.core.schema import MetadataMode  # <--- ДОБАВЬ MetadataMode
+from llama_index.core.schema import MetadataMode # <--- ДОБАВЬ MetadataMode
 
 # Импорт графиков и визуализации (для будущего использования в ECharts)
 from chart_engine import DynamicChartEngine
 
-from qdrant_client import QdrantClient  # СТРОГО ТАК
+from qdrant_client import QdrantClient # СТРОГО ТАК
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
 from llama_index.core import (
-    VectorStoreIndex,
-    StorageContext,
-    load_index_from_storage,
+    VectorStoreIndex, 
+    StorageContext, 
+    load_index_from_storage, 
     Settings,
-    PromptTemplate,
+    PromptTemplate, 
     QueryBundle
 )
 
-from pydantic.v1 import PrivateAttr
+from pydantic.v1 import PrivateAttr 
 # FIXME: Временный патч для исправления несовместимости Ollama SDK 0.4.x и LlamaIndex.
 # LlamaIndex пытается записать 'usage' в ChatResponse, который это запрещает.
 # Удалить, когда в llama-index-llms-ollama выйдет фикс.
 
 # ========== ЛОГИРОВАНИЕ ==========
 from app_logger import logger as app_logger
-
 logger = app_logger
-
 
 def patched_setitem(self, key, value):
     try:
@@ -82,17 +89,19 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 # ========== ПУТИ (константы) ==========
-BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = BASE_DIR / "hf_cache" / "FRIDA"
+BASE_DIR    = Path(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH  = BASE_DIR / "hf_cache" / "FRIDA"
 PERSIST_DIR = BASE_DIR / "fns_rag_graph_final"
-IMG_FOLDER = BASE_DIR / "images_cache"
+IMG_FOLDER  = BASE_DIR / "images_cache"
 EMPLOYEES_FILE = BASE_DIR / "employees.txt"
+
+
 
 if not MODEL_PATH.exists():
     logger.warning(f"⚠️ Папка модели не найдена: {MODEL_PATH}")
 else:
     logger.info(f"🚀 Использую RoSBERTa из {MODEL_PATH}")
-
+ 
 _QA_PROMPT_STR = """
 Ты — ведущий эксперт ФНС России. Отвечай СТРОГО на русском языке.
 
@@ -131,7 +140,6 @@ qa_prompt = PromptTemplate(_QA_PROMPT_STR)
 # ========== ЭМБЕДДЕР ==========
 logger.info(f"✨ Загрузка эмбеддера FRIDA на CPU: {MODEL_PATH}")
 
-
 class SberRoSBERTaEmbedding(BaseEmbedding):
     _model: Any = PrivateAttr()
 
@@ -140,13 +148,10 @@ class SberRoSBERTaEmbedding(BaseEmbedding):
         logger.info(f"✨ Загрузка эмбеддера FRIDA на {device}")
         word_embedding_model = models.Transformer(model_path)
         pooling_model = models.Pooling(
-            word_embedding_model.get_word_embedding_dimension(),
+            word_embedding_model.get_word_embedding_dimension(), 
             pooling_mode='cls'
         )
-        self._model = SentenceTransformer(
-            modules=[word_embedding_model, pooling_model],
-            device=device
-        )
+        self._model = SentenceTransformer(modules=[word_embedding_model, pooling_model], device=device)
 
     def _get_query_embedding(self, query: str) -> List[float]:
         return self._model.encode(f"search_query: {query}").tolist()
@@ -161,14 +166,16 @@ class SberRoSBERTaEmbedding(BaseEmbedding):
         return self._get_text_embedding(text)
 
 
+
 Settings.embed_model = SberRoSBERTaEmbedding(
-    model_path=str(MODEL_PATH),
+    model_path=str(MODEL_PATH), 
     device="cpu"
 )
 
 
 # ========== LLM (OLLAMA) ==========
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama_container:11434")
+
 
 # Инициализируем наш новый изолированный движок
 chart_engine = DynamicChartEngine(ollama_url=OLLAMA_HOST)
@@ -177,20 +184,23 @@ Settings.llm = Ollama(
     model="yagpt5_fns:latest",
     base_url=OLLAMA_HOST,
     request_timeout=300.0,
-    temperature=0.0,
-    context_window=6144,  # 🔥 Чтобы чанки влезали: 5 чанков * ~800 токенов + промпт
+    temperature=0.0,        
+    context_window=6144,    # 🔥 Чтобы чанки влезали: 5 чанков * ~800 токенов + промпт
+    
     options={
         "seed": 42,
-        "num_ctx": 6144,  # 🔥 Синхронизировано с Modelfile
+        "num_ctx": 6144,     # 🔥 Синхронизировано с Modelfile
         "num_predict": 512,
         "repeat_penalty": 1.05,
+        
         # Спасатели памяти (Оставляем!)
-        # "f16_kv": False,
-        # "flash_attn": True,
-        # "num_thread": 4,
+        # "f16_kv": False,       
+        # "flash_attn": True,    
+        # "num_thread": 4,     
     },
+    
     additional_kwargs={
-        "keep_alive": -1
+        "keep_alive": -1   
     }
 )
 
@@ -209,7 +219,6 @@ _DEFAULT_EMPLOYEES = [
     "Егоричев Александр Валерьевич.jpg",
     "Чекмышев Константин Николаевич.jpg"
 ]
-
 
 def _load_employees() -> List[Tuple[str, List[str]]]:
     if EMPLOYEES_FILE.exists():
@@ -231,7 +240,6 @@ def _load_employees() -> List[Tuple[str, List[str]]]:
         result.append((emp_full, [v for v in variations if len(v) > 5]))
     return result
 
-
 _EMPLOYEES: List[Tuple[str, List[str]]] = _load_employees()
 logger.info(f"👥 Загружено сотрудников: {len(_EMPLOYEES)}")
 
@@ -242,12 +250,13 @@ _EMPTY_RESPONSE_RE = re.compile(
 
 _TITLE_PREFIXES = ("Указ №", "ФЗ №", "Приказ №", "Письмо №")
 
-
 class RerankedEngine:
-
+    
     # =========================================================
     # CONFIG
     # =========================================================
+
+    
     VECTOR_WEIGHT = 0.45
     BM25_WEIGHT = 0.55
 
@@ -276,10 +285,13 @@ class RerankedEngine:
         "госслужащий": "гражданский служащий",
         "госслужба": "гражданская служба",
         "на госслужбе": "на гражданской службе",
+
         "иноагент": "иностранный агент",
         "инагент": "иностранный агент",
+
         "работать": "проходить гражданскую службу",
         "увольнение": "прекращение служебного контракта",
+
         "начальник": "представитель нанимателя",
         "зарплата": "денежное содержание",
         "взятка": "коррупционное правонарушение",
@@ -304,6 +316,7 @@ class RerankedEngine:
     # =========================================================
     # INIT
     # =========================================================
+
     def __init__(
         self,
         index: Any,
@@ -311,18 +324,28 @@ class RerankedEngine:
         initial_top_k: int = 30,
         final_top_k: int = 5,
     ):
-        self.retriever = index.as_retriever(similarity_top_k=initial_top_k)
+
+        self.retriever = index.as_retriever(
+            similarity_top_k=initial_top_k
+        )
+
         self.qa_prompt = qa_prompt
         self.final_top_k = final_top_k
+
         self.stemmer = SnowballStemmer("russian")
+
         self.debug_dir = Path("debug")
         self.debug_dir.mkdir(exist_ok=True)
+
         self.cache_path = Path("bm25_cache.pkl")
+
         self.bm25 = None
         self.all_nodes = []
         self.node_map = {}
+
         # 🔥 КЕШ ТОКЕНОВ
         self.node_tokens_cache = {}
+
         self.reranker = None
         self.known_entities = set()
 
@@ -334,12 +357,14 @@ class RerankedEngine:
             response_mode=ResponseMode.COMPACT,
             use_async=False,
         )
+
         self.tree_synthesizer = get_response_synthesizer(
             text_qa_template=self.qa_prompt,
             streaming=True,
             response_mode=ResponseMode.TREE_SUMMARIZE,
             use_async=False,
         )
+
         self.refine_synthesizer = get_response_synthesizer(
             text_qa_template=self.qa_prompt,
             streaming=True,
@@ -350,184 +375,356 @@ class RerankedEngine:
         # =====================================================
         # RERANKER
         # =====================================================
+
         try:
+
             reranker_path = Path("/app/reranker")
+
             if reranker_path.exists():
+
                 self.reranker = SentenceTransformerRerank(
                     model=str(reranker_path),
                     top_n=self.RERANK_TOP_K,
                 )
+
                 logger.info("✅ Reranker READY")
+
         except Exception as e:
+
             logger.error(f"⚠️ Reranker error: {e}")
 
         # =====================================================
         # BM25 + NODES
         # =====================================================
+
         try:
+
             self._init_bm25(index)
             self._load_graph_entities()
+
         except Exception as e:
-            logger.error(f"❌ Init error: {e}", exc_info=True)
+
+            logger.error(
+                f"❌ Init error: {e}",
+                exc_info=True,
+            )
 
     # =========================================================
     # BM25 INIT
     # =========================================================
+
     def _init_bm25(self, index):
+
         loaded_from_cache = False
 
         if self.cache_path.exists():
+
             try:
+
                 logger.info("📂 Loading BM25 cache...")
+
                 with open(self.cache_path, "rb") as f:
+
                     cache_data = pickle.load(f)
+
                     self.all_nodes = cache_data["nodes"]
                     self.bm25 = cache_data["bm25"]
+
                     loaded_from_cache = True
-            except Exception as e:
-                logger.warning(f"⚠️ BM25 cache invalid, rebuilding... {e}")
-                logger.debug(traceback.format_exc())
+
+            except Exception:
+
+                logger.warning(
+                    "⚠️ BM25 cache invalid, rebuilding..."
+                )
 
         if not loaded_from_cache:
+
             logger.info("📡 Loading Qdrant nodes...")
 
             q_client = index.vector_store.client
             coll_name = index.vector_store.collection_name
+
             all_points = []
             next_page_offset = None
 
             while True:
+
                 points, next_page_offset = q_client.scroll(
                     collection_name=coll_name,
                     limit=1000,
                     offset=next_page_offset,
                     with_payload=True,
                 )
+
                 all_points.extend(points)
+
                 if next_page_offset is None:
                     break
 
             self.all_nodes = []
 
             for p in all_points:
+
                 payload = p.payload or {}
-                node_id = str(payload.get("id") or p.id)
-                raw_content = payload.get("_node_content", "")
+
+                node_id = str(
+                    payload.get("id") or p.id
+                )
+
+                raw_content = payload.get(
+                    "_node_content",
+                    "",
+                )
+
                 node_text = ""
 
-                if isinstance(raw_content, str) and raw_content.startswith("{"):
+                if (
+                    isinstance(raw_content, str)
+                    and raw_content.startswith("{")
+                ):
+
                     try:
-                        node_text = json.loads(raw_content).get("text", "")
-                    except BaseException:
+                        node_text = json.loads(
+                            raw_content
+                        ).get("text", "")
+
+                    except:
                         node_text = raw_content
 
                 if not node_text:
-                    node_text = str(payload.get("text", ""))
+                    node_text = str(
+                        payload.get("text", "")
+                    )
 
                 meta = {
                     "id": node_id,
-                    "title": payload.get("title", "Документ"),
-                    "source_url": payload.get("source_url", "http://kremlin.ru"),
-                    "local_img": payload.get("local_img", ""),
+                    "title": payload.get(
+                        "title",
+                        "Документ",
+                    ),
+                    "source_url": payload.get(
+                        "source_url",
+                        "http://kremlin.ru",
+                    ),
+                    "local_img": payload.get(
+                        "local_img",
+                        "",
+                    ),
                 }
 
                 node = TextNode(
                     text=node_text,
                     id_=node_id,
                     metadata=meta,
-                    excluded_embed_metadata_keys=["id", "source_url", "local_img"],
-                    excluded_llm_metadata_keys=["id", "source_url", "local_img", "graph_structure"],
+                    excluded_embed_metadata_keys=[
+                        "id",
+                        "source_url",
+                        "local_img",
+                    ],
+                    excluded_llm_metadata_keys=[
+                        "id",
+                        "source_url",
+                        "local_img",
+                        "graph_structure",
+                    ],
                 )
-                node.metadata_template = "{key}: {value}"
-                node.text_template = "РАЗДЕЛ: {metadata_str}\nТЕКСТ:\n{content}"
+
+                node.metadata_template = (
+                    "{key}: {value}"
+                )
+
+                node.text_template = (
+                    "РАЗДЕЛ: {metadata_str}\n"
+                    "ТЕКСТ:\n{content}"
+                )
+
                 self.all_nodes.append(node)
 
             if self.all_nodes:
-                tokenized_corpus = []
-                for node in self.all_nodes:
-                    content = node.get_content(metadata_mode=MetadataMode.LLM)
-                    tokens = self._tokenize(content)
-                    tokenized_corpus.append(tokens)
-                    # 🔥 КЕШ ТОКЕНОВ
-                    self.node_tokens_cache[node.node_id] = set(tokens)
 
-                self.bm25 = BM25Okapi(tokenized_corpus)
+                tokenized_corpus = []
+
+                for node in self.all_nodes:
+
+                    content = node.get_content(
+                        metadata_mode=MetadataMode.LLM
+                    )
+
+                    tokens = self._tokenize(content)
+
+                    tokenized_corpus.append(tokens)
+
+                    # 🔥 КЕШ ТОКЕНОВ
+                    self.node_tokens_cache[
+                        node.node_id
+                    ] = set(tokens)
+
+                self.bm25 = BM25Okapi(
+                    tokenized_corpus
+                )
 
                 with open(self.cache_path, "wb") as f:
+
                     pickle.dump(
-                        {"nodes": self.all_nodes, "bm25": self.bm25},
+                        {
+                            "nodes": self.all_nodes,
+                            "bm25": self.bm25,
+                        },
                         f,
                     )
 
                 logger.info("✅ BM25 cached")
 
-        self.node_map = {n.node_id: n for n in self.all_nodes}
+        self.node_map = {
+            n.node_id: n
+            for n in self.all_nodes
+        }
 
     # =========================================================
     # GRAPH ENTITIES
     # =========================================================
+
     def _load_graph_entities(self):
+
         try:
-            if not os.path.exists("graph_global.json"):
-                logger.warning("⚠️ graph_global.json not found")
+
+            if not os.path.exists(
+                "graph_global.json"
+            ):
+
+                logger.warning(
+                    "⚠️ graph_global.json not found"
+                )
+
                 return
 
-            with open("graph_global.json", "r", encoding="utf-8") as f:
+            with open(
+                "graph_global.json",
+                "r",
+                encoding="utf-8",
+            ) as f:
+
                 graph = json.load(f)
 
-            for ent in graph.get("entities", []):
-                name = ent.get("name", "").lower().strip()
+            for ent in graph.get(
+                "entities",
+                [],
+            ):
+
+                name = ent.get(
+                    "name",
+                    "",
+                ).lower().strip()
+
                 if len(name) >= 3:
                     self.known_entities.add(name)
 
-            logger.info(f"✅ Graph entities: {len(self.known_entities)}")
+            logger.info(
+                f"✅ Graph entities: {len(self.known_entities)}"
+            )
 
         except Exception as e:
-            logger.error(f"❌ Graph entity load error: {e}", exc_info=True)
+
+            logger.error(
+                f"❌ Graph entity load error: {e}"
+            )
 
     # =========================================================
     # NORMALIZE
     # =========================================================
-    def _normalize_query(self, text: str) -> str:
+
+    def _normalize_query(
+        self,
+        text: str,
+    ) -> str:
+
         normalized = text.lower()
-        for k in sorted(self.QUERY_REPLACEMENTS, key=len, reverse=True):
-            normalized = normalized.replace(k, self.QUERY_REPLACEMENTS[k])
+
+        for k in sorted(
+            self.QUERY_REPLACEMENTS,
+            key=len,
+            reverse=True,
+        ):
+
+            normalized = normalized.replace(
+                k,
+                self.QUERY_REPLACEMENTS[k],
+            )
+
         return normalized
 
     # =========================================================
     # TOKENIZE
     # =========================================================
-    def _tokenize(self, text: str) -> List[str]:
+
+    def _tokenize(
+        self,
+        text: str,
+    ) -> List[str]:
+
         if not text:
             return []
 
-        clean = re.sub(r"[^а-яА-Яa-zA-Z0-9\s]", " ", text.lower())
+        clean = re.sub(
+            r"[^а-яА-Яa-zA-Z0-9\s]",
+            " ",
+            text.lower(),
+        )
+
         tokens = clean.split()
+
         result = []
 
         for w in tokens:
+
             if w == "не":
+
                 result.append(w)
+
             elif len(w) >= 2:
-                result.append(self.stemmer.stem(w))
+
+                result.append(
+                    self.stemmer.stem(w)
+                )
 
         return result
 
     # =========================================================
     # ENTITY EXTRACT
     # =========================================================
-    def _extract_query_entities(self, query: str):
-        query_tokens = set(self._tokenize(query.lower()))
+
+    def _extract_query_entities(
+        self,
+        query: str,
+    ):
+
+        query_tokens = set(
+            self._tokenize(query.lower())
+        )
+
         entities = []
 
         for ent in self.known_entities:
-            ent_tokens = set(self._tokenize(ent))
+
+            ent_tokens = set(
+                self._tokenize(ent)
+            )
+
             if ent_tokens & query_tokens:
                 entities.append(ent)
 
         for ent in self.BASE_ENTITIES:
-            ent_tokens = set(self._tokenize(ent))
-            if ent_tokens & query_tokens and ent not in entities:
+
+            ent_tokens = set(
+                self._tokenize(ent)
+            )
+
+            if (
+                ent_tokens & query_tokens
+                and ent not in entities
+            ):
+
                 entities.append(ent)
 
         return entities
@@ -535,25 +732,59 @@ class RerankedEngine:
     # =========================================================
     # RRF
     # =========================================================
-    def _reciprocal_rank_fusion(self, vector_nodes, bm25_scores, k=30):
+
+    def _reciprocal_rank_fusion(
+        self,
+        vector_nodes,
+        bm25_scores,
+        k=30,
+    ):
+
         scores = {}
 
         for rank, node in enumerate(vector_nodes):
-            nid = str(node.node.metadata.get("id") or node.node.node_id)
-            scores[nid] = scores.get(nid, 0) + self.VECTOR_WEIGHT / (k + rank + 1)
 
-        bm25_indices = np.argsort(bm25_scores)[::-1][: self.BM25_TOP_K]
+            nid = str(
+                node.node.metadata.get("id")
+                or node.node.node_id
+            )
 
-        for rank, idx in enumerate(bm25_indices):
+            scores[nid] = (
+                scores.get(nid, 0)
+                + self.VECTOR_WEIGHT
+                / (k + rank + 1)
+            )
+
+        bm25_indices = np.argsort(
+            bm25_scores
+        )[::-1][: self.BM25_TOP_K]
+
+        for rank, idx in enumerate(
+            bm25_indices
+        ):
+
             if bm25_scores[idx] <= 0:
                 continue
-            nid = self.all_nodes[idx].node_id
-            scores[nid] = scores.get(nid, 0) + self.BM25_WEIGHT / (k + rank + 1)
 
-        sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+            nid = self.all_nodes[idx].node_id
+
+            scores[nid] = (
+                scores.get(nid, 0)
+                + self.BM25_WEIGHT
+                / (k + rank + 1)
+            )
+
+        sorted_ids = sorted(
+            scores.keys(),
+            key=lambda x: scores[x],
+            reverse=True,
+        )
 
         return [
-            NodeWithScore(node=self.node_map[nid], score=scores[nid])
+            NodeWithScore(
+                node=self.node_map[nid],
+                score=scores[nid],
+            )
             for nid in sorted_ids
             if nid in self.node_map
         ]
@@ -561,15 +792,15 @@ class RerankedEngine:
     # =========================================================
     # RESPONSE MODE
     # =========================================================
+
     def _select_response_mode(self, query_text: str):
         q = query_text.lower()
 
         # --- 1. КОНТУР ГЛОБАЛЬНОЙ АНАЛИТИКИ И СУММАРИЗАЦИИ (ВРУБАЕМ TREE!) ---
-        if any(p in q for p in ["сравни", "чем отличается", "разница", "обобщи",
-                                "обзор", "анализ", "вывод", "кратко", "синтезируй",
-                                "сформулируй"]):
+        if any(p in q for p in ["сравни", "чем отличается", "разница", "обобщи", "обзор", "анализ", "вывод", "кратко", "синтезируй", "сформулируй"]):
             logger.info("🌲 GLOBAL -> TREE_SUMMARIZE")
-            return self.tree_synthesizer
+            # Возвращаем древовидный синтезатор LlamaIndex для концептуальных задач
+            return self.tree_synthesizer 
 
         # --- 2. КОНТУР ОТРИЦАНИЙ ---
         if any(p in q for p in self.NEGATIVE_PATTERNS):
@@ -577,20 +808,19 @@ class RerankedEngine:
             return self.compact_synthesizer
 
         # --- 3. КОНТУР БИОГРАФИЙ И ГРАФИКОВ ---
-        if any(p in q for p in ["кто такой", "кто такая", "биография",
-                                "руководитель", "график", "диаграмма"]):
+        if any(p in q for p in ["кто такой", "кто такая", "биография", "руководитель", "график", "диаграмма"]):
             logger.info("👤 COMPACT -> BIO")
             return self.compact_synthesizer
 
-        # --- 4. КОНТУР ТОЧНЫХ ОПЕРАТИВНЫХ ФАКТОВ ---
-        if any(p in q for p in ["сколько", "какой срок", "когда",
-                                "предусмотрено ли", "можно ли", "каким"]):
+        # --- 4. КОНТУР ТОЧНЫХ ОПЕРАТИВНЫХ ФАКТОВ (Наш пуленепробиваемый COMPACT) ---
+        if any(p in q for p in ["сколько", "какой срок", "когда", "предусмотрено ли", "можно ли", "каким"]):
             logger.info("🎯 COMPACT -> FACT")
             return self.compact_synthesizer
-
+       
         # --- 5. ДЕФОЛТНЫЙ КОНТУР ---
         logger.info("👤 COMPACT -> DEFAULT")
         return self.compact_synthesizer
+   
 
     # =========================================================
     # QUERY
@@ -601,17 +831,18 @@ class RerankedEngine:
             file_path = self.debug_dir / f"query_{ts}.txt"
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(f"ORIGINAL QUERY: {query}\nNORM SEARCH: {norm_query}\n\nPROMPT:\n{final_prompt}\n")
-                f.write(f"{'=' * 60}\n")
+                f.write(f"{'='*60}\n")
                 for i, n in enumerate(nodes):
                     llm_content = n.node.get_content(metadata_mode=MetadataMode.LLM)
-                    f.write(f"\n[CHUNK {i + 1}] ID: {n.node.id_} | SCORE: {n.score:.4f}\n{'-' * 30}\n{llm_content}\n")
+                    f.write(f"\n[CHUNK {i+1}] ID: {n.node.id_} | SCORE: {n.score:.4f}\n{'-'*30}\n{llm_content}\n")
         except Exception as e:
-            logger.error(f"❌ Debug Error: {e}", exc_info=True)
-
+            logger.error(f"❌ Debug Error: {e}")
+    
     def _sync_query(self, query_text: str):
         from llama_index.core.schema import MetadataMode, QueryBundle, NodeWithScore
 
         norm_query = self._normalize_query(query_text)
+        # logger.info(f"🔎 [QUERY]: {query_text} -> {norm_query}")
 
         # 1. VECTOR SEARCH
         vector_nodes = self.retriever.retrieve(norm_query)
@@ -623,7 +854,7 @@ class RerankedEngine:
         else:
             combined_nodes = vector_nodes
 
-        # 3. ENTITY BOOST
+        # 3. ENTITY BOOST (Исправленная математика: делаем сложение для RRF)
         query_entities = self._extract_query_entities(query_text)
         if query_entities:
             entity_token_cache = {ent: set(self._tokenize(ent)) for ent in query_entities}
@@ -637,27 +868,33 @@ class RerankedEngine:
                         bonus += self.ENTITY_BONUS
 
                 bonus = min(bonus, self.MAX_ENTITY_BONUS)
-                new_score = node.score + (bonus * 0.1)
+                # Складываем скоры, чтобы бустинг сущностей реально работал на маленьких весах RRF
+                new_score = node.score + (bonus * 0.1) 
                 boosted_nodes.append(NodeWithScore(node=node.node, score=new_score))
 
             combined_nodes = sorted(boosted_nodes, key=lambda x: x.score, reverse=True)
 
         # ДЕБАГ ХАЙБРИД
-        logger.info(f"\n{'=' * 20} HYBRID TOP-10 {'=' * 20}")
+        logger.info(f"\n{'='*20} HYBRID TOP-10 {'='*20}")
         for i, n in enumerate(combined_nodes[:10]):
-            logger.info(f"Rank {i + 1}: [{n.score:.4f}] ID: {n.node.id_}")
+            logger.info(f"Rank {i+1}: [{n.score:.4f}] ID: {n.node.id_}")
         logger.info("=" * 55 + "\n")
 
-        # 4. RERANK & STRICT SCORE FILTERING
+        # 4. RERANK & STRICT SCORE FILTERING (ФИЛЬТРАЦИЯ МУСОРА ПО СКОРУ ДЛЯ BAAI BGE)
         if self.reranker and combined_nodes:
+            # BAAI/bge-reranker-v2-m3 пересчитывает скоры строго для ТОП-10 чанков из гибрида
             reranked_nodes = self.reranker.postprocess_nodes(
                 combined_nodes[:10],
                 query_bundle=QueryBundle(query_text),
             )
+            
+            # Из результатов bge-реранкера берем первые ТОП-5
             top_5_reranked = reranked_nodes[:5]
+            
+            # И уже из этих 5 чанков отсекаем всё, что ниже порога 0.1
             SCORE_THRESHOLD = 0.05
             final_nodes = [node for node in top_5_reranked if node.score >= SCORE_THRESHOLD]
-
+            
             logger.info(
                 f"🛡️ [BGE RERANK FILTER]: Из 5 переранжированных чанков "
                 f"проверку по порогу >= {SCORE_THRESHOLD} прошли строго {len(final_nodes)}."
@@ -666,9 +903,9 @@ class RerankedEngine:
             final_nodes = combined_nodes[:self.final_top_k]
 
         # ДЕБАГ РЕРАНК
-        logger.info(f"\n{'=' * 20} RERANKED TOP-5 {'=' * 20}")
+        logger.info(f"\n{'='*20} RERANKED TOP-5 {'='*20}")
         for i, n in enumerate(final_nodes[:5]):
-            logger.info(f"Rank {i + 1}: [{n.score:.4f}] ID: {n.node.id_}")
+            logger.info(f"Rank {i+1}: [{n.score:.4f}] ID: {n.node.id_}")
         logger.info("=" * 55 + "\n")
 
         # 5. FORCED QUERY
@@ -691,29 +928,29 @@ class RerankedEngine:
         synthesizer = self._select_response_mode(query_text)
         final_chunks = final_nodes[:self.final_top_k]
         logger.info(f"🧬 Final chunks allowed for LLM context: {len(final_chunks)}")
-
+        
         # 🔥 УМНЫЙ ДЕБАГ: Пишем файлы строго если флаг включен в .env
         if os.getenv("DEBUG_MODE", "False").lower() == "true":
-            import asyncio
-            asyncio.run(asyncio.to_thread(
-                self._dump_debug_info, query_text, norm_query, final_chunks, forced_query
-            ))
+            self._dump_debug_info(query_text, norm_query, final_chunks, forced_query)
         else:
             logger.info("ℹ️ Debug dump skipped (Production mode)")
 
         # Флаг для безопасной заглушки на случай пустого контекста
         is_empty_context = not final_chunks
 
-        # 🔥 МГНОВЕННЫЙ ЛОКАЛЬНЫЙ РАСЧЕТ ТОКЕНОВ
+        # 🔥 МГНОВЕННЫЙ ЛОКАЛЬНЫЙ РАСЧЕТ ТОКЕНОВ (ТВОЯ НАСТРОЙКА РАСЧЕТА INPUT)
         try:
             prompt_str = str(self.qa_prompt) + "\n"
             full_input_text = prompt_str
             for chunk in final_chunks:
-                full_input_text += chunk.node.get_content(
-                    metadata_mode=MetadataMode.LLM
-                ) + "\n"
+                full_input_text += (
+                    chunk.node.get_content(
+                        metadata_mode=MetadataMode.LLM
+                    ) + "\n"
+                )
             full_input_text += forced_query
 
+            # Более адекватная оценка для русского текста (~1 токен = 4 символа)
             exact_prompt_tokens = (
                 max(1, int(len(full_input_text) / 4))
                 if not is_empty_context
@@ -729,12 +966,8 @@ class RerankedEngine:
                 nodes=final_chunks,
             )
         else:
-            fallback_msg = ("[ДАННЫЕ_НЕ_НАЙДЕНЫ: "
-                            "В предоставленных документах ФНС информация отсутствует]")
-            streaming_response = type(
-                '_', (object,),
-                {'response_gen': iter([fallback_msg])}
-            )()
+            fallback_msg = "[ДАННЫЕ_НЕ_НАЙДЕНЫ: В предоставленных документах ФНС информация отсутствует]"
+            streaming_response = type('_', (object,), {'response_gen': iter([fallback_msg])})()
 
         # Перехватываем выходные токены через наш логгер
         original_gen = streaming_response.response_gen
@@ -742,46 +975,38 @@ class RerankedEngine:
         def logging_token_generator():
             tokens = []
             for token_obj in original_gen:
+                # Сохраняем строковое представление токена для последующей склейки
                 if hasattr(token_obj, "delta"):
                     tokens.append(str(token_obj.delta))
                 else:
                     tokens.append(str(token_obj))
                 yield token_obj
 
+            # 🔥 ТВОЯ НАСТРОЙКА РАСЧЕТА OUTPUT ТОКЕНОВ С УЧЕТОМ ДЕЛЕНИЯ НА 4
             generated_text = "".join(tokens)
-            token_count = (
-                max(1, int(len(generated_text) / 4))
-                if not is_empty_context
-                else 0
-            )
+            token_count = max(1, int(len(generated_text) / 4)) if not is_empty_context else 0
 
+            # Как только модель допечатала последнюю букву — стреляем логом в Docker!
             logger.info("═" * 50)
             logger.info("📊 ТОЧНЫЙ АУДИТ ТОКЕНОВ ДЛЯ ФНС (ЛОКАЛЬНЫЙ РАСЧЕТ):")
-            logger.info(
-                f"📥 На вход улетело (Промпт + Чанки + Вопрос): "
-                f"~{exact_prompt_tokens} токенов"
-            )
-            logger.info(
-                f"📤 На выход сгенерировано моделью: ~{token_count} токенов"
-            )
+            logger.info(f"📥 На вход улетело (Промпт + Чанки + Вопрос): ~{exact_prompt_tokens} токенов")
+            logger.info(f"📤 На выход сгенерировано моделью: ~{token_count} токенов")
             logger.info("═" * 50)
 
         streaming_response.response_gen = logging_token_generator()
 
         return streaming_response
 
-
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
 logger.info("🧠 Загрузка векторного индекса...")
 
-# 1. Создаем клиент ЯВНО (параметры из .env, дефолты для Docker Compose)
-QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant_db")
-QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
-client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, prefer_grpc=False)
+# 1. Создаем клиент ЯВНО
+# ВАЖНО: используем именно QdrantClient (он синхронный)
+client = QdrantClient(host="qdrant_db", port=6333, prefer_grpc=False)
 
 # 2. Передаем его в стор
 vector_store = QdrantVectorStore(
-    collection_name=os.getenv("QDRANT_COLLECTION", "fns_collection"),
+    collection_name="fns_collection", 
     client=client
 )
 
@@ -797,7 +1022,7 @@ query_engine = RerankedEngine(
 )
 logger.info("✅ Query engine ТЕПЕРЬ РЕАЛЬНО НА QDRANT!")
 
-# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (осталось без изменений) ==========
 def _collect_sources(nodes: list, max_sources: int = 3) -> list:
     sources = []
     seen_urls: set = set()
@@ -806,20 +1031,25 @@ def _collect_sources(nodes: list, max_sources: int = 3) -> list:
             break
         if not hasattr(node, "node"):
             continue
+        # url = node.node.metadata.get("source_url", "")
+
+        
+        # if not url or url in seen_urls:
+        #     continue
         title = node.node.metadata.get("title", "Источник").strip()
         if not title or title in seen_urls:
             continue
         url = node.node.metadata.get("source_url", "")
         if title.startswith(_TITLE_PREFIXES):
             title = title.split(". ", 1)[-1] if ". " in title else title
+            
         sources.append({
-            "url": url,
-            "title": title[:100],
-            "score": round(float(node.score), 4) if hasattr(node, "score") else None,
-        })
+                "url": url,
+                "title": title[:100],
+                "score": round(float(node.score), 4) if hasattr(node, "score") else None,
+            })
         seen_urls.add(title)
     return sources
-
 
 def _find_photo(resp_lower: str, nodes: list) -> Optional[str]:
     for filename, variations in _EMPLOYEES:
@@ -839,7 +1069,7 @@ def _find_photo(resp_lower: str, nodes: list) -> Optional[str]:
     return None
 
 
-# ========== ОСНОВНАЯ ФУНКЦИЯ ДЛЯ API ==========
+# ========== ОСНОВНАЯ ФУНКЦИЯ ДЛЯ API (АРХИТЕКТУРНО ЧИСТАЯ) ==========
 async def get_ai_streaming_response(query_text: str):
     start_time = time.time()
 
@@ -848,13 +1078,13 @@ async def get_ai_streaming_response(query_text: str):
 
         # 1. Проверяем намерение пользователя через изолированный chart_engine
         is_chart_mode = chart_engine.is_chart_request(query_text)
-
-        # 2. В QDRANT ШЛЕМ СТРОГО ЧИСТЫЙ ВОПРОС (в потоке, чтобы не вешать Event Loop)
-        response = await asyncio.to_thread(query_engine._sync_query, query_text)
+        
+        # 2. В QDRANT ШЛЕМ СТРОГО ЧИСТЫЙ ВОПРОС! Никакого мусора и ИТ-инструкций.
+        # Поиск и реранкер Сбера теперь работают со 100% точностью по смыслу.
+        response = query_engine._sync_query(query_text)
 
         if response is None:
-            yield json.dumps({"type": "text", "content": "БАЗА_ПУСТА: Информация не найдена."},
-                             ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "text", "content": "БАЗА_ПУСТА: Информация не найдена."}, ensure_ascii=False) + "\n"
             yield json.dumps({"type": "end"}, ensure_ascii=False) + "\n"
             return
 
@@ -870,12 +1100,11 @@ async def get_ai_streaming_response(query_text: str):
             "type": "metadata",
             "sources": sources,
             "has_answer": has_real_context,
-            "img": local_img,
+            "img": local_img
         }, ensure_ascii=False) + "\n"
 
         if not has_real_context or not hasattr(response, "response_gen") or response.response_gen is None:
-            yield json.dumps({"type": "text", "content": "БАЗА_ПУСТА: Информация не найдена."},
-                             ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "text", "content": "БАЗА_ПУСТА: Информация не найдена."}, ensure_ascii=False) + "\n"
             yield json.dumps({"type": "end"}, ensure_ascii=False) + "\n"
             return
 
@@ -887,8 +1116,9 @@ async def get_ai_streaming_response(query_text: str):
         # =========================================================
         if is_chart_mode:
             logger.info("🎯 [API]: Включаем изолированный Pydantic-контур генерации графика.")
-
+            
             if not has_real_context:
+                # Если данных нет — не пытаемся рисовать график, сразу текстовый fallback
                 logger.warning("⚠️ [CHART]: Нет данных для графика, переключаюсь на текстовый ответ.")
                 for token in response.response_gen:
                     tokens.append(token)
@@ -896,72 +1126,73 @@ async def get_ai_streaming_response(query_text: str):
                     yield json.dumps({"type": "text", "content": t}, ensure_ascii=False) + "\n"
                 full_response_text = "".join(tokens)
             else:
+                # Собираем найденный в Qdrant текстовый контекст из нод в одну чистую строку
                 rag_context = "\n\n".join([node.node.get_content() for node in nodes])
-
+                
+                # Формируем payload для Ollama, где огромный промпт встает в поле system
+                # и больше не отсвечивает в векторизаторе. Мы вызываем его тут!
                 config = chart_engine.process_llm_payload(
-                    query=query_text,
-                    rag_context=rag_context,
+                    query=query_text, 
+                    rag_context=rag_context, 
                     model_name="yagpt5_fns:latest"
                 )
                 payload = config["payload"]
-
+                
+                # Лупим ПРЯМОЙ POST-запрос в контейнер Ollama за монолитным JSON-ом
                 try:
-                    import httpx
-                    async with httpx.AsyncClient() as http_client:
-                        ollama_response = await http_client.post(
-                            chart_engine.ollama_url, json=payload, timeout=300.0
-                        )
-                        ollama_response.raise_for_status()
-                        raw_json_text = ollama_response.json()["message"]["content"]
+                    ollama_response = requests.post(chart_engine.ollama_url, json=payload, timeout=(5, 300))
+                    ollama_response.raise_for_status()
+                    raw_json_text = ollama_response.json()["message"]["content"]
                 except Exception as chart_err:
-                    logger.error(f"❌ [CHART] Ошибка вызова Ollama: {chart_err}", exc_info=True)
+                    logger.error(f"❌ [CHART] Ошибка вызова Ollama: {chart_err}")
+                    # Fallback на текстовый ответ
                     for token in response.response_gen:
                         tokens.append(token)
                         t = str(token)
                         yield json.dumps({"type": "text", "content": t}, ensure_ascii=False) + "\n"
                     full_response_text = "".join(tokens)
-                    is_chart_mode = False
-                    yield json.dumps(
-                        {"type": "metadata", "note": "График не построен, показан текстовый ответ"},
-                        ensure_ascii=False,
-                    ) + "\n"
-
+                    # Пропускаем остаток блока is_chart_mode
+                    is_chart_mode = False  # чтобы не заходить в последующие проверки is_chart_mode
+                    yield json.dumps({"type": "metadata", "note": "График не построен, показан текстовый ответ"}, ensure_ascii=False) + "\n"
+                    # Не делаем return — продолжаем к общей логике end и фотографий
+                
+                # Наполняем массив для корректной работы логов
                 tokens = list(raw_json_text)
+                
+                # Валидируем получившийся монолит через Pydantic-контракт
                 parsed_chart_node = chart_engine.validate_and_parse(raw_json_text)
-
+                
+                # Если валидация не удалась — отправляем ошибку на фронт (response_gen уже мог быть исчерпан)
                 if parsed_chart_node["type"] == "chart_error":
-                    logger.warning(
-                        f"⚠️ [CHART] Валидация не прошла: {parsed_chart_node['message']}. "
-                        "Отправляю ошибку на фронт."
-                    )
+                    logger.warning(f"⚠️ [CHART] Валидация не прошла: {parsed_chart_node['message']}. Отправляю ошибку на фронт.")
                     yield json.dumps(parsed_chart_node, ensure_ascii=False) + "\n"
                     full_response_text = ""
                 else:
+                    # Отправляем готовый график на фронт за один раз
                     yield json.dumps(parsed_chart_node, ensure_ascii=False) + "\n"
                     logger.info("📊 График успешно отвалидирован и отправлен на фронт.")
-
+            
         else:
-            # Сценарий Б: Стандартный стриминг текстовых токенов
+            # Сценарий Б: Стандартный стриминг текстовых токенов на фронт (Твой старый код)
             for token in response.response_gen:
                 tokens.append(token)
                 t = str(token)
                 yield json.dumps({"type": "text", "content": t}, ensure_ascii=False) + "\n"
+            
             full_response_text = "".join(tokens)
 
-        # Логируем скорость работы
+        # Логируем скорость работы контейнера Ollama
         gen_time = time.time() - gen_start
         token_count = len(tokens)
         if gen_time > 0 and not is_chart_mode:
-            logger.info(
-                f"💬 {token_count} токенов за {gen_time:.2f} сек "
-                f"({token_count / gen_time:.1f} ток/сек)"
-            )
+            logger.info(f"💬 {token_count} токенов за {gen_time:.2f} сек ({token_count / gen_time:.1f} ток/сек)")
 
         # =========================================================
-        # ПОДБОР ФОТОГРАФИЙ
+        # ТВОЙ РОДНОЙ КОНТУР ПОДБОРА ФОТОГРАФИЙ (СТРОГО НА МЕСТЕ)
         # =========================================================
         if not is_chart_mode:
             resp_lower = full_response_text.lower()
+
             is_empty = bool(_EMPTY_RESPONSE_RE.search(resp_lower))
             is_table = "|---" in resp_lower or "| :---" in resp_lower or resp_lower.count("|") > 10
 
@@ -981,10 +1212,8 @@ async def get_ai_streaming_response(query_text: str):
 
     except Exception as e:
         logger.error(f"❌ Критическая ошибка: {e}", exc_info=True)
-        yield json.dumps({"type": "error", "content": f"Ошибка сервера: {e}"},
-                         ensure_ascii=False) + "\n"
+        yield json.dumps({"type": "error", "content": f"Ошибка сервера: {e}"}, ensure_ascii=False) + "\n"
         yield json.dumps({"type": "end"}, ensure_ascii=False) + "\n"
-
 
 # ========== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ (без стриминга) ==========
 async def get_ai_response_full(query_text: str) -> dict:
@@ -993,11 +1222,7 @@ async def get_ai_response_full(query_text: str) -> dict:
         response = await query_engine.aquery(query_text)
 
         if not response or not hasattr(response, "source_nodes"):
-            return {
-                "answer": "БАЗА_ПУСТА: Информация не найдена.",
-                "sources": [],
-                "image": None,
-            }
+            return {"answer": "БАЗА_ПУСТА: Информация не найдена.", "sources": [], "image": None}
 
         tokens: List[str] = []
         if hasattr(response, "response_gen") and response.response_gen is not None:
@@ -1017,12 +1242,7 @@ async def get_ai_response_full(query_text: str) -> dict:
 
     except Exception as e:
         logger.error(f"❌ Ошибка в get_ai_response_full: {e}", exc_info=True)
-        return {
-            "answer": "В моих регламентах про это ни слова, бро.",
-            "sources": [],
-            "image": None,
-        }
-
+        return {"answer": "В моих регламентах про это ни слова, бро.", "sources": [], "image": None}
 
 # ========== ТЕСТОВЫЙ ЗАПУСК ==========
 if __name__ == "__main__":

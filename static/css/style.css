@@ -84,7 +84,7 @@ body {
     color: var(--text-primary);
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100dvh;
     margin: 0;
     align-items: center;
     overflow: hidden;
@@ -98,7 +98,7 @@ body {
     max-width: 1000px;
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100dvh;
     padding: var(--spacing-lg);
     padding-bottom: var(--spacing-md);
     box-sizing: border-box;
@@ -373,14 +373,16 @@ header h2 .subtext {
 
 /* Tables */
 .bot table {
-    display: table !important;
+    display: block !important;
     width: 100%;
     border-collapse: collapse;
     margin: 15px 0;
     font-size: 14px;
     background: #ffffff;
     border-radius: var(--radius-sm);
-    overflow: hidden;
+    overflow-x: auto !important;
+    max-width: 100% !important;
+    -webkit-overflow-scrolling: touch;
     box-shadow: 0 4px 12px rgba(0, 51, 102, 0.08);
     border: 1px solid var(--border-light);
 }
@@ -961,7 +963,7 @@ body.sidebar-collapsed .sidebar-toggle-btn {
     left: 0;
     top: 0;
     width: 260px;
-    height: 100vh;
+    height: 100dvh;
     background: #fafbfc;
     border-right: 1px solid #e2e8f0;
     transition: left 0.3s ease;
@@ -1095,6 +1097,25 @@ body.sidebar-collapsed .sidebar-toggle-btn {
 }
 
 /* Мобилки */
+@media (max-width: 1024px) {
+    .sidebar-toggle-btn {
+        display: none !important;
+    }
+    .sidebar {
+        left: -260px;
+    }
+    .sidebar.open { left: 0; }
+    .sidebar.collapsed { left: -260px; }
+    #container {
+        margin-left: 0;
+        width: 100%;
+    }
+    .sidebar-overlay.open {
+        background: rgba(0,0,0,0.4);
+        pointer-events: auto;
+    }
+}
+
 @media (max-width: 768px) {
     .sidebar-toggle-btn {
         display: none !important;
@@ -1225,6 +1246,31 @@ body.sidebar-collapsed .sidebar-toggle-btn {
     }
 }
 
+/* Очень маленькие экраны — скрываем подпись "| ФНС России" */
+@media (max-width: 400px) {
+    header h2 {
+        font-size: 0.8rem;
+    }
+    header h2 span {
+        display: none !important;
+    }
+    .input-actions-col {
+        flex-direction: row !important;
+        width: auto !important;
+        gap: 4px !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+    }
+    .mic-btn {
+        margin-left: 0 !important;
+    }
+    .mic-btn.moved {
+        transform: translateX(0) !important;
+    }
+    .input-bottom-row {
+        gap: 8px !important;
+    }
+}
 
 /* ============================================
    🌗 Кнопка темы — правый верхний угол

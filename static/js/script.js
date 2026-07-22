@@ -272,9 +272,9 @@ function initChart(chartId, chartConfig, container, isDarkMode = null) {
                     ? 'box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); padding: 12px; border-radius: 8px;'
                     : 'box-shadow: 0 4px 12px rgba(0, 51, 102, 0.15); padding: 12px; border-radius: 8px;',
                 formatter: isPie 
-                    ? unitLabel 
-                        ? function(params) { return params.name + '<br/>' + params.value + ' ' + unitLabel; }
-                        : undefined
+                    ? function(params) { 
+                        return params.name + '<br/>' + params.value + (unitLabel ? ' ' + unitLabel : ''); 
+                      }
                     : unitLabel
                         ? function(params) {
                             let result = '<b>' + params[0].axisValue + '</b>';
