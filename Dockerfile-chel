@@ -8,9 +8,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# 2. Установка PyTorch CPU (Бетонная ссылка)
+# 2. Установка PyTorch CPU
 RUN pip install --no-cache-dir torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
-
 
 # 3. Установка стабильной связки библиотек
 RUN pip install --no-cache-dir \
@@ -28,21 +27,18 @@ RUN pip install --no-cache-dir \
     "peft" \
     "rank-bm25" \
     "nltk" \
-    "fastapi==0.115.0" \
-    "uvicorn==0.30.6"
+    "fastapi" \
+    "uvicorn"
 
-# 4. 🔥 КРИТИЧНО: Предзагрузка словарей NLTK
-# Сначала копируем только скрипт настройки
-COPY setup_nltk.py .
-# Запускаем его нормально
-RUN python setup_nltk.py
+# 4. Предзагрузка словарей NLTK
+RUN python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords')"
 
-# 5. Копируем требования (если есть доп. либы)
+# 5. Копируем requirements.txt и устанавливаем
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt || true
 
 # 6. Копируем код
-# Благодаря твоему новому .dockerignore сюда попадет только код!
 COPY . .
 
-CMD ["python", "main.py"]
+# 7. Запуск FastAPI сервера (строго без бота)
+CMD ["uvicorn", "main_api:app", "--host", "0.0.0.0", "--port", "8000"]

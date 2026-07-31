@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tax AI Chat | Enterprise Edition</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="/static/js/marked.min.js"></script>
+    <script src="/static/js/echarts.min.js"></script>
+</head>
+<body>
+<!-- 🔥 БОКОВАЯ ПАНЕЛЬ ИСТОРИИ -->
+<div id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+        <h3>История</h3>
+        <span class="sidebar-new-btn" onclick="createNewChat()">+</span>
+    </div>
+    <div id="chatHistory" class="chat-history"></div>
+</div>
+
+<!-- 🔥 Стрелка для скрытия/показа сайдбара (десктоп) — строго ПОСЛЕ сайдбара для CSS-селектора -->
+<span id="sidebarToggle" class="sidebar-toggle-btn" onclick="toggleDesktopSidebar()">◀</span>
+
+<!-- Оверлей для закрытия сайдбара -->
+<div id="sidebarOverlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+<div id="container">
+    <header style="display: flex; align-items: center; justify-content: center; margin-bottom: 10px; position: relative;">
+        <!-- 🔥 Логотип -->
+        <a href="/" style="display: flex; align-items: center; text-decoration: none; margin-right: auto; padding-left: 5px;">
+        <img src="/static/logo.png" alt="Лого" style="height: 35px; width: auto; object-fit: contain; margin-right: auto; padding-left: 5px;">
+        </a>
+        <!-- 🔥 Заголовок строго по центру -->
+        <h2 style="margin: 0; color: #003366; display: flex; align-items: center; font-size: 22px; position: absolute; left: 50%; transform: translateX(-50%);">
+            Нейроконсультант <span style="font-weight: 200; color: #003366; margin-left: 8px;">| ФНС России</span>
+        </h2>
+        <!-- 🔥 Кнопка переключения темы -->
+        <button id="themeToggle" class="theme-toggle" onclick="toggleDarkMode()">🌙</button>
+    </header>
+
+    {% block content %}{% endblock %}
+
+</div>
+<script src="/static/js/script.js"></script>
+</body>
+</html>

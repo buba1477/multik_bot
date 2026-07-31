@@ -3,6 +3,7 @@ import traceback
 from contextlib import asynccontextmanager
 from fastapi.responses import HTMLResponse
 from fastapi import FastAPI, Request
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import re
 import asyncio
@@ -53,6 +54,8 @@ async def lifespan(app: FastAPI):
         await cache.close()
 
 app = FastAPI(title="Мультик RAG API", lifespan=lifespan)
+templates = Jinja2Templates(directory="templates")
+templates.env.cache = None
 
 # =========================================================
 # ГЛОБАЛЬНЫЙ EXCEPTION HANDLER
@@ -132,82 +135,13 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)
-async def get_chat_page():
-    return """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Tax AI Chat | Enterprise Edition</title>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/static/css/style.css">
-    <script src="/static/js/marked.min.js"></script>
-    <script src="/static/js/echarts.min.js"></script>
-</head>
-<body>
-<!-- 🔥 БОКОВАЯ ПАНЕЛЬ ИСТОРИИ -->
-<div id="sidebar" class="sidebar">
-    <div class="sidebar-header">
-        <h3>История</h3>
-        <span class="sidebar-new-btn" onclick="createNewChat()">+</span>
-    </div>
-    <div id="chatHistory" class="chat-history"></div>
-</div>
+async def get_chat_page(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html"
+    )
 
-<!-- 🔥 Стрелка для скрытия/показа сайдбара (десктоп) — строго ПОСЛЕ сайдбара для CSS-селектора -->
-<span id="sidebarToggle" class="sidebar-toggle-btn" onclick="toggleDesktopSidebar()">◀</span>
 
-<!-- Оверлей для закрытия сайдбара -->
-<div id="sidebarOverlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
-
-<div id="container">
-    <header style="display: flex; align-items: center; justify-content: center; margin-bottom: 10px; position: relative;">
-        <!-- 🔥 Логотип -->
-        <a href="/" style="display: flex; align-items: center; text-decoration: none; margin-right: auto; padding-left: 5px;">
-        <img src="/static/logo.png" alt="Лого" style="height: 35px; width: auto; object-fit: contain; margin-right: auto; padding-left: 5px;">
-        </a>
-        <!-- 🔥 Заголовок строго по центру -->
-        <h2 style="margin: 0; color: #003366; display: flex; align-items: center; font-size: 22px; position: absolute; left: 50%; transform: translateX(-50%);">
-            Нейроконсультант <span style="font-weight: 200; color: #003366; margin-left: 8px;">| ФНС России</span>
-        </h2>
-        <!-- 🔥 Кнопка переключения темы -->
-        <button id="themeToggle" class="theme-toggle" onclick="toggleDarkMode()">🌙</button>
-    </header>
-    
-    <div id="chat"></div>
-    
-    <!-- Главный контейнер панели ввода с relative-позиционированием -->
-     <div style="width: 100%; position: relative;">
-    
-    <!-- 1. Твой input-area — теперь ОН задает общую высоту и центрирует элементы -->
-   <div id="input-area">
-    <!-- Левая зона: только текстовое поле -->
-    <div class="input-text-container">
-        <textarea id="messageText" placeholder="Задай вопрос..." autocomplete="off"></textarea>
-    </div>
-    
-    <!-- Правая зона: обе кнопки жестко в одной колонке -->
-    <div class="input-actions-col">
-        <button id="clearTextBtn" class="clear-text-btn" onclick="clearTextField()">✕</button>
-    <div class="input-bottom-row">
-        <button id="sendButton" class="send-btn" onclick="sendMessage()" disabled data-tooltip="Отправить">↑</button>
-        <button id="micBtn" class="mic-btn flex items-center justify-center h-10 w-10 rounded-full bg-transparent text-slate-500 hover:bg-slate-500/10 hover:text-slate-800 transition-all duration-200 ease-in-out focus:outline-none" onclick="toggleMic()" data-tooltip="Микрофон" style="box-shadow: none !important;">
-  <svg xmlns="http://w3.org" fill="none" viewBox="-5 -5 35 35" stroke="currentColor" class="w-5 h-5">
-    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-  </svg>
-</button>
-    </div>
-    </div>
-</div>
-
-    
-</div>
-</div>
-</div>
-<script src="/static/js/script.js"></script>
-</body>
-</html>
-"""
 
 
 class ChatRequest(BaseModel):

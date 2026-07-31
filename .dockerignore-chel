@@ -1,0 +1,31 @@
+venv/
+.venv/
+.git/
+.cache/
+hf_cache/
+storage_context/
+reranker*/
+sber_model/
+m3_model/
+onnx/
+*.gguf
+*.safetensors
+*.bin
+*.pth
+*.onnx
+*.pt
+*.tar.gz
+*.zip
+*.jsonl
+
+# Исключаем бота и его зависимости под корень
+main.py
+*bot*.py
+bot/
+aiogram/
+
+# Разрешаем только файлы для работы API сервера
+!requirements.txt
+!main_api.py
+!engine_rag.py
+!rag_fns.py

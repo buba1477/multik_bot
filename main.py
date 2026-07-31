@@ -51,7 +51,7 @@ logger = logging.getLogger('MultikBot')
 
 # --- КОНФИГ ---
 # Получаем токен бота из переменных окружения
-TOKEN = os.getenv('BOT_API_TOKEN')
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 # Получаем адрес сервера Ollama (по умолчанию localhost:11434)
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
 # Создаем асинхронного клиента для работы с Ollama
@@ -630,23 +630,24 @@ async def handle_multik_response(message: Message, user_name: str):
 async def main():
     global bot
 
-    proxy_url = "http://WpmkYQ:vhGVky@196.19.5.79:8000"
+    proxy_url = os.getenv('TELEGRAM_PROXY_URL')
 
     # 1. Явно создаем настройки таймаута
     timeout = aiohttp.ClientTimeout(total=120, connect=30)
 
-    # 2. Создаем сессию aiogram ПРАВИЛЬНО
-    # Мы НЕ передаем прокси в AiohttpSession,
-    # мы передадим его ниже, чтобы избежать бага aiohttp
+    # 2. Создаем сессию aiogram
     session = AiohttpSession()
 
-    # 3. Инициализируем бота с прокси напрямую в объект Bot
-    # В aiogram 3.x это САМЫЙ стабильный способ
-    bot = Bot(
-        token=TOKEN,
-        session=session,
-        proxy=proxy_url  # Передаем сюда!
-    )
+    # 3. Инициализируем бота
+    # Если прокси указан в .env — используем его, иначе без прокси
+    bot_kwargs = {
+        "token": TOKEN,
+        "session": session,
+    }
+    if proxy_url:
+        bot_kwargs["proxy"] = proxy_url
+
+    bot = Bot(**bot_kwargs)
 
     try:
         # Проверка связи

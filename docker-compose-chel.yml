@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  # 0. REDIS (Локальный кэш для Челябинска) 🧠
+  redis:
+    image: redis:7-alpine
+    container_name: redis_cache
+    restart: always
+    ports:
+      - "6381:6379"
+
+  # 1. QDRANT (Готовая база с уже запеченными внутри векторами документов!) 🚀
+  qdrant:
+    build:
+      context: .
+      dockerfile: Dockerfile-qdrant-chel
+    container_name: qdrant_db
+    restart: always
+    ports:
+      - "6333:6333" # HTTP API
+      - "6344:6334" # gRPC
+    # СТРОЧКА VOLUMES ТУТ УДАЛЕНА НАМЕРТВО, ЧТОБЫ ИХ ПУСТАЯ ПАПКА НЕ СТЁРЛА ТВОИ ДАННЫЕ ИЗ ОБРАЗА!
+
+  # 2. FASTAPI (Твой чистый API-сервер без телеграм-бота)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile-chel
+    image: multik-core:latest
+    container_name: multik_api
+    restart: always
+    extra_hosts:
+      - "host.docker.internal:host-gateway" 
+    ports:
+      - "8000:8000" # Открыт для их локальной сети
+    volumes:
+      - ./hf_cache:/root/.cache/huggingface
+      - ./hf_cache:/app/hf_cache 
+      - ./static:/app/static 
+      - ./images_cache:/app/images_cache
+    environment:
+      - HF_HUB_OFFLINE=1      
+      - TRANSFORMERS_OFFLINE=1
+      # Настройка, чтобы контейнер на Windows увидел Олламу с их локальной видеокартой:
+      - OLLAMA_HOST=http://docker.internal
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - REDIS_HOST=redis
