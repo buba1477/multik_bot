@@ -1,19 +1,23 @@
 version: '3.8'
 
 services:
-  # 0. REDIS (Локальный кэш для Челябинска) 🧠
+  # 0. REDIS (Локальный кэш) 🧠
   redis:
     image: redis:7-alpine
     container_name: redis_cache
     restart: always
     ports:
       - "6381:6379"
-
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    
   # 1. QDRANT (Готовая база с уже запеченными внутри векторами документов!) 🚀
   qdrant:
-    build:
-      context: .
-      dockerfile: Dockerfile-qdrant-chel
+    # Готовый образ с Docker Hub (замените ${DOCKERHUB_USER} на ваш логин)
+    image: ${DOCKERHUB_USER}/multik-qdrant:latest
+    # Опциональная сборка из исходников (раскомментируйте, если нужно собрать локально)
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile-qdrant-chel
     container_name: qdrant_db
     restart: always
     ports:
@@ -23,26 +27,30 @@ services:
 
   # 2. FASTAPI (Твой чистый API-сервер без телеграм-бота)
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile-chel
-    image: multik-core:latest
+    # Готовый образ с Docker Hub (замените ${DOCKERHUB_USER} на ваш логин)
+    image: ${DOCKERHUB_USER}/multik-core:latest
+    # Опциональная сборка из исходников (раскомментируйте, если нужно собрать локально)
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile-chel
     container_name: multik_api
     restart: always
     extra_hosts:
       - "host.docker.internal:host-gateway" 
     ports:
       - "8000:8000" # Открыт для их локальной сети
+    env_file: [.env]
     volumes:
+      # Модели (LLM/embedding/reranker) подключаются через volumes, НЕ запекаются
       - ./hf_cache:/root/.cache/huggingface
       - ./hf_cache:/app/hf_cache 
-      - ./static:/app/static 
+      - ./reranker:/app/reranker
       - ./images_cache:/app/images_cache
     environment:
       - HF_HUB_OFFLINE=1      
       - TRANSFORMERS_OFFLINE=1
-      # Настройка, чтобы контейнер на Windows увидел Олламу с их локальной видеокартой:
-      - OLLAMA_HOST=http://docker.internal
+      # Ollama берётся из .env (OLLAMA_HOST), с дефолтом для Windows-хоста
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - REDIS_HOST=redis

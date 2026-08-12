@@ -344,6 +344,7 @@ header h2 .subtext {
     margin: 0 0 12px 0;
     line-height: 1.65;
     color: var(--text-primary);
+    text-align: justify;
 }
 
 .bot p:last-child {
@@ -359,6 +360,7 @@ header h2 .subtext {
     margin: 4px 0;
     line-height: 1.6;
     color: var(--text-primary);
+    text-align: justify;
 }
 
 .bot strong, .bot b {
@@ -590,6 +592,13 @@ input:focus {
     min-width: 44px !important;
     box-sizing: border-box !important;
     margin-left: -60px;
+}
+
+/* Размер иконки микрофона (замена tailwind-классов w-8 h-8) */
+.mic-btn svg {
+    width: 26px !important;
+    height: 26px !important;
+    flex-shrink: 0 !important;
 }
 
 .mic-btn.moved {

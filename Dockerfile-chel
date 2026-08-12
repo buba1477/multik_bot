@@ -4,6 +4,7 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y \
     curl \
     build-essential \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -27,18 +28,21 @@ RUN pip install --no-cache-dir \
     "peft" \
     "rank-bm25" \
     "nltk" \
-    "fastapi" \
-    "uvicorn"
+    "fastapi==0.115.0" \
+    "uvicorn==0.30.6"
 
-# 4. Предзагрузка словарей NLTK
-RUN python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords')"
+# 4. Предзагрузка словарей NLTK (нужны для SnowballStemmer в engine_rag.py)
+RUN python -c "import nltk; nltk.download('punkt_tab'); nltk.download('snowball_data')"
 
 # 5. Копируем requirements.txt и устанавливаем
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt || true
 
-# 6. Копируем код
+# 6. Создаём рабочие директории (нужны для main_api.py и engine_rag.py)
+RUN mkdir -p /app/images_cache /app/debug /app/hf_cache
+
+# 7. Копируем код
 COPY . .
 
-# 7. Запуск FastAPI сервера (строго без бота)
+# 8. Запуск FastAPI сервера (строго без бота)
 CMD ["uvicorn", "main_api:app", "--host", "0.0.0.0", "--port", "8000"]

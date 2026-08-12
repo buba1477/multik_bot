@@ -1,0 +1,5 @@
+FROM qdrant/qdrant:latest
+
+# Запекаем готовую базу знаний Qdrant прямо в образ
+# Благодаря этому на любом сервере база уже будет внутри образа
+COPY qdrant_storage/ /qdrant/storage/

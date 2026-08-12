@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
         logger.warning(f"⚠️ Redis недоступен: {e}")
     
     # Ollama
-    ollama_client = AsyncClient(host="http://localhost:11434")
+    ollama_client = AsyncClient(host=os.getenv("OLLAMA_HOST", "http://localhost:11434"))
     
     yield
     
@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Мультик RAG API", lifespan=lifespan)
 templates = Jinja2Templates(directory="templates")
-templates.env.cache = None
+# templates.env.cache = None
 
 # =========================================================
 # ГЛОБАЛЬНЫЙ EXCEPTION HANDLER

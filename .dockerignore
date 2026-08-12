@@ -5,6 +5,9 @@ venv/
 .cache/
 hf_cache/
 storage_context/
+qdrant_storage/  
+images_cache/    
+debug/           
 
 # Игнорим папки моделей (они проброшены через volumes)
 reranker*/

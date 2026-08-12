@@ -1,6 +1,105 @@
 let isGenerating = false;
 let chartInstances = []; // Хранилище для инстансов графиков
 
+// ============================================================
+// 🛡️ БЕЗОПАСНАЯ САНИТИЗАЦИЯ HTML (защита от XSS)
+// ============================================================
+// ВАЖНО: никакого небезопасного fallback. Если DOMPurify не загрузился —
+// HTML-вставка НЕ производится (возвращается безопасный текст/пусто).
+// Хелперы для вставки HTML только после sanitize.
+
+// Профиль: разрешаем обычный html (теги/аттрибуты из whitelist DOMPurify),
+// НО дополнительно блокируем опасные URL-схемы (javascript:, data:, vbscript:).
+const SANITIZE_OPTS = {
+    USE_PROFILES: { html: true },
+    ADD_ATTR: ['target', 'rel'],
+    FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'option'],
+    FORBID_ATTR: [],
+};
+
+// Превращает markdown в безопасный HTML (marked.parse + DOMPurify.sanitize)
+function safeMarkdownToHtml(md) {
+    if (typeof md !== 'string') return '';
+    let parsedHtml;
+    try {
+        parsedHtml = marked.parse(md);
+    } catch (e) {
+        parsedHtml = md; // if marked fails, treat as plain text
+    }
+    if (window.DOMPurify) {
+        return DOMPurify.sanitize(parsedHtml, SANITIZE_OPTS);
+    }
+    // Нет DOMPurify — никакого HTML, только экранированный текст
+    return escapeHtml(parsedHtml);
+}
+
+// Экранирует plain text в HTML (используется, когда DOMPurify недоступен
+// и для пользовательских данных вроде заголовков/URL)
+function escapeHtml(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// Возвращает санитизированный HTML (строка) или пустую строку, если DOMPurify нет
+function sanitizeHtml(html) {
+    if (typeof html !== 'string') return '';
+    if (window.DOMPurify) {
+        return DOMPurify.sanitize(html, SANITIZE_OPTS);
+    }
+    return ''; // без DOMPurify HTML не возвращаем
+}
+
+// Безопасная вставка HTML внутрь элемента (в конец). Без DOMPurify — ничего.
+function safeInsertHtml(el, html) {
+    if (!el) return;
+    const safe = sanitizeHtml(html);
+    if (safe) {
+        el.insertAdjacentHTML('beforeend', safe);
+    }
+}
+
+// Валидация URL для href/src: разрешаем только безопасные схемы
+function isSafeUrl(url) {
+    if (typeof url !== 'string') return false;
+    const trimmed = url.trim();
+    if (!trimmed) return false;
+    // Блокируем javascript:, data:, vbscript:, file: и т.п.
+    const badScheme = /^\s*(javascript|data|vbscript|file|filesystem|about):/i;
+    if (badScheme.test(trimmed)) return false;
+    // Относительные пути и http(s) разрешены; также mailto/tel в ссылках
+    return true;
+}
+
+// ============================================================
+// 🛡️ DOMPurify: дополнительная блокировка опасных URL-схем и
+// event-handler атрибутов на уровне атрибутов (в дополнение к
+// встроенному whitelist DOMPurify). Настраиваем один раз.
+// ============================================================
+if (window.DOMPurify) {
+    DOMPurify.addHook('uponSanitizeAttribute', function (node, data, config) {
+        const attr = (data.attrName || '').toLowerCase();
+        // Блокируем опасную URL-схему в любом URL-атрибуте
+        if (attr === 'href' || attr === 'src' || attr === 'xlink:href' ||
+            attr === 'action' || attr === 'formaction' || attr === 'cite' ||
+            attr === 'poster' || attr === 'background') {
+            const val = String(data.attrValue || '').trim();
+            const badScheme = /^\s*(javascript|vbscript|data|filesystem|about):/i;
+            if (badScheme.test(val)) {
+                data.keepAttr = false;
+                return;
+            }
+        }
+        // Страховка: удаляем любые on* обработчики событий
+        if (attr.startsWith('on')) {
+            data.keepAttr = false;
+        }
+    });
+}
+
 function scrollToBottom() {
     const chat = document.getElementById("chat");
     if (chat) {
@@ -25,7 +124,7 @@ function appendMessage(type, content) {
     if (type === 'user') {
         msgDiv.textContent = content;
     } else {
-        msgDiv.innerHTML = content;
+        msgDiv.innerHTML = sanitizeHtml(content);
     }
     
     chat.appendChild(msgDiv);
@@ -664,13 +763,16 @@ async function sendMessage() {
                     const data = JSON.parse(trimmed);
                     
                     if (data.type === "metadata") {
-                        if (data.sources) {
-                            sHtml = data.sources.map(s => 
-                                '🔗 <a href="' + s.url + '" target="_blank" style="color:#89b4fa; font-size:0.85em; text-decoration:none; font-weight:bold;">' + s.title + '</a>'
-                            ).join('<br>');
+                        if (data.sources && Array.isArray(data.sources)) {
+                            sHtml = data.sources
+                                .filter(s => s && s.url && isSafeUrl(s.url))
+                                .map(s =>
+                                    '🔗 <a href="' + escapeHtml(s.url) + '" target="_blank" rel="noopener noreferrer" style="color:#89b4fa; font-size:0.85em; text-decoration:none; font-weight:bold;">' + escapeHtml(s.title || s.url) + '</a>'
+                                ).join('<br>');
                         }
                         if (data.image) {
-                            sHtmlImg = '<div style="margin-top:15px; border-top: 1px solid #e2e2e2; padding-top:10px;"><img src="/images/' + data.image + '" style="max-width:100%; border-radius:12px; border: 1px solid #e2e2e2;"></div>';
+                            const imgName = escapeHtml(String(data.image).replace(/^[\\/]+/, ''));
+                            sHtmlImg = `<div style="margin-top:15px; border-top: 1px solid #e2e2e2; padding-top:10px;"><img src="/images/${imgName}" alt="" style="max-width:100%; border-radius:12px; border: 1px solid #e2e2e2;"></div>`;
                         }
                     } 
                     else if (data.type === "chart_error") {
@@ -680,9 +782,8 @@ async function sendMessage() {
                             firstChunkReceived = true;
                         }
                         if (currentBotMsgDiv) {
-                            const errorHtml = `<div style="padding: 10px; background: #fff3f3; border: 1px solid #e0b4b4; border-radius: 8px; margin: 10px 0; color: #c0392b;">
-                                ⚠️ ${data.message || 'Ошибка визуализации'}</div>`;
-                            currentBotMsgDiv.insertAdjacentHTML('beforeend', errorHtml);
+                            const errorHtml = `<div style="padding: 10px; background: #fff3f3; border: 1px solid #e0b4b4; border-radius: 8px; margin: 10px 0; color: #c0392b;">⚠️ ${escapeHtml(data.message) || 'Ошибка визуализации'}</div>`;
+                            safeInsertHtml(currentBotMsgDiv, errorHtml);
                             scrollToBottom();
                         }
                     }
@@ -763,14 +864,14 @@ async function sendMessage() {
                             display = display.replace(/\[CHART_JSON\][\s\S]*?\[\/CHART_JSON\]/g, '📈 *Визуализация готова*');
                             display = display.replace(/\[CHART_JSON\][\s\S]*$/g, '📈 *Генерация аналитики...*');
                             
-                            let parsedHtml = marked.parse(display);
+                            let parsedHtml = safeMarkdownToHtml(display);
                             
                             if (!parsedHtml.includes('<table')) {
                                 parsedHtml = parsedHtml.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/gi, '$1');
                                 parsedHtml = parsedHtml.replace(/<code>([\s\S]*?)<\/code>/gi, '$1');
                             }
 
-                            currentBotMsgDiv.innerHTML = "<b>База знаний ФНС:</b> 📌 <br>" + parsedHtml;
+                            currentBotMsgDiv.innerHTML = sanitizeHtml("<b>База знаний ФНС:</b> 📌 <br>" + parsedHtml);
                             scrollToBottom();
                         }
                     }
@@ -793,7 +894,7 @@ async function sendMessage() {
             afterContent += '<div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #e2e2e2; font-size: 11px; color: #ffffff; text-align: right;">🛡️ <em>Ответ подготовлен ИИ-консультантом ФНС</em></div>';
 
             if (afterContent) {
-                currentBotMsgDiv.insertAdjacentHTML('beforeend', afterContent);
+                safeInsertHtml(currentBotMsgDiv, afterContent);
             }
             
             persistCurrentChat();
@@ -1079,10 +1180,10 @@ function loadChat(chatId) {
         if (msg.type === 'user') {
             msgDiv.textContent = msg.content;
         } else if (msg.type === 'bot') {
-            msgDiv.innerHTML = msg.content;
+            msgDiv.innerHTML = sanitizeHtml(msg.content);
             lastBotDiv = msgDiv;
         } else {
-            msgDiv.innerHTML = msg.content;
+            msgDiv.innerHTML = sanitizeHtml(msg.content);
         }
         chat.appendChild(msgDiv);
     });
@@ -1127,13 +1228,14 @@ function updateHistoryUI() {
     
     container.innerHTML = history.map(chat => {
         const isActive = currentChatId === chat.id;
-        const title = chat.firstUserQuery || chat.title;
-        const truncated = title.length > 40 ? title.substring(0, 40) + '...' : title;
+        const title = String(chat.firstUserQuery || chat.title || '');
+        const safeId = escapeHtml(String(chat.id));
+        const trimmed = escapeHtml(title.length > 40 ? title.substring(0, 40) + '...' : title);
         
         return `
-            <div class="chat-item ${isActive ? 'active' : ''}" onclick="loadChat('${chat.id}')">
-                <span>${truncated}</span>
-                <span class="chat-del" onclick="deleteChat('${chat.id}', event)">×</span>
+            <div class="chat-item ${isActive ? 'active' : ''}" onclick="loadChat('${safeId}')">
+                <span>${trimmed}</span>
+                <span class="chat-del" onclick="deleteChat('${safeId}', event)">×</span>
             </div>
         `;
     }).join('');
