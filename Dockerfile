@@ -33,9 +33,9 @@ RUN pip install --no-cache-dir \
 
 # 4. 🔥 КРИТИЧНО: Предзагрузка словарей NLTK
 # Сначала копируем только скрипт настройки
-COPY setup_nltk.py .
+COPY scripts/setup_nltk.py scripts/setup_nltk.py
 # Запускаем его нормально
-RUN python setup_nltk.py
+RUN python scripts/setup_nltk.py
 
 # 5. Копируем требования (если есть доп. либы)
 COPY requirements.txt .

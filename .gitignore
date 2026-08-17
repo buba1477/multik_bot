@@ -185,3 +185,25 @@ qdrant_storage/
 *.mmap
 *.dat
 *.wal
+# === GENERATED RAG INGESTION ARTIFACTS ===
+raw/
+raw_html/
+markdown/
+
+# === PROJECT DOCUMENT REGISTRY ===
+!documents.json
+
+# === TESTS ===
+!tests/test_*.py
+!tests/fixtures/
+!tests/fixtures/publication/
+!tests/fixtures/publication/*.json
+!tests/fixtures/pravo/
+!tests/fixtures/pravo/*.html
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

@@ -54,7 +54,7 @@ services:
       - "host.docker.internal:host-gateway" 
     ports:
       - "8000:8000" # Открыт для Tailscale настежь
-    command: uvicorn main_api:app --host 0.0.0.0 --port 8000 
+    command: uvicorn app.rag.main_api:app --host 0.0.0.0 --port 8000 
     env_file: [.env]
     volumes:
       - ./:/app

@@ -45,4 +45,4 @@ RUN mkdir -p /app/images_cache /app/debug /app/hf_cache
 COPY . .
 
 # 8. Запуск FastAPI сервера (строго без бота)
-CMD ["uvicorn", "main_api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.rag.main_api:app", "--host", "0.0.0.0", "--port", "8000"]
