@@ -2,7 +2,7 @@
 
 Документ описывает фактическое состояние pipeline на момент последней проверки.
 
-Дата: 17.08.2026
+Дата: 19.08.2026
 
 ---
 
@@ -12,30 +12,32 @@
 documents.json
     │
     ▼
-scripts/download_documents.py
+scripts/download_documents.py   ←── app/pdf_ocr.py (классификация PDF)
+    │                                     │
+    ├── app/publication_api.py            ├── Сканированные PDF
+    │       │                             │      OCR → Markdown
+    │       ▼                             │
+    │   publication.pravo.gov.ru          └── Текстовые PDF
+    │       │                                    │
+    │       ├── Документ найден (eoNumber)        ▼
+    │       │       ├── get_document(eo)   scripts/run_pipeline.py
+    │       │       └── download_pdf(eo, dest)     │
+    │       │         → raw/<id>.pdf              ├── Шаг 2: HTML → Markdown
+    │       │                                      │     (html_to_markdown.py)
+    │       └── НЕ найден (DocumentNotFoundError)  │
+    │               │                             ├── Шаг 3 (опционально):
+    │               ▼                             │     OCR fallback для
+    │           app/pravo_resolver.py              │     сканированных PDF
+    │               │                             │   (pdf_ocr.py)
+    │               ▼                             │
+    │           pravo.gov.ru/proxy/ips/            ├── Шаг 4: Markdown → структура
+    │               │                             │   (markdown_structure_parser.py)
+    │               ├── resolve_document → nd      │
+    │               ├── find_latest_rdk → rdk      └── Шаг 5: Структура → чанки
+    │               └── print_url → HTML →              (legal_chunker.py)
+    │                   Playwright + bundled Chromium → raw/<id>.pdf
     │
-    ├── app/publication_api.py
-    │       │
-    │       ▼
-    │   publication.pravo.gov.ru (официальный JSON API)
-    │       │
-    │       ├── Документ найден (eoNumber)
-    │       │       ├── get_document(eo) → детали
-    │       │       └── download_pdf(eo, dest) → raw/<id>.pdf
-    │       │
-    │       └── НЕ найден (DocumentNotFoundError)
-    │               │
-    │               ▼
-    │           app/pravo_resolver.py
-    │               │
-    │               ▼
-    │           pravo.gov.ru/proxy/ips/ (legacy HTML)
-    │               │
-    │               ├── resolve_document → nd
-    │               ├── find_latest_rdk → rdk
-    │               └── print_url → HTML → soffice → raw/<id>.pdf
-    │
-    └── app/resolved_documents.json (кэш метода, ревизии, состояния)
+    └── app/resolved_documents.json (кэш)
 ```
 
 ---
@@ -89,6 +91,60 @@ scripts/download_documents.py
 - **Вход**: PDF-байты.
 - **Выход**: `raw/<id>.pdf`.
 - **Основной/резервный**: хранилище артефактов.
+### `app/ingestion/pdf_ocr.py`
+
+- **Зачем**: определяет, является ли PDF сканированным (без текстового слоя), и запускает OCR через ocrmypdf + Tesseract для извлечения текста.
+- **Кто вызывает**: `scripts/run_pipeline.py` (step `--ocr`), `app/ingestion/html_to_markdown.py` (batch_convert), а также напрямую.
+- **Вход**: путь к PDF-файлу (`raw/<id>.pdf`).
+- **Выход**: извлечённый текст (str) или классификация (сканированный / текстовый).
+- **Зависимости**: `tesseract-ocr` (системный), `ocrmypdf` (pip), `pypdf`.
+- **Переменные окружения**: `TESSDATA_PREFIX` — если нестандартный путь к tessdata.
+- **Основной/резервный**: OCR fallback — основной для сканированных PDF.
+- **Ключевые функции**:
+  - `is_scanned_pdf(pdf_path)` → `bool` — проверка, есть ли текстовый слой.
+  - `ocr_pdf(pdf_path)` → `str` — выполнить OCR и вернуть текст.
+  - `classify_pdf_directory(pdf_dir)` → `dict` — статистика по всем PDF в директории.
+
+### `app/ingestion/html_to_markdown.py`
+
+- **Зачем**: конвертирует очищенный HTML в Markdown через Pandoc, а также сохраняет OCR-текст как Markdown.
+- **Кто вызывает**: `scripts/run_pipeline.py` (step `--convert`), напрямую через `convert()` или `batch_convert()`.
+- **Вход**: HTML-файлы из `raw_html/` или текст из OCR (через `convert_from_text()`).
+- **Выход**: `.md` файлы в `markdown/`.
+- **Основной/резервный**: основной конвертер для HTML; для OCR — единственный путь.
+- **Ключевые функции**:
+  - `convert(fname)` — конвертировать один HTML в Markdown.
+  - `convert_from_text(text, doc_id)` — сохранить текст как Markdown (OCR fallback).
+  - `batch_convert(in_dir, out_dir, raw_dir)` — пакетная конвертация + OCR fallback.
+
+### `app/ingestion/markdown_structure_parser.py`
+
+- **Зачем**: парсит Markdown-документы в структурные JSON (с заголовками, статьями, главами, параграфами).
+- **Кто вызывает**: `scripts/run_pipeline.py` (step `--parse`).
+- **Вход**: `.md` файлы из `markdown/`.
+- **Выход**: `.json` файлы в `structure/` (линейные ноды, дерево, records).
+- **Основной/резервный**: основной.
+
+### `app/chunking/legal_chunker.py`
+
+- **Зачем**: нарезает structure JSON в поисковые чанки (chunks) для RAG-системы.
+- **Кто вызывает**: напрямую через `batch_convert()` или `process_markdown_file()`.
+- **Вход**: `.json` файлы из `structure/`.
+- **Выход**: `.jsonl` файлы в `chunks/` (по одному JSON-объекту на строку, поля: id, title, text, local_img, url).
+- **Основной/резервный**: основной чанкер.
+
+### `scripts/run_pipeline.py`
+
+- **Зачем**: оркестратор пайплайна — запускает загрузку, конвертацию, OCR fallback, парсинг и валидацию.
+- **Кто вызывает**: пользователь (`python scripts/run_pipeline.py --all` или `--ocr --convert --parse`).
+- **Вход**: реестр `documents.json`, PDF в `raw/`, HTML в `raw_html/`.
+- **Выход**: Markdown в `markdown/`, structure в `structure/`, чанки в `chunks/`.
+- **Флаги**:
+  - `--all` — полный пайплайн.
+  - `--download` — только скачивание.
+  - `--ocr` — классификация PDF + OCR fallback.
+  - `--convert` — HTML → Markdown.
+  - `--parse` — Markdown → структура + чанки.
 ---
 
 ## 3. Почему `publication_api.py` не является отдельным загрузчиком
@@ -188,7 +244,7 @@ _revision_unchanged(entry, current_rev, out_pdf)
     ▼
 _download_to_tmp(doc, entry)
     │   publication: pub.download_pdf(eo, tmp.pdf)
-    │   legacy:      get_bytes → convert_html_to_pdf(tmp.html → tmp.pdf)
+    │   legacy:      get_bytes → Playwright HTML→PDF (tmp.html → tmp.pdf)
     │   validate_pdf(tmp.pdf) → pages
     │
     ▼
@@ -347,15 +403,22 @@ multik_bot/
 ├── app/
 │   ├── publication_api.py            ← основной путь (официальный API)
 │   ├── pravo_resolver.py             ← резервный путь (legacy /proxy/ips/)
+│   ├── ingestion/
+│   │   └── html_to_pdf.py            ← Playwright HTML→PDF конвертация
 │   └── resolved_documents.json       ← кэш метода, ревизии, состояния
-├── raw/                              ← скачанные PDF
-│   ├── 79-FZ.pdf
-│   ├── 58-FZ.pdf
-│   └── ukaz-112-2005.pdf
-└── tests/
-    ├── test_downloader.py
-    ├── test_publication_api.py
-    └── test_pravo_resolver.py
+├── raw/                              ← скачанные PDF (28 шт.)
+├── raw_html/                         ← конвертированные HTML (17 шт.)
+├── markdown/                         ← Markdown после конвертации (29 .md)
+├── structure/                        ← структура JSON после парсинга (29 .json)
+├── chunks/                           ← чанки JSONL после нарезки (29 .jsonl)
+├── .tmp_convert/                     ← временные файлы html_to_markdown
+├── tests/
+│   ├── test_downloader.py
+│   ├── test_publication_api.py
+│   ├── test_pravo_resolver.py
+│   ├── test_legal_chunker.py
+│   ├── test_markdown_structure_parser.py
+│   └── test_pdf_ocr.py              ← тесты OCR fallback
 ```
 
 ---

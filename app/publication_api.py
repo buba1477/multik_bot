@@ -44,6 +44,7 @@ from app.search_fragments import build_search_fragments
 BASE_URL = "http://publication.pravo.gov.ru"
 API_URL = BASE_URL + "/api"
 PDF_URL = BASE_URL + "/file/pdf"
+HTML_VIEW_URL = BASE_URL + "/Document/View"
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
@@ -305,6 +306,26 @@ def resolve_exact(record: dict) -> dict:
 # ============================================================================
 # Скачивание PDF
 # ============================================================================
+def html_url(eo_number: str) -> str:
+    """URL HTML-представления документа на портале."""
+    return f"{HTML_VIEW_URL}/{urllib.parse.quote(eo_number)}"
+
+
+def download_html(eo_number: str, dest: Path | str) -> int:
+    """Скачать официальный HTML (та же редакция, что и PDF) по eoNumber. Возвращает размер."""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    data = _get_bytes(html_url(eo_number))
+    # Портал отдаёт HTML; проверяем базово, что это HTML, а не ошибка
+    text = data.decode('utf-8', 'replace')
+    if '<!DOCTYPE html>' not in text and '<html' not in text:
+        raise PublicAPIError(f"Ответ по {eo_number} не является HTML")
+    dest.write_bytes(data)
+    if not dest.stat().st_size:
+        raise PublicAPIError(f"Скачан пустой HTML для {eo_number}")
+    return len(data)
+
+
 def download_pdf(eo_number: str, dest: Path | str) -> int:
     """Скачать официальный PDF по eoNumber и сохранить в dest. Возвращает размер."""
     dest = Path(dest)

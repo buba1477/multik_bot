@@ -64,13 +64,17 @@ def _setup_legacy_download(monkeypatch, rev=LEG_REV, pdf_bytes=b"%PDF-1.4\n%leg"
                                      "О государственной гражданской службы Российской Федерации")
                         .encode("windows-1251"))
     if valid:
-        monkeypatch.setattr(dd, "convert_html_to_pdf",
-                            lambda html, out: out.write_bytes(pdf_bytes) or None)
+        def _mock_convert(html_path, pdf_path):
+            pdf_path.write_bytes(pdf_bytes)
+            return {"title": "mock", "pages": pages, "pdf_size": len(pdf_bytes), "html_len": 1000}
+        monkeypatch.setattr(dd, "convert_html_to_pdf", _mock_convert)
         monkeypatch.setattr(dd, "validate_pdf", lambda p: pages)
     else:
         # невалидный новый PDF: конвертация кладёт мусор, validate_pdf -> ошибка
-        monkeypatch.setattr(dd, "convert_html_to_pdf",
-                            lambda html, out: out.write_bytes(b"not a pdf") or None)
+        def _mock_convert_invalid(html_path, pdf_path):
+            pdf_path.write_bytes(b"not a pdf")
+            return {"title": "mock", "pages": pages, "pdf_size": 9, "html_len": 1000}
+        monkeypatch.setattr(dd, "convert_html_to_pdf", _mock_convert_invalid)
         def _bad_validate(_path):
             raise dd.ResolutionError("невалидный PDF")
         monkeypatch.setattr(dd, "validate_pdf", _bad_validate)
@@ -179,6 +183,7 @@ class TestFirstDownload:
     def test_legacy_writes_pdf(self, tmp_path, monkeypatch):
         _setup_legacy_download(monkeypatch)
         monkeypatch.setattr(dd, "RAW_DIR", tmp_path)
+        monkeypatch.setattr(dd, "RAW_HTML_DIR", tmp_path)
         cpath = tmp_path / "c.json"
         dd.download_one(REC_LEG, cache_path=cpath)
         out = tmp_path / "79-FZ.pdf"
@@ -187,6 +192,11 @@ class TestFirstDownload:
         assert entry["method"] == "legacy"
         assert entry["revision"]["id"] == 98
         assert entry["downloaded_at"]
+        assert entry["pdf_path"] == str(out)
+        assert entry["pdf_size"] == len(b"%PDF-1.4\n%leg")
+        assert entry["pdf_pages"] == 5
+        assert entry.get("pdf_source") == "playwright"
+        assert entry.get("html_path")
 
 
 # ============================================================================
@@ -196,6 +206,7 @@ class TestIncremental:
     def test_unchanged_does_not_download(self, tmp_path, monkeypatch):
         _setup_legacy_download(monkeypatch)
         monkeypatch.setattr(dd, "RAW_DIR", tmp_path)
+        monkeypatch.setattr(dd, "RAW_HTML_DIR", tmp_path)
         cpath = tmp_path / "c.json"
         dd.download_one(REC_LEG, cache_path=cpath)
         first_stat = (tmp_path / "79-FZ.pdf").stat().st_mtime_ns
@@ -208,6 +219,7 @@ class TestIncremental:
     def test_revision_changed_downloads_and_replaces(self, tmp_path, monkeypatch):
         _setup_legacy_download(monkeypatch, rev=LEG_REV, pdf_bytes=b"%PDF-1.4\nOLD")
         monkeypatch.setattr(dd, "RAW_DIR", tmp_path)
+        monkeypatch.setattr(dd, "RAW_HTML_DIR", tmp_path)
         cpath = tmp_path / "c.json"
         dd.download_one(REC_LEG, cache_path=cpath)
         assert (tmp_path / "79-FZ.pdf").read_bytes() == b"%PDF-1.4\nOLD"
@@ -216,7 +228,10 @@ class TestIncremental:
         monkeypatch.setattr(legacy, "find_latest_revision", lambda nd: LEG_REV_NEW)
         monkeypatch.setattr(legacy, "find_latest_rdk", lambda nd: (LEG_REV_NEW["rdk"], LEG_REV_NEW["label"]))
         monkeypatch.setattr(dd, "convert_html_to_pdf",
-                            lambda html, out: out.write_bytes(b"%PDF-1.4\nNEW") or None)
+                            lambda html, out: (
+                                out.write_bytes(b"%PDF-1.4\nNEW"),
+                                {"title": "m", "pages": 5, "pdf_size": 14, "html_len": 100}
+                            )[1])
         dd.download_one(REC_LEG, cache_path=cpath)
         assert (tmp_path / "79-FZ.pdf").read_bytes() == b"%PDF-1.4\nNEW"
         assert not (tmp_path / "79-FZ.new.pdf").exists()
@@ -226,6 +241,7 @@ class TestIncremental:
     def test_invalid_new_pdf_keeps_old(self, tmp_path, monkeypatch):
         _setup_legacy_download(monkeypatch, rev=LEG_REV, pdf_bytes=b"%PDF-1.4\nOLD")
         monkeypatch.setattr(dd, "RAW_DIR", tmp_path)
+        monkeypatch.setattr(dd, "RAW_HTML_DIR", tmp_path)
         cpath = tmp_path / "c.json"
         dd.download_one(REC_LEG, cache_path=cpath)   # рабочий первый заход
         old_bytes = (tmp_path / "79-FZ.pdf").read_bytes()
@@ -243,6 +259,7 @@ class TestIncremental:
     def test_network_error_keeps_old(self, tmp_path, monkeypatch):
         _setup_legacy_download(monkeypatch, rev=LEG_REV, pdf_bytes=b"%PDF-1.4\nOLD")
         monkeypatch.setattr(dd, "RAW_DIR", tmp_path)
+        monkeypatch.setattr(dd, "RAW_HTML_DIR", tmp_path)
         cpath = tmp_path / "c.json"
         dd.download_one(REC_LEG, cache_path=cpath)
         old_bytes = (tmp_path / "79-FZ.pdf").read_bytes()
@@ -259,6 +276,7 @@ class TestIncremental:
     def test_cache_corruption_redownloads(self, tmp_path, monkeypatch):
         _setup_legacy_download(monkeypatch, rev=LEG_REV, pdf_bytes=b"%PDF-1.4\nNEW")
         monkeypatch.setattr(dd, "RAW_DIR", tmp_path)
+        monkeypatch.setattr(dd, "RAW_HTML_DIR", tmp_path)
         cpath = tmp_path / "c.json"
         cpath.write_text("{broken json", encoding="utf-8")
         dd.download_one(REC_LEG, cache_path=cpath)   # воспринимается как первый запуск
@@ -270,13 +288,17 @@ class TestIncremental:
     def test_missing_local_pdf_redownloads(self, tmp_path, monkeypatch):
         _setup_legacy_download(monkeypatch, rev=LEG_REV, pdf_bytes=b"%PDF-1.4\nNEW")
         monkeypatch.setattr(dd, "RAW_DIR", tmp_path)
+        monkeypatch.setattr(dd, "RAW_HTML_DIR", tmp_path)
         cpath = tmp_path / "c.json"
         dd.download_one(REC_LEG, cache_path=cpath)
         (tmp_path / "79-FZ.pdf").unlink()          # PDF пропал, хотя кэш есть
 
         monkeypatch.setattr(legacy, "find_latest_revision", lambda nd: LEG_REV)
         monkeypatch.setattr(dd, "convert_html_to_pdf",
-                            lambda html, out: out.write_bytes(b"%PDF-1.4\nAGAIN") or None)
+                            lambda html, out: (
+                                out.write_bytes(b"%PDF-1.4\nAGAIN"),
+                                {"title": "m", "pages": 5, "pdf_size": 16, "html_len": 100}
+                            )[1])
         dd.download_one(REC_LEG, cache_path=cpath)
         assert (tmp_path / "79-FZ.pdf").read_bytes() == b"%PDF-1.4\nAGAIN"
         assert _read_entry(cpath, "79-FZ")["downloaded_at"]
@@ -395,6 +417,7 @@ class TestDataIntegrity:
         """Content-Length mismatch не удаляет старый PDF и не обновляет кэш."""
         _setup_legacy_download(monkeypatch, rev=LEG_REV, pdf_bytes=b"%PDF-1.4\nOLD")
         monkeypatch.setattr(dd, "RAW_DIR", tmp_path)
+        monkeypatch.setattr(dd, "RAW_HTML_DIR", tmp_path)
         cpath = tmp_path / "c.json"
         dd.download_one(REC_LEG, cache_path=cpath)
         old_bytes = (tmp_path / "79-FZ.pdf").read_bytes()
@@ -415,6 +438,7 @@ class TestDataIntegrity:
         """Обрыв соединения (ConnectionResetError) не удаляет старый PDF."""
         _setup_legacy_download(monkeypatch, rev=LEG_REV, pdf_bytes=b"%PDF-1.4\nOLD")
         monkeypatch.setattr(dd, "RAW_DIR", tmp_path)
+        monkeypatch.setattr(dd, "RAW_HTML_DIR", tmp_path)
         cpath = tmp_path / "c.json"
         dd.download_one(REC_LEG, cache_path=cpath)
         old_bytes = (tmp_path / "79-FZ.pdf").read_bytes()
@@ -455,7 +479,10 @@ class TestDataIntegrity:
         monkeypatch.setattr(legacy, "find_latest_rdk",
                             lambda nd: (LEG_REV_NEW["rdk"], LEG_REV_NEW["label"]))
         monkeypatch.setattr(dd, "convert_html_to_pdf",
-                            lambda html, out: out.write_bytes(b"%PDF-1.4\nNEW") or None)
+                            lambda html, out: (
+                                out.write_bytes(b"%PDF-1.4\nNEW"),
+                                {"title": "m", "pages": 3, "pdf_size": 14, "html_len": 100}
+                            )[1])
         monkeypatch.setattr(dd, "validate_pdf", lambda p: 3)
         dd.download_one(REC_LEG, cache_path=cpath)
         new_entry = _read_entry(cpath, "79-FZ")
@@ -477,7 +504,10 @@ class TestDataIntegrity:
 
         # та же редакция, но SHA-256 не совпадает → перезагрузка
         monkeypatch.setattr(dd, "convert_html_to_pdf",
-                            lambda html, out: out.write_bytes(b"%PDF-1.4\nRESTORED") or None)
+                            lambda html, out: (
+                                out.write_bytes(b"%PDF-1.4\nRESTORED"),
+                                {"title": "m", "pages": 5, "pdf_size": 19, "html_len": 100}
+                            )[1])
         dd.download_one(REC_LEG, cache_path=cpath)
         assert (tmp_path / "79-FZ.pdf").read_bytes() == b"%PDF-1.4\nRESTORED"
         assert not (tmp_path / "79-FZ.new.pdf").exists()
@@ -496,11 +526,119 @@ class TestDataIntegrity:
         pdf.write_bytes(pdf.read_bytes()[:5])
 
         monkeypatch.setattr(dd, "convert_html_to_pdf",
-                            lambda html, out: out.write_bytes(b"%PDF-1.4\nRECOVERED") or None)
+                            lambda html, out: (
+                                out.write_bytes(b"%PDF-1.4\nRECOVERED"),
+                                {"title": "m", "pages": 5, "pdf_size": 20, "html_len": 100}
+                            )[1])
         dd.download_one(REC_LEG, cache_path=cpath)
         assert (tmp_path / "79-FZ.pdf").read_bytes() == b"%PDF-1.4\nRECOVERED"
         entry = _read_entry(cpath, "79-FZ")
         assert entry["pdf_sha256"] == hashlib.sha256(b"%PDF-1.4\nRECOVERED").hexdigest()
+
+
+
+class TestDocumentLostForce:
+    """_document_lost_force(): обнаружение полной утраты силы в legacy-HTML."""
+
+    def test_active_667r_passes(self):
+        """Синтетическая действующая редакция 667-р → False (не утратила силу)."""
+        html = (
+            "<html><body>"
+            "Распоряжение Правительства Российской Федерации "
+            "от 26.05.2005 г. № 667-р "
+            "Изменения на 22.04.2022 г. См. последующие изменения"
+            "</body></html>"
+        )
+        assert dd._document_lost_force(html) is False
+
+    def test_lost_force_in_header_detected(self):
+        """'Утратило силу - Постановление...' в заголовке → True."""
+        html = (
+            "<html><body>"
+            "Распоряжение Правительства Российской Федерации "
+            "от 26.05.2005 г. № 667-р г. Москва "
+            "Утратило силу - Постановление Правительства Российской Федерации "
+            "от 28.11.2024 № 1664"
+            "</body></html>"
+        )
+        assert dd._document_lost_force(html) is True
+
+    def test_lost_force_masculine_detected(self):
+        """'Утратил силу - Указ...' в заголовке → True."""
+        html = (
+            "<html><body>"
+            "УКАЗ ПРЕЗИДЕНТА РОССИЙСКОЙ ФЕДЕРАЦИИ "
+            "Утратил силу - Указ Президента Российской Федерации "
+            "от 10.10.2024 № 871"
+            "</body></html>"
+        )
+        assert dd._document_lost_force(html) is True
+
+    def test_not_acts_detected(self):
+        """'Не действует' в заголовке → True."""
+        html = (
+            "<html><body>"
+            "Распоряжение Правительства Российской Федерации "
+            "от 26.05.2005 г. № 667-р г. Москва "
+            "Не действует"
+            "</body></html>"
+        )
+        assert dd._document_lost_force(html) is True
+
+    def test_partial_article_lost_not_blocked(self):
+        """'Статья утратила силу' → False (частичная утрата)."""
+        html = (
+            "<html><body>"
+            "Федеральный закон от 27.07.2004 № 79-ФЗ "
+            "О государственной гражданской службе Российской Федерации"
+            "<p>Статья 1. Предмет регулирования</p>"
+            "<p>Статья 2 утратила силу - Федеральный закон от 01.01.2020 № 1-ФЗ</p>"
+            "<p>Статья 3. Основные понятия</p>"
+            "</body></html>"
+        )
+        assert dd._document_lost_force(html) is False
+
+    def test_partial_paragraph_lost_not_blocked(self):
+        """'Пункт утратил силу' → False (частичная утрата)."""
+        html = (
+            "<html><body>"
+            "Постановление Правительства Российской Федерации "
+            "от 01.01.2020 № 1 "
+            "<p>1. Утвердить...</p>"
+            "<p>Пункт 2 утратил силу - Постановление от 01.01.2021 № 2</p>"
+            "<p>3. Контроль...</p>"
+            "</body></html>"
+        )
+        assert dd._document_lost_force(html) is False
+
+    def test_partial_chapter_lost_not_blocked(self):
+        """'Глава утратила силу' → False (частичная утрата)."""
+        html = (
+            "<html><body>"
+            "Федеральный закон от 27.07.2004 № 79-ФЗ "
+            "<p>Глава 1 утратила силу - Федеральный закон от 01.01.2020 № 1-ФЗ</p>"
+            "<p>Глава 2. Должности гражданской службы</p>"
+            "</body></html>"
+        )
+        assert dd._document_lost_force(html) is False
+
+    def test_mixed_partial_and_active_not_blocked(self):
+        """Смесь частичных утрат и активных норм → False."""
+        html = (
+            "<html><body>"
+            "Федеральный закон от 27.07.2004 № 79-ФЗ "
+            "<p>Статья 1. Предмет</p>"
+            "<p>Статья 2 утратила силу</p>"
+            "<p>Пункт 3 утратил силу</p>"
+            "<p>Часть 4 утратила силу</p>"
+            "<p>Раздел II. Особенная часть</p>"
+            "</body></html>"
+        )
+        assert dd._document_lost_force(html) is False
+
+    def test_empty_html_returns_false(self):
+        """Пустой/нерелевантный HTML → False."""
+        assert dd._document_lost_force("<html><body>нет данных</body></html>") is False
 
 
 class TestRegistry:

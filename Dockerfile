@@ -1,9 +1,24 @@
 FROM python:3.11-slim
 
-# 1. Системные зависимости
+# 1. Системные зависимости (включая зависимости Chromium для Playwright)
 RUN apt-get update && apt-get install -y \
     curl \
     build-essential \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0t64 \
+    libatk-bridge2.0-0t64 \
+    libcups2t64 \
+    libdrm2 \
+    libdbus-1-3 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2t64 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -40,6 +55,9 @@ RUN python scripts/setup_nltk.py
 # 5. Копируем требования (если есть доп. либы)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt || true
+
+# 6. 📄 Установка bundled Chromium для Playwright HTML→PDF
+RUN python -m playwright install chromium 2>&1 || echo "Playwright browsers install skipped"
 
 # 6. Копируем код
 # Благодаря твоему новому .dockerignore сюда попадет только код!

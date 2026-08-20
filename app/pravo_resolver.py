@@ -377,3 +377,171 @@ def cached_resolve(
     cache[doc_id] = entry
     save_cache(cache, cache_path)
     return nd, entry
+
+
+
+# ============================================================================
+# Novye funkcii: poisk nd po rekvizitam + poluchenie IPS-teksta
+# Ispolzuyutsya dlya publication-dokumentov, u kotoryh net sohranyonnogo nd.
+# ============================================================================
+
+
+def _search_ips_by_number(number, date=None, title=None):
+    try:
+        candidates = search_documents(number, title)
+    except (PravoError, OSError):
+        return []
+    results = []
+    for c in candidates:
+        results.append({
+            "nd": c["nd"],
+            "title": c["title"],
+            "number_in_text": number,
+            "date_in_text": c.get("date"),
+            "status": c.get("status", "unknown"),
+        })
+    return results
+
+
+def _verify_nd_against_record(nd, record, candidate_title=None):
+    title_text = candidate_title
+    if not title_text:
+        url = f"{BASE_URL}?docbody=&nd={nd}"
+        try:
+            html = get_html(url)
+        except (PravoError, OSError):
+            return None
+        opt1 = re.findall(r"<option[^>]*value='([^']*)'[^>]*>(.*?)</option>", html, re.S)
+        opt2 = re.findall('<option[^>]*value="([^"]*)"[^>]*>(.*?)</option>', html, re.S)
+        for v, lbl in opt1 + opt2:
+            clean = re.sub(r'<[^>]+>', '', lbl).strip()
+            if clean and clean != 'n':
+                title_text = clean
+                break
+    if not title_text:
+        return None
+    rn = record.get("number", "")
+    if rn and rn not in title_text:
+        return None
+    rd = record.get("date", "")
+    if rd:
+        parts = rd.split(".")
+        if len(parts) == 3:
+            sd = f"от {parts[0]}.{parts[1]}.{parts[2]}"
+            if sd not in title_text:
+                return None
+    rt = record.get("type", "").lower()
+    if rt:
+        tkw = rt.split()
+        if not any(kw.lower() in title_text.lower() for kw in tkw):
+            return None
+    return {"nd": nd, "title": title_text}
+
+
+def _parse_rdk_from_html(card_html):
+    rdk = None
+    label = None
+    opt1 = re.findall(r"<option[^>]*value='([^']*)'[^>]*>(.*?)</option>", card_html, re.S)
+    opt2 = re.findall('<option[^>]*value="([^"]*)"[^>]*>(.*?)</option>', card_html, re.S)
+    for val_str, lbl in opt1 + opt2:
+        parts = val_str.split(",")
+        if len(parts) == 2 and parts[0].isdigit():
+            o_rdk = int(parts[0])
+            clean_lbl = re.sub(r'<[^>]+>', '', lbl).strip()
+            if rdk is None or o_rdk > rdk:
+                rdk = o_rdk
+                label = clean_lbl
+    if rdk is None:
+        rdk = 1
+    return rdk, label
+
+
+def find_nd_by_record(record):
+    num = record.get("number", "")
+    date = record.get("date", "")
+    title = record.get("title", "")
+    if not num:
+        return None
+    candidates = _search_ips_by_number(num, date, title)
+    if not candidates:
+        return None
+    verified = {}
+    for c in candidates:
+        vi = _verify_nd_against_record(c["nd"], record, c.get("title"))
+        if vi:
+            verified[vi["nd"]] = vi
+    if len(verified) == 1:
+        return next(iter(verified.values()))
+    if len(verified) > 1:
+        return None
+    if title:
+        from app.search_fragments import build_search_fragments
+        for frag in build_search_fragments(title):
+            try:
+                cs = search_documents(num, frag)
+            except (DocumentNotFoundError, PravoError, OSError):
+                continue
+            for c in cs:
+                if c["nd"] in verified:
+                    continue
+                vi = _verify_nd_against_record(c["nd"], record, c.get("title"))
+                if vi:
+                    verified[vi["nd"]] = vi
+        if len(verified) == 1:
+            return next(iter(verified.values()))
+    return None
+
+
+def get_ips_print_html(nd):
+    result = {
+        "status": None, "size": 0, "text_length": 0,
+        "img_count": 0, "is_textual": False,
+        "rdk": None, "edition_label": None, "error": None,
+    }
+    try:
+        card_html = get_html(f"{BASE_URL}?docbody=&nd={nd}")
+    except (PravoError, OSError) as e:
+        result["error"] = f"card: {e}"
+        return None, result
+    rdk, label = _parse_rdk_from_html(card_html)
+    result["rdk"] = rdk
+    result["edition_label"] = label
+    try:
+        data = get_bytes(f"{BASE_URL}?docview&page=1&print=1&nd={nd}&rdk={rdk}&empire=")
+        html_text = data.decode("windows-1251", "replace")
+    except (PravoError, OSError) as e:
+        result["error"] = f"print: {e}"
+        return None, result
+    body = re.search(r'<body[^>]*>(.*?)</body>', html_text, re.S | re.I)
+    text = re.sub(r'<[^>]+>', '', body.group(1) if body else html_text).strip()
+    img = html_text.lower().count("<img")
+    # Текстовым считаем HTML с достаточным объёмом текста;
+    # небольшое количество изображений — диагностический признак, не причина отказа.
+    is_textual = len(text) > 2000 or (len(text) > 100 and img == 0)
+    result.update({
+        "status": 200, "size": len(data),
+        "text_length": len(text), "img_count": img,
+        "is_textual": is_textual,
+    })
+    return data, result
+
+
+def check_ips_html_is_textual(html_text, record):
+    body = re.search(r'<body[^>]*>(.*?)</body>', html_text, re.S | re.I)
+    text = re.sub(r'<[^>]+>', '', body.group(1) if body else html_text).strip()
+    if len(text) <= 100:
+        return False
+    # Если текста достаточно (>2000 символов), изображения не блокируют принятие
+    if len(text) > 2000:
+        pass  # textual regardless of images
+    elif html_text.lower().count("<img") > 0:
+        return False
+    num = record.get("number", "")
+    if num and num not in text:
+        return False
+    dt = record.get("type", "")
+    if dt:
+        tkw = dt.lower().split()
+        if not any(kw.lower() in text.lower() for kw in tkw):
+            return False
+    return True

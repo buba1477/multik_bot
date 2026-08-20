@@ -48,6 +48,13 @@ def classify_heading(text: str):
     return "unknown", None, t, 0.3
 
 
+def _is_roman_numeral(s: str) -> bool:
+    """Проверка, что строка — валидное римское число (I, II, III, IV, V, VI, VII, VIII, IX, X и т.д.)."""
+    if not s or len(s) > 4:
+        return False
+    return bool(re.match(r"^[IVXLCDM]+$", s))
+
+
 def classify_content(lines):
     stripped = lines[0].lstrip()
     if stripped.startswith(">"):
@@ -58,8 +65,20 @@ def classify_content(lines):
     m = re.match(r"^([а-яА-Яa-zA-Z])\)" + SPACE + r"*", stripped)
     if m:
         return "subparagraph", m.group(1), 0.8
+    # Римские цифры -> section (ДО letter-dot, чтобы I. II. III. не попадали в subparagraph)
+    m = re.match(r"^([IVXLCDM]+)\." + SPACE + r"+(.*)", stripped)
+    if m and _is_roman_numeral(m.group(1)):
+        return "section", m.group(1), 0.8
+    # Многоуровневые номера: 5.1.1 -> item; 5.1 -> subparagraph (ДО простого paragraph)
+    m = re.match(r"^(\d+\.\d+\.\d+)\." + SPACE + r"*", stripped)
+    if m:
+        return "item", m.group(1), 0.75
+    m = re.match(r"^(\d+\.\d+)\." + SPACE + r"*", stripped)
+    if m:
+        return "subparagraph", m.group(1), 0.75
+    # Буква с точкой -> subparagraph (с исключением ложных 'г.' -> 'г. Москва')
     m = re.match(r"^([а-яА-Яa-zA-Z])\." + SPACE + r"*", stripped)
-    if m and len(stripped) < 60:
+    if m and len(stripped) < 60 and m.group(1).lower() not in ("г",):
         return "subparagraph", m.group(1), 0.7
     m = re.match(r"^(\d+)\." + SPACE + r"+", stripped)
     if m and len(lines) == 1:
@@ -161,29 +180,91 @@ def _classify_block(block: dict) -> tuple:
         btype, num, title, conf = classify_heading(heading_text)
         return btype, num, title, conf
 
+    # Plain-text structural headings (Статья, Глава, Раздел, Приложение без #)
+    heading_check = classify_heading(first.lstrip())
+    if heading_check[3] >= 0.9:
+        return heading_check
+
     if all(is_table_line(ln) for ln in blines):
         return "table", None, None, 0.9
 
     if first.lstrip().startswith(">"):
         return "blockquote", None, None, 0.9
 
+    # Проверка на приложение (УТВЕРЖДЕНО / УТВЕРЖДЕНА / ...)
+    if is_appendix_marker(first):
+        return "appendix", None, first.strip(), 0.9
+
     stripped_first = first.lstrip()
     hyphen_item = re.match(r"^[-*]\s+(.*)", stripped_first)
     if hyphen_item:
         return "item", None, hyphen_item.group(1), 0.7
-
     btype, num, conf = classify_content(blines)
     if btype == "text":
-        # Fallback: экранированные markdown-маркеры (1\. → 1.)
+        # Fallback: экранированные markdown-маркеры (1\. → 1.; II\. → II.)
         unescaped = re.sub(r"\\\.", ".", stripped_first)
         if unescaped != stripped_first:
+            # Пробуем римские цифры после разэкранирования
+            m = re.match(r"^([IVXLCDM]+)\." + SPACE + r"+(.*)", unescaped)
+            if m and _is_roman_numeral(m.group(1)):
+                return "section", m.group(1), m.group(2).strip(" ."), 0.7
+            # Многоуровневые номера
+            m = re.match(r"^(\d+\.\d+\.\d+)\." + SPACE + r"*", unescaped)
+            if m:
+                return "item", m.group(1), None, 0.55
+            m = re.match(r"^(\d+\.\d+)\." + SPACE + r"*", unescaped)
+            if m:
+                return "subparagraph", m.group(1), None, 0.55
+            # Простой номер
             m = re.match(r"^(\d+)\." + SPACE + r"+", unescaped)
             if m:
                 return "paragraph", m.group(1), None, 0.55
+            # Буква с точкой (с исключением ложных "г.")
             m = re.match(r"^([а-яА-Яa-zA-Z])\." + SPACE + r"*", unescaped)
-            if m and len(stripped_first) < 60:
+            if m and len(stripped_first) < 60 and m.group(1).lower() not in ("г",):
                 return "subparagraph", m.group(1), None, 0.55
     return btype, num, None, conf
+
+
+# ============================================================================
+# 3a. НОРМАЛИЗАЦИЯ ТЕХНИЧЕСКОГО МУСОРА
+# ============================================================================
+
+def normalize_underscores(text: str) -> str:
+    """Сжимает длинные последовательности \\_\\_\\_... (3+ повторов) в компактный маркер '___'.
+
+    Также заменяет одиночные экранированные подчёркивания \\_ на _,
+    чтобы избежать засорения embedding-токенов лишними символами.
+    """
+    # Сначала заменяем длинные последовательности backslash-underscore
+    # r"\\_\\_\\_+" — 3 и более повторов \\_
+    text = re.sub(r"(?:\\_){3,}", " ___ ", text)
+    # Одиночные \\_ → _
+    text = re.sub(r"\\_", "_", text)
+    return text
+
+
+_APPENDIX_MARKERS = {
+    "УТВЕРЖДЕНО", "УТВЕРЖДЕНА", "УТВЕРЖДЕН", "УТВЕРЖДЕНЫ",
+}
+
+_APPENDIX_TITLE_MARKERS = {
+    "ПОЛОЖЕНИЕ", "ПРАВИЛА", "ПОРЯДОК", "ПЕРЕЧЕНЬ",
+    "ФОРМА", "АНКЕТА", "ПРИМЕРНАЯ ФОРМА",
+}
+
+
+def is_appendix_marker(text: str) -> bool:
+    """Проверяет, является ли блок текста маркером начала приложения.
+
+    Проверяет: УТВЕРЖДЕНО / УТВЕРЖДЕНА / УТВЕРЖДЕН / УТВЕРЖДЕНЫ
+    """
+    stripped = text.strip()
+    for marker in _APPENDIX_MARKERS:
+        if stripped.startswith(marker):
+            # Должно быть в начале строки (первые 20 символов)
+            return True
+    return False
 
 
 def _parse_table_rows(blines: list[str]) -> list[list[str]]:
@@ -295,7 +376,12 @@ def _build_context_node(node: dict, parent_ctx: dict) -> None:
     flat = dict(parent_ctx.get("context_flat", {}))
     ntype = node["type"]
     if ntype in CONTEXT_FLAT_FIELDS:
-        flat[ntype] = node["number"]
+        if node["number"] is not None:
+            flat[ntype] = node["number"]
+        elif ntype == "appendix":
+            # Приложение без номера — помечаем как "1" (неявный номер)
+            flat[ntype] = "1"
+        # иначе оставляем текущее значение (унаследованное от родителя)
     node["context_flat"] = flat
 
 
@@ -332,13 +418,18 @@ def build_records(tree_root: dict) -> list[dict]:
             for c in node["children"]:
                 _walk(c)
             return
+        text = node["content"]
+        text = normalize_underscores(text)
         records.append({
             "node_id": node["id"],
-            "text": node["content"],
+            "text": text,
+            "title": node.get("title", ""),
+            "source_lines": node.get("source_lines", {}),
             "structure": {
                 "type": ntype,
                 "number": node["number"],
                 "context_flat": node.get("context_flat", {}),
+                "context": node.get("context", {}),
             },
         })
         for c in node["children"]:
@@ -348,6 +439,41 @@ def build_records(tree_root: dict) -> list[dict]:
     return records
 
 
+def records_to_jsonl(records: list[dict], output_path: str | Path) -> None:
+    """Записывает records в JSONL (одна строка JSON на record).
+
+    Args:
+        records: Список records из build_records().
+        output_path: Путь к выходному .jsonl файлу.
+    """
+    with open(output_path, "w", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def parse_and_export_jsonl(md_path: str | Path, jsonl_path: str | Path) -> list[dict]:
+    """Полный pipeline: Markdown -> parser -> records -> JSONL.
+
+    Args:
+        md_path: Путь к .md файлу.
+        jsonl_path: Путь к выходному .jsonl файлу.
+
+    Returns:
+        Список records (для проверок в тестах).
+    """
+    lines = read_markdown(md_path)
+    blocks = parse_blocks(lines)
+    linear = build_linear(blocks)
+    tree = build_tree(linear)
+    build_context_recursive(tree)
+    records = build_records(tree)
+    records_to_jsonl(records, jsonl_path)
+    return records
+
+
+# ============================================================================
+# 7. DOC META
+# ============================================================================
 # ============================================================================
 # 7. DOC META
 # ============================================================================
@@ -400,7 +526,15 @@ def normalize_text(text: str) -> str:
 # 9. CLI
 # ============================================================================
 
-def parse_and_save(md_path: str | Path, output_path: str | Path | None = None) -> dict:
+def parse_and_save(md_path: str | Path, output_path: str | Path | None = None,
+                     doc_meta: dict | None = None) -> dict:
+    """Распарсить Markdown и сохранить результат.
+
+    Args:
+        md_path: Путь к .md файлу.
+        output_path: Путь сохранения JSON (None -> structure/<stem>.json).
+        doc_meta: Метаданные документа из реестра (id, type, number, date, title).
+    """
     md_path = Path(md_path)
     lines = read_markdown(md_path)
     doc_info = extract_doc_info(lines)
@@ -411,11 +545,13 @@ def parse_and_save(md_path: str | Path, output_path: str | Path | None = None) -
     build_context_recursive(tree_root)
     records = build_records(tree_root)
 
+    doc_type = (doc_meta or {}).get("type", "document")
     result = {
         "doc": {
+            "id": (doc_meta or {}).get("id"),
             "title": doc_info["title"],
             "number": doc_info["number"],
-            "type": "document",
+            "type": doc_type,
             "source_md": str(md_path.resolve()),
         },
         "linear": linear,
@@ -446,7 +582,7 @@ def parse_and_save(md_path: str | Path, output_path: str | Path | None = None) -
         print("⚠️ EXACT RECONSTRUCTION: FAIL")
         ol = original_stripped.splitlines(keepends=False)
         rl = reconstructed.splitlines(keepends=False)
-        for i, (o, r) in enumerate(zip(ol, rl)):
+        for i, (o, r) in enumerate(zip(ol, rl, strict=True)):
             if o != r:
                 print(f"   Первое расхождение на строке {i}:")
                 print(f"   orig: {repr(o[:120])}")
@@ -462,6 +598,57 @@ def parse_and_save(md_path: str | Path, output_path: str | Path | None = None) -
 
     return result
 
+
+
+
+
+def batch_parse(markdown_dir: str | Path, structure_dir: str | Path | None = None,
+                registry: list[dict] | None = None) -> list[dict]:
+    """Распарсить все .md файлы в markdown_dir.
+
+    Args:
+        markdown_dir: Директория с .md файлами.
+        structure_dir: Директория для JSON-результатов (None -> structure/).
+        registry: Список документов из documents.json (для doc_meta).
+
+    Returns:
+        Список результатов парсинга.
+    """
+    markdown_dir = Path(markdown_dir)
+    structure_dir = Path(structure_dir) if structure_dir else Path("structure")
+    structure_dir.mkdir(parents=True, exist_ok=True)
+
+    # Строим индекс registry по стему файла (id)
+    registry_index = {}
+    if registry:
+        for d in registry:
+            registry_index[d["id"]] = d
+
+    md_files = sorted(markdown_dir.glob("*.md"))
+    if not md_files:
+        print(f"Нет .md файлов в {markdown_dir}")
+        return []
+
+    results = []
+    errors = []
+    for md_file in md_files:
+        doc_id = md_file.stem
+        doc_meta = registry_index.get(doc_id)
+        out_path = structure_dir / f"{doc_id}.json"
+        try:
+            result = parse_and_save(md_file, out_path, doc_meta=doc_meta)
+            results.append(result)
+        except Exception as exc:
+            errors.append(f"{md_file.name}: {exc}")
+            print(f"FAIL: {md_file.name}: {exc}")
+
+    summary = f"Markdown parse: {len(results)} uspeshno, {len(errors)} oshibok"
+    print(summary)
+    if errors:
+        print("Ошибки:")
+        for e in errors:
+            print(f"  - {e}")
+    return results
 
 def main():
     if len(sys.argv) < 2:

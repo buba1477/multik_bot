@@ -1,4 +1,5 @@
 aiogram==3.15.0
+playwright==1.62.0
 ollama==0.3.3
 pycoingecko==3.2.0
 python-dotenv==1.2.1
