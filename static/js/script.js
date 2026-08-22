@@ -764,12 +764,9 @@ async function sendMessage() {
                     
                     if (data.type === "metadata") {
                         if (data.sources && Array.isArray(data.sources)) {
-                            sHtml = data.sources
-                                .filter(s => s && s.url && isSafeUrl(s.url))
-                                .map(s =>
-                                    '🔗 <a href="' + escapeHtml(s.url) + '" target="_blank" rel="noopener noreferrer" style="color:#89b4fa; font-size:0.85em; text-decoration:none; font-weight:bold;">' + escapeHtml(s.title || s.url) + '</a>'
-                                ).join('<br>');
-                        }
+                            const srcItems = data.sources.filter(s => s && s.url && isSafeUrl(s.url))
+                                .map(s => '• <a href="' + escapeHtml(s.url) + '" target="_blank" rel="noopener noreferrer" style="color:#89b4fa; font-size:0.85em; text-decoration:none; font-weight:bold;">' + escapeHtml(s.title || s.url) + '</a>');
+                            sHtml = srcItems.length ? '<div style="margin-top:12px; font-size:0.9em;"><div style="color:#a0a9b8; margin-bottom:4px; font-weight:bold;">Источники:</div>' + srcItems.join('<br>') + '</div>' : '';                        }
                         if (data.image) {
                             const imgName = escapeHtml(String(data.image).replace(/^[\\/]+/, ''));
                             sHtmlImg = `<div style="margin-top:15px; border-top: 1px solid #e2e2e2; padding-top:10px;"><img src="/images/${imgName}" alt="" style="max-width:100%; border-radius:12px; border: 1px solid #e2e2e2;"></div>`;

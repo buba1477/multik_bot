@@ -1,4 +1,5 @@
 import os
+from app.rag.sources import collect_sources
 import re
 import json
 import logging
@@ -192,7 +193,7 @@ _EMPTY_RESPONSE_RE = re.compile(
     re.IGNORECASE,
 )
 
-_TITLE_PREFIXES = ("Указ №", "ФЗ №", "Приказ №", "Письмо №")
+# источники собираются в app.rag.sources.collect_sources
 
 class RerankedEngine:
     def __init__(self, index: Any, qa_prompt: Any, initial_top_k: int = 30, final_top_k: int = 5):
@@ -342,27 +343,9 @@ query_engine = RerankedEngine(
 logger.info("✅ Query engine готов к работе")
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (осталось без изменений) ==========
+# Обёртка над общим модулем источников (app.rag.sources).
 def _collect_sources(nodes: list, max_sources: int = 3) -> list:
-    sources = []
-    seen_urls: set = set()
-    for node in nodes:
-        if len(sources) >= max_sources:
-            break
-        if not hasattr(node, "node"):
-            continue
-        url = node.node.metadata.get("source_url", "")
-        if not url or url in seen_urls:
-            continue
-        title = node.node.metadata.get("title", "Источник").strip()
-        if title.startswith(_TITLE_PREFIXES):
-            title = title.split(". ", 1)[-1] if ". " in title else title
-        sources.append({
-                "url": url,
-                "title": title[:100],
-                "score": round(float(node.score), 4) if hasattr(node, "score") else None,
-            })
-        seen_urls.add(url)
-    return sources
+    return collect_sources(nodes, max_sources=max_sources)
 
 def _find_photo(resp_lower: str, nodes: list) -> Optional[str]:
     for filename, variations in _EMPLOYEES:
