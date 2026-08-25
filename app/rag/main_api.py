@@ -130,6 +130,8 @@ async def add_request_id_and_process_time(request: Request, call_next):
 
 app.mount("/images", StaticFiles(directory="/app/images_cache"), name="images")
 
+app.mount("/raw", StaticFiles(directory="/app/raw"), name="raw")
+
 # Монтируем папку для markdown
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

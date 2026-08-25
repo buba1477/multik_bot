@@ -1,426 +1,511 @@
-# Pipeline загрузки НПА
+# Pipeline загрузки и обработки НПА
 
 Документ описывает фактическое состояние pipeline на момент последней проверки.
 
-Дата: 19.08.2026
+Дата: 20.08.2026
 
 ---
 
 ## 1. Общая схема
 
 ```
-documents.json
+documents.json  (содержит nd для legacy-документов)
     │
     ▼
-scripts/download_documents.py   ←── app/pdf_ocr.py (классификация PDF)
-    │                                     │
-    ├── app/publication_api.py            ├── Сканированные PDF
-    │       │                             │      OCR → Markdown
-    │       ▼                             │
-    │   publication.pravo.gov.ru          └── Текстовые PDF
-    │       │                                    │
-    │       ├── Документ найден (eoNumber)        ▼
-    │       │       ├── get_document(eo)   scripts/run_pipeline.py
-    │       │       └── download_pdf(eo, dest)     │
-    │       │         → raw/<id>.pdf              ├── Шаг 2: HTML → Markdown
-    │       │                                      │     (html_to_markdown.py)
-    │       └── НЕ найден (DocumentNotFoundError)  │
-    │               │                             ├── Шаг 3 (опционально):
-    │               ▼                             │     OCR fallback для
-    │           app/pravo_resolver.py              │     сканированных PDF
-    │               │                             │   (pdf_ocr.py)
-    │               ▼                             │
-    │           pravo.gov.ru/proxy/ips/            ├── Шаг 4: Markdown → структура
-    │               │                             │   (markdown_structure_parser.py)
-    │               ├── resolve_document → nd      │
-    │               ├── find_latest_rdk → rdk      └── Шаг 5: Структура → чанки
-    │               └── print_url → HTML →              (legal_chunker.py)
-    │                   Playwright + bundled Chromium → raw/<id>.pdf
+scripts/download_documents.py
     │
-    └── app/resolved_documents.json (кэш)
-```
-
----
-
-## 2. Роль каждого файла
-
-### `documents.json`
-
-- **Зачем**: реестр документов, которые нужно скачать. Это точка входа — единственное место, где пользователь объявляет новый НПА.
-- **Кто вызывает**: `scripts/download_documents.py` (функция `main()`).
-- **Вход**: не принимает — файл читается.
-- **Выход**: список словарей с полями `id`, `type`, `number`, `date`, `title`, `source`, `enabled`.
-- **Основной/резервный**: основной реестр.
-
-### `scripts/download_documents.py`
-
-- **Зачем**: оркестратор — читает `documents.json`, для каждого документа определяет способ разрешения (publication API или legacy-резерв), скачивает PDF инкрементально, обновляет кэш.
-- **Кто вызывает**: пользователь напрямую (`python scripts/download_documents.py`).
-- **Вход**: `documents.json` (registry), `app/resolved_documents.json` (кэш).
-- **Выход**: PDF в `raw/<id>.pdf`, обновлённый `app/resolved_documents.json`.
-- **Основной/резервный**: основной запускаемый скрипт.
-
-### `app/publication_api.py`
-
-- **Зачем**: работа с официальным JSON API портала «Официальное опубликование правовых актов» (publication.pravo.gov.ru).
-- **Кто вызывает**: `scripts/download_documents.py` (импортируется как `import app.publication_api as pub`).
-- **Вход**: реквизиты документа (словарь с `number`, `date`, `type`).
-- **Выход**: JSON-объект документа API (`eoNumber`, `number`, `documentDate`, `pagesCount`, `pdfFileLength` и т.д.) или исключение (`DocumentNotFoundError`, `DocumentMismatchError`, `PublicAPIError`).
-- **Основной/резервный**: основной путь для современных документов. Не является отдельным запускаемым загрузчиком (см. п. 3).
-
-### `app/pravo_resolver.py`
-
-- **Зачем**: поиск документов в устаревшей HTML-системе `/proxy/ips/` pravo.gov.ru — резерв для актов, отсутствующих в официальном API публикации.
-- **Кто вызывает**: `scripts/download_documents.py` (импортируется как `import app.pravo_resolver as legacy`).
-- **Вход**: номер, название, дата документа.
-- **Выход**: словарь с `nd`, `title`, `name`, `status`, `date` или исключение `DocumentNotFoundError`.
-- **Основной/резервный**: **только резервный** (fallback). В модуле есть явный маркер `DEPRECATED / legacy RESERVE`.
-
-### `app/resolved_documents.json`
-
-- **Зачем**: кэш разрешения (какой метод использован для каждого документа), состояния ревизий и метаданных скачанных PDF.
-- **Кто вызывает**: `scripts/download_documents.py` (функции `load_cache`, `save_cache`, `persist_entry`), также `app/pravo_resolver.py` (только для чтения legacy-кэша).
-- **Вход**: словарь `{doc_id: {method, resolved_at, detail, revision, downloaded_at, pdf_path, pdf_size, pdf_pages}}`.
-- **Выход**: тот же словарь, записанный атомарно через `.tmp` → `os.replace`.
-- **Основной/резервный**: служебный кэш, не предназначен для ручного редактирования.
-
-### `raw/`
-
-- **Зачем**: директория для хранения скачанных PDF-файлов.
-- **Кто вызывает**: `scripts/download_documents.py` (функция `_download_to_tmp`, `download_one`).
-- **Вход**: PDF-байты.
-- **Выход**: `raw/<id>.pdf`.
-- **Основной/резервный**: хранилище артефактов.
-### `app/ingestion/pdf_ocr.py`
-
-- **Зачем**: определяет, является ли PDF сканированным (без текстового слоя), и запускает OCR через ocrmypdf + Tesseract для извлечения текста.
-- **Кто вызывает**: `scripts/run_pipeline.py` (step `--ocr`), `app/ingestion/html_to_markdown.py` (batch_convert), а также напрямую.
-- **Вход**: путь к PDF-файлу (`raw/<id>.pdf`).
-- **Выход**: извлечённый текст (str) или классификация (сканированный / текстовый).
-- **Зависимости**: `tesseract-ocr` (системный), `ocrmypdf` (pip), `pypdf`.
-- **Переменные окружения**: `TESSDATA_PREFIX` — если нестандартный путь к tessdata.
-- **Основной/резервный**: OCR fallback — основной для сканированных PDF.
-- **Ключевые функции**:
-  - `is_scanned_pdf(pdf_path)` → `bool` — проверка, есть ли текстовый слой.
-  - `ocr_pdf(pdf_path)` → `str` — выполнить OCR и вернуть текст.
-  - `classify_pdf_directory(pdf_dir)` → `dict` — статистика по всем PDF в директории.
-
-### `app/ingestion/html_to_markdown.py`
-
-- **Зачем**: конвертирует очищенный HTML в Markdown через Pandoc, а также сохраняет OCR-текст как Markdown.
-- **Кто вызывает**: `scripts/run_pipeline.py` (step `--convert`), напрямую через `convert()` или `batch_convert()`.
-- **Вход**: HTML-файлы из `raw_html/` или текст из OCR (через `convert_from_text()`).
-- **Выход**: `.md` файлы в `markdown/`.
-- **Основной/резервный**: основной конвертер для HTML; для OCR — единственный путь.
-- **Ключевые функции**:
-  - `convert(fname)` — конвертировать один HTML в Markdown.
-  - `convert_from_text(text, doc_id)` — сохранить текст как Markdown (OCR fallback).
-  - `batch_convert(in_dir, out_dir, raw_dir)` — пакетная конвертация + OCR fallback.
-
-### `app/ingestion/markdown_structure_parser.py`
-
-- **Зачем**: парсит Markdown-документы в структурные JSON (с заголовками, статьями, главами, параграфами).
-- **Кто вызывает**: `scripts/run_pipeline.py` (step `--parse`).
-- **Вход**: `.md` файлы из `markdown/`.
-- **Выход**: `.json` файлы в `structure/` (линейные ноды, дерево, records).
-- **Основной/резервный**: основной.
-
-### `app/chunking/legal_chunker.py`
-
-- **Зачем**: нарезает structure JSON в поисковые чанки (chunks) для RAG-системы.
-- **Кто вызывает**: напрямую через `batch_convert()` или `process_markdown_file()`.
-- **Вход**: `.json` файлы из `structure/`.
-- **Выход**: `.jsonl` файлы в `chunks/` (по одному JSON-объекту на строку, поля: id, title, text, local_img, url).
-- **Основной/резервный**: основной чанкер.
-
-### `scripts/run_pipeline.py`
-
-- **Зачем**: оркестратор пайплайна — запускает загрузку, конвертацию, OCR fallback, парсинг и валидацию.
-- **Кто вызывает**: пользователь (`python scripts/run_pipeline.py --all` или `--ocr --convert --parse`).
-- **Вход**: реестр `documents.json`, PDF в `raw/`, HTML в `raw_html/`.
-- **Выход**: Markdown в `markdown/`, structure в `structure/`, чанки в `chunks/`.
-- **Флаги**:
-  - `--all` — полный пайплайн.
-  - `--download` — только скачивание.
-  - `--ocr` — классификация PDF + OCR fallback.
-  - `--convert` — HTML → Markdown.
-  - `--parse` — Markdown → структура + чанки.
----
-
-## 3. Почему `publication_api.py` не является отдельным загрузчиком
-
-`app/publication_api.py` — это библиотека, а не запускаемый скрипт. В нём нет `if __name__ == "__main__"`. Он предоставляет:
-
-- `pub.search_documents(number)` — поиск кандидатов по номеру;
-- `pub.resolve_exact(record)` — fail-closed поиск с валидацией даты и типа;
-- `pub.get_document(eoNumber)` — детали документа по `eoNumber`;
-- `pub.download_pdf(eoNumber, dest)` — скачивание PDF.
-
-Все эти функции вызываются из `download_documents.py`:
-
-```python
-import app.publication_api as pub   # scripts/download_documents.py, строка 41
-
-# resolve_doc → основная ветка:
-matched = pub.resolve_exact(doc)                    # поиск по реквизитам
-
-# _revision_current → publication:
-m = pub.get_document(eo)                            # детали для фингерпринта
-
-# _download_to_tmp → publication:
-size = pub.download_pdf(eo, tmp_pdf)               # скачивание PDF
-```
-
-Аналогично для `pravo_resolver.py`:
-
-```python
-import app.pravo_resolver as legacy  # scripts/download_documents.py, строка 40
-
-# resolve_doc → резервная ветка (при DocumentNotFoundError):
-legacy_rec = legacy.resolve_document(doc["number"], doc.get("title"), doc.get("date"))
-
-# _revision_current → legacy:
-rev = legacy.find_latest_revision(entry["detail"]["nd"])
-
-# _download_to_tmp → legacy:
-latest = legacy.find_latest_rdk(nd)
-data = get_bytes(legacy.print_url(nd, rdk))
-```
-
-Ни один из этих модулей не предназначен для прямого запуска — они импортируются в `download_documents.py`.
-
----
-
-## 4. Алгоритм выбора источника
-
-```
-documents.json → doc {number, date, type, title}
-    │
-    ▼
-pub.resolve_exact(doc)
-    │
-    ├── DocumentNotFoundError
+    ├── app/publication_api.py           (ОСНОВНОЙ путь)
     │       │
-    │       ▼
-    │   legacy.resolve_document(number, title, date)
-    │       │
-    │       ├── найден (nd) → method = "legacy"
-    │       │
-    │       └── не найден (DocumentNotFoundError)
-    │               → ResolutionError ("не найден ни в API, ни в legacy")
+    │       ├── /api/Documents (поиск по number)
+    │       ├── /api/Document?eoNumber=… (детали)
+    │       ├── /file/pdf?eoNumber=… → raw/<id>.pdf
+    │       └── /Document/View/<eoNumber> → raw_html/<id>.html
     │
-    ├── DocumentMismatchError (неоднозначность / несовпадение реквизитов)
-    │       → PublicAPIError / DocumentMismatchError
-    │         НЕ переключается на legacy — fail-closed останов
+    └── app/pravo_resolver.py            (LEGACY-резерв)
+            │
+            ├── /proxy/ips/ (поиск nd по реквизитам)
+            ├── print-представление → raw_html/<id>.html
+            └── app/ingestion/html_to_pdf.py
+                    └── Playwright + bundled Chromium → raw/<id>.pdf
+
+
+=== RAG pipeline (на основе HTML) ===
+
+raw_html/<id>.html
     │
-    └── PublicAPIError (сеть недоступна, HTTP-ошибка)
-            → PublicAPIError
-              НЕ переключается на legacy — fail-closed останов
+    ▼
+app/ingestion/html_to_markdown.py
+    │   BeautifulSoup (санитизация)
+    │   → pandoc (html→gfm-raw_html)
+    │   → clean_markdown
+    ▼
+markdown/<id>.md
+    │
+    ▼
+app/ingestion/markdown_structure_parser.py
+    │   Классификация заголовков и контента
+    │   → linear (восстановление порядка)
+    │   → tree (структурное представление)
+    │   → records (слой для chunker)
+    ▼
+structure/<id>.json
+    │
+    ▼
+app/chunking/legal_chunker.py
+    │   Нарезка по article/paragraph/subparagraph
+    │   → FRIDA-токенизация (~350 токенов target, ~400 max)
+    ▼
+chunks/<id>.jsonl
+    │
+    ▼
+app/chunking/create_index_qdrant_chunks.py
+    │   FRIDA embedding (Sber RoSBERTa)
+    │   → загрузка векторов в Qdrant fns_collection
+    ▼
+Qdrant vector DB
 ```
 
-**Ключевое правило**: переключение на legacy происходит **только** при `DocumentNotFoundError` — когда API подтверждённо не содержит документа. Ошибки сети, неоднозначности, несовпадения реквизитов **не** приводят к молчаливому fallback.
----
-
-## 5. Инкрементальное скачивание
-
-```
-documents.json
-    │
-    ▼
-resolve_doc(doc) → entry {method, detail, revision?}
-    │
-    ▼
-_revision_current(doc, entry)
-    │   publication: pub.get_document(eo) → {id: eo, fingerprint, label}
-    │   legacy:      legacy.find_latest_revision(nd) → {id: rdk, label, date}
-    │
-    ▼
-_revision_unchanged(entry, current_rev, out_pdf)
-    │
-    │   entry["revision"] == current_rev  И  out_pdf.exists()
-    │   ├── True  → "unchanged → skip download" (выход)
-    │   └── False → "ревизия изменилась / PDF отсутствует → скачивание"
-    │
-    ▼
-_download_to_tmp(doc, entry)
-    │   publication: pub.download_pdf(eo, tmp.pdf)
-    │   legacy:      get_bytes → Playwright HTML→PDF (tmp.html → tmp.pdf)
-    │   validate_pdf(tmp.pdf) → pages
-    │
-    ▼
-os.replace(tmp.pdf, out.pdf)   # атомарная замена
-    │
-    ▼
-entry["revision"] = current_rev
-entry["downloaded_at"] = iso_now()
-entry["pdf_path"] = str(out.pdf)
-entry["pdf_size"] = size
-entry["pdf_pages"] = pages
-persist_entry(doc["id"], entry, cache_path)
-```
-
-**При ошибке** на любом этапе `_download_to_tmp`:
-- временные файлы `.new.pdf` и `.new.html` удаляются (`_silent_unlink`);
-- целевой `raw/<id>.pdf` **не трогается**;
-- кэш **не обновляется** — остаётся предыдущая ревизия.
 
 ---
 
-## 6. Как определяется новая редакция
+## 2. Роли файлов и каталогов
 
-### Через publication API
+| Путь | Назначение |
+|------|-----------|
+| `documents.json` | Реестр документов (id, number, date, title, type, enabled, legacy nd). Источник истины для списка загружаемых актов. |
+| `raw/<id>.pdf` | Скачанные PDF. Для publication-пути — официальный PDF с портала; для legacy-пути — результат Playwright HTML→PDF. |
+| `raw_html/<id>.html` | HTML-представление документа. Для publication — официальная HTML-версия с портала; для legacy — print-представление IPS. |
+| `markdown/<id>.md` | Конвертированный Markdown (результат html_to_markdown). Единственный источник текста для chunker. |
+| `structure/<id>.json` | Результат структурного парсинга (markdown_structure_parser). Содержит linear (точное восстановление), tree, records. |
+| `chunks/<id>.jsonl` | Нарезанные чанки (legal_chunker). JSONL-формат: id, title, text, local_img, url. Непосредственный вход для индексации. |
+| `app/resolved_documents.json` | Кэш разрешений. Для каждого документа хранит method (publication/legacy), revision, pdf_path, html_path, html_sha256, pdf_size, pdf_pages. |
+| `hf_cache/FRIDA/` | Локальный кэш модели Sber RoSBERTa (FRIDA) для embedding-векторов. Offline-режим. |
+| `images_cache/` | Кэш изображений сотрудников для автоподбора фотографий в ответах RAG. |
+| `app_audit.log` | Ротируемый лог (10 MB, 5 бэкапов) с request_id для аудита. |
 
-Вызов `pub.get_document(eo)` возвращает полный объект документа. Формируется фингерпринт:
 
-```python
-fingerprint = "|".join([
-    eoNumber,
-    documentDate,
-    publishDateShort,
-    pdfFileLength,
-    pagesCount,
-])
+## 3. Разрешение документов (download)
+
+### 3.1. Основной путь: publication.pravo.gov.ru
+
+Модуль: `app/publication_api.py`
+
+1. **Поиск** — `GET /api/Documents?number=<номер>`
+   - Ответ: JSON со списком кандидатов (eoNumber, number, documentDate, documentType, title).
+   - Параметр number — единственный надёжный фильтр; date и сортировка игнорируются API.
+
+2. **Верификация** — `_pick_unique()`:
+   - Сравнение number + date + type со строгими реквизитами из documents.json.
+   - Канонизация типов ("Указ" + "Президент Российской Федерации" → "Указ Президента Российской Федерации").
+   - **Fail-closed**: при неоднозначности/несовпадении — `DocumentMismatchError` (останов, legacy-резерв НЕ используется).
+
+3. **Детали** — `GET /api/Document?eoNumber=<eoNumber>` 
+   - Полная информация о документе (подтверждение реквизитов).
+
+4. **Скачивание**:
+   - PDF: `GET /file/pdf?eoNumber=...` → `raw/<id>.pdf` (проверка заголовка `%PDF-`).
+   - HTML: `GET /Document/View/<eoNumber>` → `raw_html/<id>.html` (проверка `<!DOCTYPE html>`).
+
+**Ограничение**: портал официального опубликования содержит акты примерно с 2011–2012 гг.
+Старые федеральные законы (79-ФЗ от 2004, 58-ФЗ от 2003) — отсутствуют → `DocumentNotFoundError`.
+
+### 3.2. Legacy-резерв: pravo.gov.ru /proxy/ips/
+
+Модуль: `app/pravo_resolver.py`
+
+Используется **только** когда `publication_api.resolve_exact()` вернул `DocumentNotFoundError`.
+
+1. **Поиск nd** — `GET /proxy/ips/?list_itself=&a8=<номер>&page=first`
+   - Внутренний идентификатор nd, редкое название, статус.
+
+2. **Верификация** — сравнение date + number + type по карточке документа.
+
+3. **Редакции** — `GET /proxy/ips/?docbody=&nd=<nd>` → парсинг `<select name="doc_editions">`:
+   - Определение rdk (последняя доступная редакция, max).
+
+4. **Скачивание HTML** — `GET /proxy/ips/?docview&page=1&print=1&nd=<nd>&rdk=<rdk>&empire=`:
+   - Сохраняется как `raw_html/<id>.html`.
+
+5. **Конвертация HTML→PDF** — `app/ingestion/html_to_pdf.py`:
+   - Playwright + bundled Chromium → `raw/<id>.pdf`.
+
+### 3.3. Инкрементальное скачивание
+
+`scripts/download_documents.py` — `download_one()`:
+
 ```
-
-Сравнение — по всему словарю `{id, fingerprint, label, publishDateShort, pagesCount}`. Изменение любого поля считается новой редакцией.
-
-### Через legacy (pravo.gov.ru)
-
-Вызов `legacy.find_latest_revision(nd)` возвращает словарь:
-
-```python
-{
-    "rdk": 98,                              # номер редакции (int)
-    "label": "98 - от 08.03.2026 № 52-ФЗ (изм.)",
-    "date": "08.03.2026",
-}
-```
-
-Сравнение — по всему словарю `{id: rdk, label, date}`. Изменение `rdk` (или метки) считается новой редакцией.
-
-### Что хранится в `resolved_documents.json`
-
-```json
-{
-  "79-FZ": {
-    "method": "legacy",
-    "resolved_at": "2026-08-17T08:42:50+00:00",
-    "detail": {
-      "nd": "102088054"
-    },
-    "revision": {
-      "id": 98,
-      "label": "98 - от 08.03.2026 № 52-ФЗ (изм.)",
-      "date": "08.03.2026"
-    },
-    "downloaded_at": "2026-08-17T10:13:07+00:00",
-    "pdf_path": "/home/amlin04/multik_bot/raw/79-FZ.pdf",
-    "pdf_size": 1247979,
-    "pdf_pages": 121
+resolved_documents.json
+  └── entry[doc_id] = {
+    "method": "publication" | "legacy",
+    "revision": { "id": ..., "label": ... },
+    "downloaded_at": "ISO-8601",
+    "pdf_path": "raw/<id>.pdf",
+    "pdf_size": ...,
+    "pdf_pages": ...,
+    "html_path": "raw_html/<id>.html",
+    "html_sha256": "...",
+    "detail": { ... }   # специфичные для метода данные
   }
-}
 ```
 
-Поле `revision` — это текущая успешно скачанная редакция. Сравнение с `_revision_current()` даёт ответ на вопрос «нужно ли перекачивать PDF».
----
+- Если revision совпадает и PDF на месте → **skip** ("unchanged → skip download").
+- Если revision изменилась / PDF отсутствует → атомарная замена через `os.replace()`.
+- При ошибке старый PDF не удаляется, кэш не обновляется.
 
-## 7. Пример для трёх текущих документов
 
-| id | number | date | метод | detail |
-|---|---|---|---|---|
-| `79-FZ` | 79-ФЗ | 27.07.2004 | **legacy** | nd=102088054 |
-| `58-FZ` | 58-ФЗ | 27.05.2003 | **legacy** | nd=102081744 |
-| `ukaz-112-2005` | 112 | 01.02.2005 | **legacy** | nd=102090878 |
+## 4. Конвертация HTML → Markdown
 
-Все три документа — старые (2003–2005), их нет в publication.pravo.gov.ru. Поэтому `resolve_exact` вернул `DocumentNotFoundError`, и они разрешены через legacy-резерв.
+Модуль: `app/ingestion/html_to_markdown.py`
 
-Если бы добавить современный документ (например, Федеральный закон от 09.04.2026 № 79-ФЗ, который есть в publication API), метод был бы `publication`, а `detail` содержал бы `eoNumber`.
+### 4.1. HTML-путь (основной)
 
----
-
-## 8. Как добавить новый НПА
-
-Добавить запись в `documents.json`. Пример:
-
-```json
-{
-  "id": "fz-150-2026",
-  "type": "Федеральный закон",
-  "number": "150-ФЗ",
-  "date": "01.06.2026",
-  "title": "О внесении изменений в отдельные законодательные акты",
-  "source": "pravo.gov.ru",
-  "enabled": true
-}
 ```
+raw_html/<id>.html
+  │ BeautifulSoup-санитизация
+  │   - Удаление script/style/head/iframe/nav/page-navigation/emailDlg
+  │   - Таблицы → построчное представление (ячейки через |)
+  │   - Сохранение неизвестных элементов (текст не теряется)
+  ▼
+временный .clean.html
+  │ pandoc --from=html --to=gfm-raw_html --wrap=none
+  ▼
+markdown/<id>.md
+  │ clean_markdown() — финальная чистка (пустые строки, спецсимволы)
+```
+
+### 4.2. OCR Fallback (сканированные PDF)
+
+Если `pdf_ocr.is_scanned_pdf()` → True:
+  - `pdf_ocr.ocr_pdf()` → текст через OCR.
+  - `convert_from_text()` → Markdown без структуры.
+
+### 4.3. pdftotext Fallback (текстовые PDF с плохим HTML)
+
+Если HTML-путь дал Markdown ≤ 500 символов:
+  - `pdftotext <pdf> -` → извлечение текста.
+  - `convert_from_text()` → Markdown.
 
 **Правила**:
-- `id` — наш внутренний уникальный идентификатор, используется как имя файла (`raw/fz-150-2026.pdf`). Не путать с `eoNumber` или `nd` с pravo.gov.ru.
-- `type` — полное название вида документа (например, «Федеральный закон», «Указ Президента Российской Федерации»).
-- `number` — номер документа как в официальном тексте (с дефисом, римскими цифрами и т.д.).
-- `date` — дата подписания/принятия в формате `ДД.ММ.ГГГГ`.
-- `title` — официальное название.
-- `source` — всегда `"pravo.gov.ru"`.
-- `enabled` — `true` для включения, `false` для пропуска без удаления из реестра.
+- Структура только из DOM; не угадывается по словам (Глава/Статья).
+- h1-h6 → pandoc (native).
+- ol/ul → markdown-списки.
+- `<p>` → абзацы (не превращаются в списки без DOM-тегов).
 
-После добавления — запустить `python scripts/download_documents.py`. Система сама определит, есть ли документ в publication API или нужен legacy-резерв, скачает PDF и обновит кэш.
----
 
-## 9. Что НЕ нужно делать
+## 5. Структурный парсинг Markdown
 
-- ❌ **Не указывать `nd` в `documents.json`**. `nd` — внутренний идентификатор pravo.gov.ru, он определяется автоматически при разрешении документа. Указание вручную нарушает pipeline.
-- ❌ **Не искать вручную `eoNumber`**. `eoNumber` — стабильный идентификатор publication API, он возвращается `pub.resolve_exact()`.
-- ❌ **Не скачивать PDF вручную** и не класть его в `raw/`. Только `download_documents.py` должен записывать PDF, чтобы кэш ревизий оставался консистентным.
-- ❌ **Не редактировать `resolved_documents.json` вручную**. Файл перезаписывается скриптом; ручные правки потеряются или приведут к рассинхронизации.
-- ❌ **Не использовать `pravo_resolver.py` как основной путь**. Это устаревший резерв; для современных документов доступных через publication API, legacy не должен вызываться.
-- ❌ **Не запускать `publication_api.py` напрямую** — в нём нет точки входа.
+Модуль: `app/ingestion/markdown_structure_parser.py`
 
----
+### 5.1. Три слоя
 
-## 10. Что будет при повторном запуске
+| Слой | Описание |
+|------|----------|
+| **linear** | Линейный порядок лексических блоков (source of truth). Каждый блок: type, text, start_line, end_line, heading_level. Точное восстановление исходного Markdown (`exact_reconstruct()`). |
+| **tree** | Иерархическое представление по node_id. parent_id → вложенность. Не источник текста. |
+| **records** | Производный плоский слой (type, num, title, text) — вход для chunker. |
 
-| Ситуация | Поведение |
-|---|---|
-| Редакция не изменилась, PDF на месте | `unchanged → skip download` — ни одного сетевого запроса. |
-| Редакция изменилась (новый `rdk` / `fingerprint`) | Скачивается новый PDF во временный файл, проверяется, атомарно заменяет старый. Кэш обновляется. |
-| PDF удалён из `raw/`, ревизия в кэше есть | Определяется как «PDF отсутствует» → скачивание заново (той же редакции). |
-| Кэш повреждён (невалидный JSON) | `load_cache` возвращает `{}` → первый запуск как для нового документа. |
-| Ошибка при скачивании нового PDF (сеть, невалидный PDF) | Старый PDF **не удаляется**, временные файлы подчищаются, кэш не обновляется. |
-| `DocumentNotFoundError` и в API, и в legacy | `ResolutionError` — документ не может быть найден никаким способом. |
-| `DocumentMismatchError` / `PublicAPIError` | Fail-closed останов — legacy не используется. |
+### 5.2. Классификация заголовков
 
----
+| Паттерн | Тип | Уверенность |
+|---------|-----|-------------|
+| `Глава N. ...` | chapter | 0.95 |
+| `Раздел N. ...` | section | 0.95 |
+| `Статья N. ...` | article | 0.95 |
+| `Приложение №N` | appendix | 0.95 |
+| `N.N. ...` (римские) | subsection/section | 0.70–0.75 |
+| `N) ...` | item | 0.92 |
+| `а) ...` | subparagraph | 0.70–0.80 |
 
-## 11. Карта проекта
+Сомнительное → `unknown` (текст сохраняется). Без правил про конкретный закон.
+
+### 5.3. Валидация
+
+- `exact_reconstruct()` — посимвольное сравнение с исходным Markdown.
+- `normalize_reconstruct()` — сравнение без пробелов.
+- Статистика: unknown-блоки, table-блоки.
+
+
+## 6. Чанкинг (legal_chunker)
+
+Модуль: `app/chunking/legal_chunker.py`
+
+### 6.1. Вход/выход
+
+- **Вход**: `markdown/<id>.md` + `structure/<id>.json` (records-слой).
+- **Выход**: `chunks/<id>.jsonl` (JSONL, 5 полей: id, title, text, local_img, url).
+
+### 6.2. Логика нарезки
 
 ```
-multik_bot/
-├── docs/
-│   └── DOCUMENT_PIPELINE.md          ← этот файл
-├── documents.json                    ← реестр НПА (точка входа)
-├── scripts/
-│   └── download_documents.py         ← оркестратор скачивания
-├── app/
-│   ├── publication_api.py            ← основной путь (официальный API)
-│   ├── pravo_resolver.py             ← резервный путь (legacy /proxy/ips/)
-│   ├── ingestion/
-│   │   └── html_to_pdf.py            ← Playwright HTML→PDF конвертация
-│   └── resolved_documents.json       ← кэш метода, ревизии, состояния
-├── raw/                              ← скачанные PDF (28 шт.)
-├── raw_html/                         ← конвертированные HTML (17 шт.)
-├── markdown/                         ← Markdown после конвертации (29 .md)
-├── structure/                        ← структура JSON после парсинга (29 .json)
-├── chunks/                           ← чанки JSONL после нарезки (29 .jsonl)
-├── .tmp_convert/                     ← временные файлы html_to_markdown
-├── tests/
-│   ├── test_downloader.py
-│   ├── test_publication_api.py
-│   ├── test_pravo_resolver.py
-│   ├── test_legal_chunker.py
-│   ├── test_markdown_structure_parser.py
-│   └── test_pdf_ocr.py              ← тесты OCR fallback
+records (из structure JSON)
+  │
+  ├── Статья — логическая граница.
+  │   Заголовок статьи присутствует в каждом её чанке.
+  │   Разные статьи не смешиваются в одном чанке.
+  │
+  ├── Большие статьи → деление по paragraph/item/subparagraph.
+  │
+  ├── Отдельный элемент > MAX_TOKENS → режется по предложениям → по словам.
+  │
+  ├── Мелкие последовательные части одной статьи → объединение до TARGET_TOKENS.
+  │
+  └── Редакционные блоки ("(В редакции...)") — не дробятся, единый блок.
 ```
 
----
+### 6.3. Лимиты токенов
 
-Документ описывает фактическое состояние pipeline на момент последней проверки.
+| Параметр | Значение |
+|----------|----------|
+| TARGET_TOKENS | 350 |
+| MAX_TOKENS | 400 |
+| MIN_CHUNK_TOKENS | 40 |
+
+Токенизация — FRIDA (Sber RoSBERTa) tokenizer. Offline. Если модель недоступна → эвристика (~4 символа на токен).
+
+### 6.4. Валидация JSONL
+
+`validate_jsonl()`:
+- Парсинг JSON.
+- Проверка ровно 5 ключей (id, title, text, local_img, url).
+- Непустой text.
+- Подсчёт токенов.
+
+
+## 7. Индексация в Qdrant
+
+Модуль: `app/chunking/create_index_qdrant_chunks.py`
+
+### 7.1. Процесс
+
+```
+1. Чтение и валидация всех chunks/*.jsonl
+2. Проверка дубликатов ID
+3. Проверка лимита токенов (≤400)
+4. Загрузка FRIDA (SentenceTransformer: Transformer + Pooling(CLS))
+5. Вычисление embeddings (batch=32, префикс "search_document:")
+6. Подключение к Qdrant
+7. Удаление/пересоздание коллекции fns_collection
+8. Загрузка векторов с payload (id, title, text, local_img, source_url)
+9. Проверка: количество точек == количество чанков, размерность совпадает
+```
+
+### 7.2. Параметры
+
+| Параметр | Значение |
+|----------|----------|
+| Collection | `fns_collection` |
+| Qdrant host | localhost (переопределяется через QDRANT_HOST) |
+| Qdrant port | 6333 (переопределяется через QDRANT_PORT) |
+| Embedding | FRIDA / Sber RoSBERTa (CLS-pooling) |
+| Batch size | 32 |
+| Префикс | `search_document:` |
+
+### 7.3. Payload точки
+
+```json
+{
+  "id": "chunk-<doc_id>-<seq>",
+  "title": "Статья N. Название",
+  "text": "Текст чанка...",
+  "local_img": "images_cache/...jpg" | "",
+  "source_url": "http://publication.pravo.gov.ru/file/pdf?eoNumber=..."
+}
+```
+
+
+## 8. RAG-движок (engine_rag.py)
+
+Модуль: `app/rag/engine_rag.py`
+
+### 8.1. Архитектура запроса
+
+```
+Запрос пользователя
+  │
+  ├── is_chart → DynamicChartEngine (ECharts JSON)
+  │
+  └── Основной RAG-путь:
+        │
+        ├── 1. Гибридный поиск
+        │     ├── Векторный (FRIDA embedding → Qdrant)
+        │     ├── BM25 (rank_bm25, по всей коллекции)
+        │     └── Fusion: weighted sum (α=0.7 векторный, β=0.3 BM25)
+        │
+        ├── 2. Re-rank
+        │     └── SentenceTransformerRerank (FRIDA cross-encoder, top_k=8)
+        │
+        ├── 3. Формирование контекста
+        │     └── Сбор текстов source-чанков
+        │
+        ├── 4. Генерация
+        │     └── Ollama (модель "yagpt5_fns:latest")
+        │
+        └── 5. Пост-обработка
+              ├── Замена спецсимволов (HTML → unicode)
+              ├── Автоподбор фотографий (по тексту ответа)
+              └── Форматирование: **жирный**, списки, таблицы, пустые строки
+```
+
+### 8.2. Промпт
+
+Системный промпт задаёт:
+- Роль: "ведущий эксперт ФНС России".
+- Язык: строго русский.
+- Формат: **жирный** для ключевых терминов, маркированные/нумерованные списки, таблицы Markdown.
+- Запрет: вымышленных норм, нецензурной лексики, советов по уклонению.
+- При нехватке данных: вежливый отказ ("В моих регламентах про это ни слова").
+
+### 8.3. Потоковый ответ
+
+`get_ai_streaming_response()` — асинхронный генератор:
+- JSON-объекты по одному на строку: `{"type": "text"|"metadata"|"error"|"end", "content": ...}`.
+- Стриминг через Ollama `async chat()`.
+- Автоподбор фото на основе текста ответа.
+
+### 8.4. Чарт-режим
+
+`DynamicChartEngine.is_chart_request()` — определяет запросы на графики (по ключевым словам).
+Генерирует ECharts JSON-конфигурацию → рендерится на фронтенде.
+
+
+## 9. API
+
+Модуль: `app/rag/main_api.py`
+
+### 9.1. Эндпоинты
+
+| Путь | Метод | Описание |
+|------|-------|----------|
+| `/` | GET | HTML-страница чата (Jinja2, templates/base.html) |
+| `/chat` | GET | HTML-страница чата (та же) |
+| `/ask` | POST | Streaming-ответ (SSE, JSON lines). Параметр: `query`. |
+
+### 9.2. Маршрутизация запросов
+
+```
+POST /ask  { query: "..." }
+  │
+  ├── "мультик" + не ФНС-ключевые → Ollama (yagpt5_fns, num_ctx=4096, temp=0.8)
+  │
+  └── ФНС-запрос / чарт:
+        │
+        ├── Redis-кэш (ключ: lower(query), TTL: 86400 сек)
+        │   └── попали → stream из кэша
+        │
+        └── не попали → engine_rag (get_ai_streaming_response)
+              └── успех → кэшируем полный ответ
+```
+
+### 9.3. Middleware
+
+- Request ID (uuid4, 12 символов) → проброс через ContextVar.
+- Замер времени выполнения.
+- Логирование с request_id.
+
+### 9.4. Обработка ошибок
+
+- **500** — глобальный exception handler (traceback → лог, пользователь → безопасный JSON).
+- **422** — Pydantic validation error (детали → лог, пользователь → общее сообщение).
+
+
+## 10. Конфигурация
+
+### 10.1. Переменные окружения (.env)
+
+| Переменная | Назначение |
+|------------|------------|
+| `OLLAMA_HOST` | Адрес Ollama (http://ollama_container:11434) |
+| `QDRANT_HOST` | Хост Qdrant (qdrant) |
+| `QDRANT_PORT` | Порт Qdrant (6333) |
+| `REDIS_HOST` | Хост Redis (redis) |
+| `REDIS_PASSWORD` | Пароль Redis |
+
+### 10.2. Сервисы Docker Compose
+
+| Сервис | Образ | Порт(ы) | Назначение |
+|--------|-------|---------|------------|
+| redis | redis:7-alpine | 6381:6379 | Кэш ответов |
+| ollama | ollama/ollama:latest | 11434:11434 | LLM (yagpt5_fns) |
+| qdrant | qdrant/qdrant:latest | 6333, 6344 | Векторная БД |
+| api | multik-core:latest (build .) | 8000:8000 | FastAPI + RAG |
+
+### 10.3. Dockerfile
+
+- База: python:3.11-slim.
+- Системные зависимости: Chromium (для Playwright), библиотеки GUI.
+- PyTorch CPU (torch==2.4.1, --index-url cpu).
+- Ключевые пакеты: llama-index-core==0.10.55, qdrant-client==1.9.0, sentence-transformers==3.1.1, fastapi==0.115.0.
+- Предзагрузка NLTK словарей (scripts/setup_nltk.py).
+- Установка Chromium для Playwright (`playwright install chromium`).
+- CMD: `python main.py` (устарело; актуальный запуск через docker-compose: `uvicorn app.rag.main_api:app`).
+
+
+## 11. Инструкции по обновлению
+
+### 11.1. Добавление нового документа
+
+1. Добавить запись в `documents.json`:
+   ```json
+   {
+     "id": "123-fz",
+     "number": "123-ФЗ",
+     "date": "2024-01-15",
+     "title": "О внесении изменений...",
+     "type": "Федеральный закон",
+     "enabled": true
+   }
+   ```
+
+2. Запустить скачивание:
+   ```bash
+   venv/bin/python scripts/download_documents.py
+   ```
+
+3. Конвертация HTML → Markdown:
+   ```bash
+   venv/bin/python -m app.ingestion.html_to_markdown
+   ```
+
+4. Структурный парсинг:
+   ```bash
+   venv/bin/python -m app.ingestion.markdown_structure_parser
+   ```
+   (или `batch_parse(markdown_dir='markdown', structure_dir='structure')`)
+
+5. Чанкинг:
+   ```bash
+   venv/bin/python -m app.chunking.legal_chunker --all
+   ```
+
+6. Переиндексация в Qdrant:
+   ```bash
+   venv/bin/python -m app.chunking.create_index_qdrant_chunks
+   ```
+
+7. (Опционально) сброс кэша Redis: `redis-cli -p 6381 FLUSHALL`.
+
+### 11.2. Полный цикл перезапуска (локально)
+
+```bash
+# 1. Поднять сервисы (Ollama, Qdrant, Redis)
+docker compose up -d redis qdrant ollama
+
+# 2. Убедиться, что модель загружена
+curl http://localhost:11434/api/tags
+
+# 3. Запустить API локально
+venv/bin/python -m uvicorn app.rag.main_api:app --reload --port 8000
+```
+
+### 11.3. Полный цикл (Docker)
+
+```bash
+docker compose up -d --build
+```
+
+Проверка:
+```bash
+curl http://localhost:8000
+curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -d '{"query":"Что такое НДС?"}'
+```
+

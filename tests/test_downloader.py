@@ -702,3 +702,98 @@ class TestVerifyDocument:
             "27.07.2004",
             "О государственной гражданской службе Российской Федерации",
         ) is True
+class TestTimeoutResilience:
+    """TimeoutError одного документа не останавливает обработку остальных."""
+
+    def test_timeout_does_not_stop_other_documents(self, monkeypatch, capsys):
+        """TimeoutError на первом документе → печатается TIMEOUT, второй док обрабатывается."""
+        registry = {
+            "documents": [
+                {
+                    "id": "timeout-doc", "type": "Федеральный закон", "number": "117-ФЗ",
+                    "date": "05.08.2000", "title": "Таймаутный", "enabled": True,
+                },
+                {
+                    "id": "good-doc", "type": "Федеральный закон", "number": "79-ФЗ",
+                    "date": "27.07.2004", "title": "Нормальный", "enabled": True,
+                },
+            ]
+        }
+
+        class _MockPath:
+            def read_text(self, encoding="utf-8"):
+                return json.dumps(registry)
+
+        monkeypatch.setattr(dd, "REGISTRY", _MockPath())
+
+        call_order = []
+
+        def _mock_download_one(doc, cache_path=None):
+            call_order.append(doc["id"])
+            if doc["id"] == "timeout-doc":
+                raise TimeoutError("timed out")
+            # второй документ — нормально
+            print(f"== document: {doc['id']} ==")
+            print("  method      : publication (публикационный API / legacy-резерв)")
+            print("  detail      : OK")
+
+        monkeypatch.setattr(dd, "download_one", _mock_download_one)
+
+        dd.main()
+
+        captured = capsys.readouterr()
+        assert f"!! ОШИБКА СЕТИ: timeout-doc: timeout при обращении к источнику" in captured.out
+        assert "== document: good-doc ==" in captured.out
+        assert call_order == ["timeout-doc", "good-doc"]
+class TestMarkdownPipeline:
+    """После main() должен запускаться batch_convert."""
+
+    def test_batch_convert_called_after_downloads(self, monkeypatch):
+        """После завершения цикла по документам вызывается batch_convert()."""
+        registry = {
+            "documents": [
+                {
+                    "id": "doc-a", "type": "Федеральный закон", "number": "1-ФЗ",
+                    "date": "01.01.2020", "title": "А", "enabled": True,
+                },
+                {
+                    "id": "doc-b", "type": "Федеральный закон", "number": "2-ФЗ",
+                    "date": "02.02.2020", "title": "Б", "enabled": True,
+                },
+            ]
+        }
+
+        class _MockPath:
+            def read_text(self, encoding="utf-8"):
+                return json.dumps(registry)
+
+        monkeypatch.setattr(dd, "REGISTRY", _MockPath())
+        monkeypatch.setattr(dd, "download_one", lambda doc, **kw: None)
+
+        called = False
+
+        def _mock_batch(*a, **kw):
+            nonlocal called
+            called = True
+
+        monkeypatch.setattr(dd, "batch_convert", _mock_batch)
+        dd.main()
+        assert called, "batch_convert() должен быть вызван после main()"
+class TestResolvedRdk:
+    """Проверка, что _download_to_tmp использует _resolved_rdk из _revision_current."""
+
+    def test_find_latest_rdk_not_called_when_resolved_rdk_exists(
+        self, tmp_path, monkeypatch
+    ):
+        """find_latest_rdk() не вызывается, если _resolved_rdk уже сохранён в entry."""
+        _setup_legacy_download(monkeypatch)
+        # Переопределяем find_latest_rdk — он НЕ должен быть вызван
+        monkeypatch.setattr(legacy, "find_latest_rdk", _no_legacy_call())
+        monkeypatch.setattr(dd, "RAW_DIR", tmp_path)
+        monkeypatch.setattr(dd, "RAW_HTML_DIR", tmp_path)
+        cpath = tmp_path / "c.json"
+        dd.download_one(REC_LEG, cache_path=cpath)
+        assert (tmp_path / "79-FZ.pdf").exists()
+        assert (tmp_path / "79-FZ.html").exists()
+        entry = _read_entry(cpath, "79-FZ")
+        assert entry["revision"]["id"] == 98

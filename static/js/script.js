@@ -736,6 +736,37 @@ async function sendMessage() {
     let sHtml = '';
     let sHtmlImg = '';
     let fullText = "";
+    let renderRafId = null;
+    
+    const doTextRender = () => {
+        if (!currentBotMsgDiv) return;
+        let textPart = fullText.split('[CHART_JSON]')[0];
+        let chartPart = fullText.includes('[CHART_JSON]') ? fullText.substring(fullText.indexOf('[CHART_JSON]')) : '';
+        
+        textPart = textPart.replace(/([.!?:;])\s*•/g, '$1\n\n•');
+        let display = textPart + chartPart;
+        display = display.replace(/\[CHART_JSON\][\s\S]*?\[\/CHART_JSON\]/g, '📈 *Визуализация готова*');
+        display = display.replace(/\[CHART_JSON\][\s\S]*$/g, '📈 *Генерация аналитики...*');
+        
+        let parsedHtml = safeMarkdownToHtml(display);
+        
+        if (!parsedHtml.includes('<table')) {
+            parsedHtml = parsedHtml.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/gi, '$1');
+            parsedHtml = parsedHtml.replace(/<code>([\s\S]*?)<\/code>/gi, '$1');
+        }
+
+        currentBotMsgDiv.innerHTML = "<b>База знаний ФНС:</b> 📌 <br>" + parsedHtml;
+        scrollToBottom();
+    };
+    
+    const scheduleTextRender = () => {
+        if (renderRafId) return;
+        renderRafId = requestAnimationFrame(() => {
+            renderRafId = null;
+            doTextRender();
+        });
+    };
+    
     let hadChartOnly = false;
 
     try {
@@ -851,30 +882,18 @@ async function sendMessage() {
                         }
                         
                         fullText += data.content;
-                        
-                        if (currentBotMsgDiv) {
-                            let textPart = fullText.split('[CHART_JSON]')[0];
-                            let chartPart = fullText.includes('[CHART_JSON]') ? fullText.substring(fullText.indexOf('[CHART_JSON]')) : '';
-                            
-                            textPart = textPart.replace(/([.!?:;])\s*•/g, '$1\n\n•');
-                            let display = textPart + chartPart;
-                            display = display.replace(/\[CHART_JSON\][\s\S]*?\[\/CHART_JSON\]/g, '📈 *Визуализация готова*');
-                            display = display.replace(/\[CHART_JSON\][\s\S]*$/g, '📈 *Генерация аналитики...*');
-                            
-                            let parsedHtml = safeMarkdownToHtml(display);
-                            
-                            if (!parsedHtml.includes('<table')) {
-                                parsedHtml = parsedHtml.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/gi, '$1');
-                                parsedHtml = parsedHtml.replace(/<code>([\s\S]*?)<\/code>/gi, '$1');
-                            }
-
-                            currentBotMsgDiv.innerHTML = sanitizeHtml("<b>База знаний ФНС:</b> 📌 <br>" + parsedHtml);
-                            scrollToBottom();
-                        }
+                        scheduleTextRender();
                     }
                 } catch (e) {}
             }
         }
+        
+        // Финальный рендер: последние чанки гарантированно попадают в DOM
+        if (renderRafId) {
+            cancelAnimationFrame(renderRafId);
+            renderRafId = null;
+        }
+        doTextRender();
         
         if (!currentBotMsgDiv && (sHtml || sHtmlImg)) {
             currentBotMsgDiv = appendMessage('bot', '');

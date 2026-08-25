@@ -30,6 +30,7 @@ import json
 import os
 import re
 import sys
+import socket
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -40,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import app.pravo_resolver as legacy  # noqa: E402  (резервный механизм)
 import app.publication_api as pub  # noqa: E402  (основной официальный API)
 from app.ingestion.html_to_pdf import convert_html_to_pdf  # noqa: E402
+from app.ingestion.html_to_markdown import batch_convert  # noqa: E402
 
 PROJECT = Path(__file__).resolve().parent.parent
 REGISTRY = PROJECT / "documents.json"
@@ -244,6 +246,7 @@ def _revision_current(doc: dict, entry: dict) -> dict:
     rev = legacy.find_latest_revision(entry["detail"]["nd"])
     if rev is None:
         raise ResolutionError(f"{doc['id']}: нет доступных редакций (legacy)")
+    entry["_resolved_rdk"] = rev["rdk"]
     return {"id": rev["rdk"], "label": rev["label"], "date": rev["date"]}
 
 
@@ -390,12 +393,14 @@ def _download_to_tmp(doc: dict, entry: dict) -> tuple[Path | None, int, int, str
 
         # --- legacy ---
         nd = entry["detail"]["nd"]
-        latest = legacy.find_latest_rdk(nd)
-        if latest is None:
-            raise ResolutionError(
-                f"{doc_id}: нет доступных редакций (legacy) для nd={nd}"
-            )
-        rdk, edition_label = latest
+        rdk = entry.get("_resolved_rdk")
+        if rdk is None:
+            latest = legacy.find_latest_rdk(nd)
+            if latest is None:
+                raise ResolutionError(
+                    f"{doc_id}: нет доступных редакций (legacy) для nd={nd}"
+                )
+            rdk, edition_label = latest
         data = get_bytes(legacy.print_url(nd, rdk))
         html = decode_html(data)
         if not verify_document(html, doc["number"], doc["title"]):
@@ -529,8 +534,12 @@ def main() -> None:
             print(f"  !! ОСТАНОВ(неоднозначность/несовпадение): {exc}")
         except pub.PublicAPIError as exc:
             print(f"  !! ОСТАНОВ(API недоступен): {exc}")
+        except (TimeoutError, socket.timeout, urllib.error.URLError):
+            print(f"  !! ОШИБКА СЕТИ: {doc['id']}: timeout при обращении к источнику")
         except ResolutionError as exc:
             print(f"  !! ОШИБКА: {exc}")
+
+    batch_convert()
 
 
 if __name__ == "__main__":

@@ -265,7 +265,8 @@ def find_latest_rdk(nd: str) -> tuple[int, str] | None:
     документа; ``rdk`` — максимальный номер редакции в этом списке.
     Опции со значением ``"n"`` (недоступная редакция) пропускаются.
     """
-    nav = get_html(f"{BASE_URL}?docbody=&nd={nd}")
+    url = f"{BASE_URL}?docbody=&nd={nd}"
+    nav = get_html(url)
     return _parse_latest_rdk(nav)
 
 

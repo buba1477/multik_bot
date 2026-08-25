@@ -32,6 +32,13 @@ from llama_index.core.schema import MetadataMode  # <--- ДОБАВЬ MetadataMo
 
 # Импорт графиков и визуализации (для будущего использования в ECharts)
 from .chart_engine import DynamicChartEngine
+# Утилиты retrieval (чистые функции, тестируемые без тяжелых зависимостей)
+from .retrieval_utils import (
+    multi_part_boost as _mp_boost,
+    reconstruct_article_context as _reconstruct_ctx,
+    extract_article_prefix as _extract_prefix,
+    is_enumeration_query as _is_enum_q,
+)
 
 from qdrant_client import QdrantClient  # СТРОГО ТАК
 from llama_index.vector_stores.qdrant import QdrantVectorStore
@@ -95,7 +102,7 @@ else:
     logger.info(f"🚀 Использую RoSBERTa из {MODEL_PATH}")
 
 _QA_PROMPT_STR = """
-Ты — ведущий эксперт ФНС России. Отвечай СТРОГО на русском языке.
+Ты — эксперт по вопросам ФНС России и государственной службы. Используй только предоставленный КОНТЕКСТ. Отвечай СТРОГО на русском языке.
 
 ФОРМАТИРУЙ ОТВЕТ:
 - Выделяй **ключевые термины и названия статей жирным шрифтом** (**денежное содержание**, **служебный контракт**, **статья 15**)
@@ -106,16 +113,52 @@ _QA_PROMPT_STR = """
 - Пиши лаконично, структурированно, по существу вопроса
 
 ПРАВИЛА:
-1. Отвечай только на основе предоставленного КОНТЕКСТА.
-2. ЗАПРЕЩЕНО придумывать информацию или использовать знания, которых нет в тексте.
-3. ЗАПРЕЩЕНО давать общие рассуждения без опоры на текст.
-4. ТЕСТЫ: Если в вопросе перечислены варианты ответов — выбери ОДИН самый точный по контексту. Не обобщай и не перечисляй всё подряд.
-5. Если информации нет в контексте — напиши: «БАЗА_ПУСТА: Информация отсутствует».
-6. Если вопрос не по теме ФНС/госслужбы — «БАЗА_ПУСТА: Я эксперт по вопросам ФНС России».
-7. ЕСЛИ в ответе нужно указать числовые данные из контекста — указывай их ТОЧНО как в тексте, с той же единицей измерения. ЗАПРЕЩЕНО переводить размерности: триллионы в миллиарды, миллиарды в миллионы и т.п. (например, "3,5 трлн руб." должно остаться "3,5 трлн руб.", а не "3500 млрд руб.").
-8. ЕСЛИ в контексте несколько пунктов с разными условиями (например, разные виды выплат) — отвечай ТОЛЬКО по тому пункту, который точно соответствует вопросу. Условия из других пунктов ИГНОРИРУЙ.
+1. Отвечай только на основе предоставленного КОНТЕКСТА. Не используй внешние знания.
 
------------------------
+2. Если необходимая информация отсутствует в КОНТЕКСТЕ, напиши:
+«БАЗА_ПУСТА: Информация отсутствует».
+
+3. Если вопрос не относится к ФНС России, государственной службе или предоставленному КОНТЕКСТУ, напиши:
+«БАЗА_ПУСТА: Я эксперт по вопросам ФНС России».
+
+4. Отвечай непосредственно на поставленный вопрос. Не заменяй вопрос близким по смыслу вопросом.
+
+5. Если вопрос требует объединения нескольких положений КОНТЕКСТА, используй их совместно, но сохраняй условия и область применения каждого положения.
+
+6. Не переноси условия, числовые значения, ограничения или исключения из одной нормы на другую.
+
+7. Если несколько положений регулируют разные случаи, не объединяй их в одно правило.
+
+8. Если в КОНТЕКСТЕ есть общее правило и специальные условия или исключения, укажи их раздельно и не смешивай область их применения.
+
+9. Если вопрос содержит несколько частей, ответь на каждую часть отдельно.
+
+10. Если КОНТЕКСТ позволяет сделать вывод путём непосредственного сопоставления нескольких его положений, такой вывод разрешён. Не добавляй сведения, которых нет в КОНТЕКСТЕ.
+
+11. Числовые значения воспроизводи точно как в КОНТЕКСТЕ. Не пересчитывай и не меняй единицы измерения.
+
+12. Если положения КОНТЕКСТА противоречат друг другу, укажи наличие противоречия и не выбирай один вариант самостоятельно.
+
+13. Если вопрос содержит варианты ответа, выбери один вариант, который непосредственно подтверждается КОНТЕКСТОМ.
+
+14. ЮРИДИЧЕСКИЕ ПРАВИЛА ВЫВОДОВ (имеют приоритет над правилом 10):
+    - Отсутствие в КОНТЕКСТЕ прямого разрешения НЕ означает наличие запрета.
+    - Отсутствие в КОНТЕКСТЕ прямого запрета НЕ означает наличие разрешения.
+    - Отсутствие указания на обязанность НЕ означает наличие запрета.
+    - Отсутствие указания на запрет НЕ означает наличие права.
+    - Не выводи юридическую обязанность, запрет, право, санкцию, основание
+      для увольнения или отстранения, если это прямо не следует из КОНТЕКСТА.
+    - Не превращай общую норму о предотвращении или урегулировании конфликта
+      интересов в конкретный запрет или обязанность, если такой запрет
+      или обязанность прямо не указаны.
+    - ЗАПРЕЩЕНЫ следующие логические подмены:
+      • «в КОНТЕКСТЕ не указано, что разрешено» → «значит запрещено»
+      • «представитель нанимателя вправе отстранить» → «служащий обязан прекратить»
+      • «представитель нанимателя обязан принять меры» → «обязан именно отстранить»
+      • «может привести к конфликту интересов» → «конфликт уже возник»
+    - Если юридическое последствие прямо не установлено в КОНТЕКСТЕ,
+      напиши: «В представленном КОНТЕКСТЕ это прямо не установлено».
+
 КОНТЕКСТ:
 {context_str}
 ------------------------
@@ -244,6 +287,10 @@ _EMPTY_RESPONSE_RE = re.compile(
 # источники собираются в app.rag.sources.collect_sources
 
 
+# Регулярное выражение для парсинга ID чанка: документ_статья_часть
+_ARTICLE_CHUNK_ID_RE = re.compile(r'^(.+)_p(\d+)$')
+
+
 class RerankedEngine:
 
     # =========================================================
@@ -272,6 +319,17 @@ class RerankedEngine:
         "за исключением",
     ]
 
+    # Паттерны запросов на перечень/полноту (structure-aware reconstruction)
+    _ENUMERATION_QUERY_PATTERNS = [
+        "перечисли",
+        "перечисли все",
+        "какие виды",
+        "какие бывают",
+        "назови все",
+        "укажи все",
+        "полный перечень",
+    ]
+
     QUERY_REPLACEMENTS = {
         "госслужащему": "гражданскому служащему",
         "госслужащий": "гражданский служащий",
@@ -288,6 +346,7 @@ class RerankedEngine:
         "коррупция": "коррупционное правонарушение",
         "коррупционный": "коррупционное правонарушение",
         "цкп": "цифровая кадровая платформа",
+        "ё": "е"
     }
 
     BASE_ENTITIES = [
@@ -432,12 +491,30 @@ class RerankedEngine:
                     "local_img": payload.get("local_img", ""),
                 }
 
+                # Сохраняем все остальные payload-поля (document_id, point, part,
+                # total_parts, categories, subjects и т.д.) для internal-использования
+                # в ranking/boost — но не для LLM.
+                _INTERNAL_PAYLOAD_SKIP = {"_node_content", "_node_type", "doc_id", "ref_doc_id"}
+                for pk in payload:
+                    if pk not in meta and pk not in _INTERNAL_PAYLOAD_SKIP:
+                        meta[pk] = payload[pk]
+
+                # Поля, которые используются только внутри retrieval/ranking,
+                # никогда не должны попадать ни в embedding, ни в LLM-контекст
+                _META_ONLY_KEYS = [
+                    "document_id", "point", "subpoint", "part", "total_parts",
+                    "subjects", "categories", "references", "keywords", "context_flat",
+                    "_em_input",
+                ]
+
                 node = TextNode(
                     text=node_text,
                     id_=node_id,
                     metadata=meta,
-                    excluded_embed_metadata_keys=["id", "source_url", "local_img"],
-                    excluded_llm_metadata_keys=["id", "source_url", "local_img", "graph_structure"],
+                    excluded_embed_metadata_keys=["id", "source_url", "local_img", *_META_ONLY_KEYS],
+                    excluded_llm_metadata_keys=[
+                        "id", "source_url", "local_img", "graph_structure", *_META_ONLY_KEYS
+                    ],
                 )
                 node.metadata_template = "{key}: {value}"
                 node.text_template = "РАЗДЕЛ: {metadata_str}\nТЕКСТ:\n{content}"
@@ -609,6 +686,30 @@ class RerankedEngine:
         except Exception as e:
             logger.error(f"❌ Debug Error: {e}", exc_info=True)
 
+    # =========================================================
+    # MULTI-PART BOOST (делегировано в retrieval_utils)
+    # =========================================================
+    def _multi_part_boost(self, nodes: list, top_n: int = 10) -> list:
+        """Делегирует multi_part_boost в retrieval_utils (с fallback для legacy-чанков)."""
+        return _mp_boost(nodes, top_n=top_n)
+
+    # =========================================================
+    # STRUCTURE-AWARE RECONSTRUCTION
+    # =========================================================
+    @staticmethod
+    def _extract_article_prefix(chunk_id: str) -> Optional[str]:
+        """Делегирует extract_article_prefix в retrieval_utils."""
+        return _extract_prefix(chunk_id)
+
+    @staticmethod
+    def _is_enumeration_query(query_text: str) -> bool:
+        """Делегирует is_enumeration_query в retrieval_utils."""
+        return _is_enum_q(query_text)
+
+    def _reconstruct_article_context(self, query_text: str, final_nodes: list) -> list:
+        """Делегирует reconstruct_article_context в retrieval_utils."""
+        return _reconstruct_ctx(query_text, final_nodes, self.node_map)
+
     def _sync_query(self, query_text: str):
         from llama_index.core.schema import MetadataMode, QueryBundle, NodeWithScore
 
@@ -642,6 +743,46 @@ class RerankedEngine:
                 boosted_nodes.append(NodeWithScore(node=node.node, score=new_score))
 
             combined_nodes = sorted(boosted_nodes, key=lambda x: x.score, reverse=True)
+
+        # 3b. METADATA BOOST (soft boost по категориям/субъектам)
+        metadata_boosted = []
+        query_lower = query_text.lower()
+        # Список категорий/субъектов для буста (можно расширять)
+        _QUERY_CATEGORY_KEYWORDS = {
+            "срок": "сроки",
+            "документ": "документы",
+            "подать": "порядок_подачи",
+            "подача": "порядок_подачи",
+            "направить": "порядок_подачи",
+            "конкурс": "конкурс",
+            "комиссия": "комиссия",
+            "требование": "требования",
+            "обязан": "требования",
+            "запрет": "ограничения",
+            "ограничение": "ограничения",
+            "назначение": "назначение",
+            "должность": "назначение",
+        }
+        matched_categories = set()
+        for kw, cat in _QUERY_CATEGORY_KEYWORDS.items():
+            if kw in query_lower:
+                matched_categories.add(cat)
+
+        if matched_categories:
+            METADATA_BONUS = 0.05
+            for node in combined_nodes:
+                meta = node.node.metadata
+                node_cats = meta.get("categories", [])
+                if isinstance(node_cats, list) and matched_categories & set(node_cats):
+                    new_score = node.score + METADATA_BONUS
+                else:
+                    new_score = node.score
+                metadata_boosted.append(NodeWithScore(node=node.node, score=new_score))
+            combined_nodes = sorted(metadata_boosted, key=lambda x: x.score, reverse=True)
+            logger.info(f"📊 Metadata boost applied for categories: {matched_categories}")
+
+        # 3c. MULTI-PART BOOST (групповая поддержка многочастных блоков)
+        combined_nodes = self._multi_part_boost(combined_nodes, top_n=10)
 
         # ДЕБАГ ХАЙБРИД
         logger.info(f"\n{'=' * 20} HYBRID TOP-10 {'=' * 20}")
@@ -692,6 +833,45 @@ class RerankedEngine:
         synthesizer = self._select_response_mode(query_text)
         final_chunks = final_nodes[:self.final_top_k]
         logger.info(f"🧬 Final chunks allowed for LLM context: {len(final_chunks)}")
+
+        # 5a. STRUCTURE-AWARE RECONSTRUCTION (для запросов на перечень/полноту)
+        final_chunks = self._reconstruct_article_context(query_text, final_chunks)
+
+        # ============================================================
+        # 5b. CONTEXT BUDGET ENFORCEMENT (единственная точка ограничения)
+        # ============================================================
+        # Используем ту же эвристику char/4 для оценки токенов (как в строках 988-989).
+        # Резерв токенов на системный промпт + вопрос.
+        # Если суммарный контекст превышает budget, обрезаем чанки (по score).
+        # ============================================================
+        CONTEXT_WINDOW = 6144  # Значение из Settings.llm (context_window и num_ctx)
+        PROMPT_BUDGET = 800
+        remaining_budget = CONTEXT_WINDOW - PROMPT_BUDGET
+
+        if remaining_budget > 0 and final_chunks:
+            budget_used = 0
+            kept_chunks = []
+            truncated = False
+            for nws in final_chunks:
+                content = nws.node.get_content(metadata_mode=MetadataMode.LLM)
+                chunk_tokens = max(1, len(content) // 4)
+                if budget_used + chunk_tokens <= remaining_budget:
+                    kept_chunks.append(nws)
+                    budget_used += chunk_tokens
+                else:
+                    truncated = True
+                    logger.warning(
+                        f"⚠️ Context budget exceeded ({budget_used + chunk_tokens} > {remaining_budget}): "
+                        f"dropping {nws.node.node_id} (score={nws.score:.4f})"
+                    )
+                    break
+            if truncated:
+                logger.info(
+                    f"📏 Context budget enforced: kept {len(kept_chunks)}/{len(final_chunks)} chunks "
+                    f"(estimated ~{budget_used}/{remaining_budget} tokens)"
+                )
+                final_chunks = kept_chunks
+        # ============================================================
 
         # 🔥 УМНЫЙ ДЕБАГ: Пишем файлы строго если флаг включен в .env
         if os.getenv("DEBUG_MODE", "False").lower() == "true":

@@ -236,6 +236,7 @@ def _pack_blocks(
     max_tokens: int,
     target_tokens: int,
     min_tokens: int,
+    split_block_indices: set[int] | None = None,
 ) -> list[tuple[str, list[int]]]:
     """Упаковать блоки (текст, is_editorial) в чанки.
 
@@ -264,6 +265,10 @@ def _pack_blocks(
 
     for bi, (text, is_editorial) in enumerate(blocks):
         b_t = count_tokens(text)
+
+        # Force split before this block if in split_block_indices
+        if split_block_indices and bi in split_block_indices:
+            flush()
 
         if is_editorial:
             # Редакционный блок — единый, НЕ дробить на много чанков.
@@ -417,12 +422,129 @@ def _group_segments(records: list[dict]) -> list[dict]:
                 seg["title"] = f"Пункт {first_para}" if first_para else "Преамбула"
 
     return segments
+def _make_doc_display_name(safe_doc_id: str, doc_display: str) -> str:
+    """Преобразовать идентификатор документа в читаемое название.
 
+    Examples:
+        '79-fz', '79-ФЗ'           -> '79-ФЗ'
+        'ukaz-557', '557'            -> 'Указ № 557'
+        'postanovlenie-1000', '1000'  -> 'Постановление № 1000'
+        'rasporyazhenie-2867-r', '2867-р' -> 'Распоряжение № 2867-р'
+    """
+    if safe_doc_id.lower().endswith('-fz'):
+        # Для ФЗ doc_display уже в формате '79-ФЗ'
+        return doc_display
+    m = re.match(r'^(ukaz|postanovlenie|rasporyazhenie)-(.+)', safe_doc_id)
+    if m:
+        prefix_map = {
+            'ukaz': 'Указ',
+            'postanovlenie': 'Постановление',
+            'rasporyazhenie': 'Распоряжение',
+        }
+        type_label = prefix_map[m.group(1)]
+        return f'{type_label} № {doc_display}'
+    # Fallback — doc_display как есть
+    return doc_display
+
+
+def _safe_truncate(text: str, max_len: int = 120) -> str:
+    """Обрезать до max_len по границе слова, добавить '…' если обрезано."""
+    if len(text) <= max_len:
+        return text
+    truncated = text[:max_len]
+    last_space = truncated.rstrip().rfind(' ')
+    if last_space > 0:
+        truncated = truncated[:last_space]
+    return truncated + '…'
+
+
+# ---------------------------------------------------------------------------
+# Детерминированный semantic title (rule-based, без LLM/ML)
+# ---------------------------------------------------------------------------
+
+
+def _make_semantic_title(text: str, doc_display_name: str, point_key: str | None) -> str:
+    """Структурный title чанка на основе заголовка сегмента документа.
+
+    Title формируется ТОЛЬКО из реальной структуры документа
+    (статья/раздел/глава/приложение/пункт/преамбула).
+    Никаких семантических догадок, keyword-категорий или извлечения
+    темы из текста чанка.
+
+    Правила (по приоритету):
+
+    0. point_key со структурным префиксом
+       (Статья/Раздел/Глава/Приложение/Пункт/Преамбула)
+       → ``"{doc}: {point_key}"``.
+    1. point_key — чистое число → ``"{doc} — Пункт {num}"``.
+    2. point_key is None, текст начинается со структурного заголовка
+       (Статья/Раздел/Глава/Приложение N. Content) → полный заголовок.
+    3. point_key is None, текст с номера в начале
+       → ``"{doc} — Пункт {num}"``.
+    Fallback — только ``doc_display_name``.
+
+    Args:
+        text: Тело чанка (без префикса ``[doc] [title]``).
+        doc_display_name: Отображаемое имя документа.
+        point_key: Структурный заголовок сегмента, номер пункта или None.
+
+    Returns:
+        Структурный заголовок чанка.
+    """
+    # ==================================================================
+    # Priority 0: Структурный заголовок сегмента
+    # Если point_key — это полный заголовок статьи/раздела/главы/
+    # приложения/пункта/преамбулы, используем его как есть.
+    # ==================================================================
+    if point_key and re.match(
+        r'^(?:Статья|Раздел|Глава|Приложение|Пункт|Преамбула)',
+        point_key,
+    ):
+        return f"{doc_display_name}: {point_key}"
+
+    # ==================================================================
+    # Priority 1: Чистый номер пункта (point_key — число)
+    # ==================================================================
+    if point_key and re.match(r"^\d+(?:[.]\d+)*$", point_key):
+        return f"{doc_display_name} — Пункт {point_key}"
+
+    # ==================================================================
+    # Priority 2: Структурный заголовок из текста (point_key is None)
+    # Если текст начинается со "Статья/Раздел/Глава/Приложение N.",
+    # извлекаем полный заголовок.
+    # ==================================================================
+    if text and point_key is None:
+        m = re.match(
+            r"^\s*(Статья|Раздел|Глава|Приложение)\s+"
+            r"(\d+(?:[\s.]\d+)*)[.)]?\s*(.*)",
+            text,
+            re.IGNORECASE,
+        )
+        if m:
+            kind = m.group(1)
+            num = m.group(2).strip()
+            content = m.group(3).strip().rstrip(".")
+            title_part = f"{kind} {num}"
+            if content:
+                title_part += f". {content}"
+            return f"{doc_display_name}: {title_part}"
+
+        # Если текст начинается с числа → это пункт
+        m = re.match(r"^\s*(\d+(?:[\s.]\d+)*)\.[ 	]+", text)
+        if m:
+            num = re.sub(r"\s+", ".", m.group(1).strip())
+            return f"{doc_display_name} — Пункт {num}"
+
+    # ==================================================================
+    # Fallback — только имя документа
+    # ==================================================================
+    return doc_display_name
 
 def _build_chunks_for_segment(
     seg: dict,
     doc_id: str,
     doc_display: str,
+    doc_display_name: str,
     source_url: str,
     max_tokens: int,
     target_tokens: int,
@@ -462,7 +584,15 @@ def _build_chunks_for_segment(
     prefix = f"[{doc_display}] [{prefix_title}]"
     prefix_tokens = count_tokens(prefix)
 
-    parts = _pack_blocks(blocks, prefix_tokens, max_tokens, target_tokens, min_tokens)
+    # Detect blocks with premiums «maximum size is not limited» -
+    # they should not be merged with bonus blocks into one chunk.
+    split_block_indices: set[int] = set()
+    for bi_p, (txt_p, _) in enumerate(blocks):
+        if "премии" in txt_p.lower() and "не ограничивается" in txt_p.lower():
+            split_block_indices.add(bi_p)
+
+    parts = _pack_blocks(blocks, prefix_tokens, max_tokens, target_tokens, min_tokens,
+                         split_block_indices=split_block_indices)
 
     chunks: list[dict] = []
     for i, (part, part_block_indices) in enumerate(parts, 1):
@@ -477,14 +607,14 @@ def _build_chunks_for_segment(
             record_idx = block_to_record[first_block_in_part]
             pn = _get_paragraph_ctx(seg["body"][record_idx])
             if pn:
-                # Строим заголовок: "Пункт {N}" или "Преамбула {N}"?
+                point_key = pn
                 chunk_title = f"Пункт {pn}"
             else:
+                point_key = prefix_title
                 chunk_title = prefix_title
         else:
+            point_key = prefix_title
             chunk_title = prefix_title
-
-        cid = _make_chunk_id(seg, doc_id, i, seg_type, seg_idx=seg_idx)
 
         cid = _make_chunk_id(seg, doc_id, i, seg_type, seg_idx=seg_idx)
 
@@ -492,7 +622,7 @@ def _build_chunks_for_segment(
         chunk_prefix = f"[{doc_display}] [{chunk_title}]"
         chunks.append({
             "id": cid,
-            "title": chunk_title,
+            "title": _safe_truncate(_make_semantic_title(part, doc_display_name, point_key)),
             "text": _fit_full_text(chunk_prefix, part, max_tokens),
             "local_img": "",
             "url": source_url,
@@ -639,11 +769,12 @@ def convert(
     if not source_url:
         source_url = resolve_source_url(structure_fname, doc=doc)
 
+    doc_display_name = _make_doc_display_name(safe_doc_id, doc_display)
     segments = _group_segments(records)
     chunks: list[dict] = []
     for seg_idx, seg in enumerate(segments, 1):
         chunks.extend(_build_chunks_for_segment(
-            seg, safe_doc_id, doc_display, source_url,
+            seg, safe_doc_id, doc_display, doc_display_name, source_url,
             MAX_TOKENS, TARGET_TOKENS, MIN_CHUNK_TOKENS,
             seg_idx=seg_idx))
 
