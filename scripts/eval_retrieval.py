@@ -680,17 +680,6 @@ def main() -> None:
         for _ in range(args.warmup):
             _ = dense.top_ids(normalize_query(qrels[0]["query"]), INITIAL_TOP_K)
 
-    results: list[dict] = []
-    for cfg in configs:
-        log(f"\n▶️  Конфигурация: {cfg}")
-        results.append(run_config(cfg, qrels, corpus, corpus_by_id, bm25, dense, ce,
-                                  ks, args.match_level, keep_per_query=args.per_query))
-
-    log("\n" + "=" * 78)
-    log("РЕЗУЛЬТАТЫ (ablation)")
-    log("=" * 78)
-    print_table(results, ks)
-
     meta = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "qrels": str(qrels_path),
@@ -705,6 +694,18 @@ def main() -> None:
         },
         "ragas": ragas_status() if args.ragas else {"status": "not_requested", "reason": ""},
     }
+
+    results: list[dict] = []
+    for cfg in configs:
+        log(f"\n▶️  Конфигурация: {cfg}")
+        results.append(run_config(cfg, qrels, corpus, corpus_by_id, bm25, dense, ce,
+                                  ks, args.match_level, keep_per_query=args.per_query))
+        save_reports(Path(args.out), results, meta, ks)  # инкрементально: не терять длинный прогон
+
+    log("\n" + "=" * 78)
+    log("РЕЗУЛЬТАТЫ (ablation)")
+    log("=" * 78)
+    print_table(results, ks)
     save_reports(Path(args.out), results, meta, ks)
     log(f"\n💾 Отчёты: {args.out}/eval_report.json, {args.out}/eval_report.md")
     if meta["ragas"]["status"] == "skipped":
