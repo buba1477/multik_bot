@@ -1,6 +1,12 @@
 FROM python:3.11-slim
 
-# 1. Системные зависимости (включая зависимости Chromium для Playwright)
+# Debian mirror
+# deb.debian.org недоступен с текущего хоста, поэтому используем рабочее зеркало
+RUN sed -i 's|http://deb.debian.org/debian|http://ftp.nl.debian.org/debian|g' /etc/apt/sources.list.d/debian.sources \
+    && sed -i 's|http://deb.debian.org/debian-security|http://ftp.nl.debian.org/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+# 1. Системные зависимости
+# Включая зависимости Chromium для Playwright
 RUN apt-get update && apt-get install -y \
     curl \
     build-essential \
@@ -23,11 +29,12 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# 2. Установка PyTorch CPU (Бетонная ссылка)
-RUN pip install --no-cache-dir torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+# 2. PyTorch CPU
+RUN pip install --no-cache-dir \
+    torch==2.4.1 \
+    --index-url https://download.pytorch.org/whl/cpu
 
-
-# 3. Установка стабильной связки библиотек
+# 3. Основной стек Python
 RUN pip install --no-cache-dir \
     "numpy<2.0.0" \
     "qdrant-client==1.9.0" \
@@ -46,21 +53,19 @@ RUN pip install --no-cache-dir \
     "fastapi==0.115.0" \
     "uvicorn==0.30.6"
 
-# 4. 🔥 КРИТИЧНО: Предзагрузка словарей NLTK
-# Сначала копируем только скрипт настройки
-COPY scripts/setup_nltk.py scripts/setup_nltk.py
-# Запускаем его нормально
-RUN python scripts/setup_nltk.py
+# 4. NLTK DATA — локально, без скачивания из интернета
+# LlamaIndex содержит собственный NLTK cache
+ENV NLTK_DATA=/usr/local/lib/python3.11/site-packages/llama_index/core/_static/nltk_cache
 
-# 5. Копируем требования (если есть доп. либы)
+# 5. Дополнительные зависимости проекта
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt || true
 
-# 6. 📄 Установка bundled Chromium для Playwright HTML→PDF
-RUN python -m playwright install chromium 2>&1 || echo "Playwright browsers install skipped"
+# 6. Bundled Chromium для Playwright HTML -> PDF
+RUN python -m playwright install chromium 2>&1 \
+    || echo "Playwright browsers install skipped"
 
-# 6. Копируем код
-# Благодаря твоему новому .dockerignore сюда попадет только код!
+# 7. Копируем код проекта
 COPY . .
 
 CMD ["python", "main.py"]

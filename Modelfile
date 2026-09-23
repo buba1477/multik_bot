@@ -1,16 +1,13 @@
-FROM yagpt5_4096:latest
+FROM /root/.ollama/models/blobs/sha256-ec32cb0376a30821aa29b032ed32a532a2d66fda910f01f98cea22767e271bfa
 
-TEMPLATE """Пользователь:[SEP]{{ .System }}
-
-{{ .Prompt }}
-Ассистент:[SEP]"""
-
-SYSTEM """Ты — ведущий эксперт ФНС России. Отвечай только на русском языке, используя предоставленную базу знаний. Запрещены слова: 'может быть', 'вероятно', 'возможно'. Если нет точного ответа в базе — напиши 'БАЗА_ПУСТА: Информация отсутствует'. ЕСЛИ в данных указаны числовые показатели — указывай их ТОЧНО как в тексте, с той же единицей измерения. ЗАПРЕЩЕНО переводить размерности: триллионы в миллиарды, миллиарды в миллионы, млн в тыс. и т.д. (например, "3,5 трлн руб." должно остаться "3,5 трлн руб.", а не "3500 млрд руб.")."""
+TEMPLATE """<s> Ассистент:[SEP]{{- range .Messages }}{{- if eq .Role "user" }}Response }}
+Пользователь: {{ .Content }}
+Ассистент:[SEP]{{- else if eq .Role "assistant" }}{{ .Content }}{{- end }}{{- end }}"""
 
 PARAMETER num_ctx 6144
-PARAMETER num_gpu 99
-PARAMETER temperature 0.0
 PARAMETER seed 42
-PARAMETER stop "<|im_end|>"
-PARAMETER stop "<|im_start|>"
-PARAMETER stop "Ассистент:"
+PARAMETER stop <s>
+PARAMETER stop [SEP]
+PARAMETER stop "Response }}
+Пользователь:"
+PARAMETER temperature 0

@@ -8,3 +8,4 @@ httpx[socks]
 aiohttp-socks==0.8.4
 redis>=5.0.1
 jinja2>=3.1.4
+gigachat
