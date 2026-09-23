@@ -207,3 +207,15 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# venv / local junk
+bin/
+dotenv/
+.tmp_convert/
+_archive/
+models/
+*.bak2
+*.OLD.py
+*.log.1
+Modelfile.yagpt5_f16
+app_audit.log*
