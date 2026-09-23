@@ -3,11 +3,7 @@
 {% block content %}
     <div id="chat"></div>
     
-    <!-- Главный контейнер панели ввода с relative-позиционированием -->
-     <div style="width: 100%; position: relative;">
-    
-    <!-- 1. Твой input-area — теперь ОН задает общую высоту и центрирует элементы -->
-   <div id="input-area">
+    <div id="input-area">
     <!-- Левая зона: только текстовое поле -->
     <div class="input-text-container">
         <textarea id="messageText" placeholder="Задай вопрос..." autocomplete="off"></textarea>
@@ -25,9 +21,5 @@
 </button>
     </div>
     </div>
-</div>
-
-    
-</div>
 </div>
 {% endblock %}

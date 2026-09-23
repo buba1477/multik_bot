@@ -905,9 +905,9 @@ async function sendMessage() {
             }
 
             let afterContent = '';
-            if (sHtml) afterContent += '<div style="margin-top:10px; border-top:1px solid #e2e2e2; padding-top:10px;">' + sHtml + '</div>';
+            if (sHtml) afterContent += '<div style="margin-top:10px; border-top:1px solid #e2e2e2;">' + sHtml + '</div>';
             if (sHtmlImg) afterContent += sHtmlImg;
-            afterContent += '<div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #e2e2e2; font-size: 11px; color: #ffffff; text-align: right;">🛡️ <em>Ответ подготовлен ИИ-консультантом ФНС</em></div>';
+            afterContent += '<div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #e2e2e2; font-size: 12px; color: var(--text-muted); text-align: right;">🛡️ <em>Ответ подготовлен ИИ-консультантом ФНС</em></div>';
 
             if (afterContent) {
                 safeInsertHtml(currentBotMsgDiv, afterContent);

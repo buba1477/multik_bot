@@ -264,8 +264,9 @@ header h2 .subtext {
     border-bottom-left-radius: 4px;
     border: 1px solid var(--border-color);
     border-left: 4px solid #cbd5e1;
-    max-width: 95%;
+    max-width: min(100%, 700px);
     width: 100%;
+    padding: clamp(18px, 2.2vw, 26px) clamp(20px, 2.6vw, 30px);
     box-sizing: border-box;
     box-shadow: 0 2px 8px var(--shadow-light), 0 4px 12px rgba(0, 51, 102, 0.08);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -329,8 +330,12 @@ header h2 .subtext {
 }
 
 /* Typography in Bot Messages */
+/* Единая вертикальная шкала отступов внутри ответа */
+.bot > :first-child { margin-top: 0; }
+.bot > :last-child  { margin-bottom: 0; }
+
 .bot h1, .bot h2, .bot h3, .bot h4 {
-    margin: 16px 0 8px 0;
+    margin: 20px 0 10px 0;
     font-weight: 700;
     color: #003366;
 }
@@ -341,10 +346,10 @@ header h2 .subtext {
 .bot h4 { font-size: 1em; }
 
 .bot p {
-    margin: 0 0 12px 0;
+    margin: 0 0 14px 0;
     line-height: 1.65;
     color: var(--text-primary);
-    text-align: justify;
+    text-align: left;
 }
 
 .bot p:last-child {
@@ -352,15 +357,19 @@ header h2 .subtext {
 }
 
 .bot ul, .bot ol {
-    margin: 8px 0 12px 0;
-    padding-left: 24px;
+    margin: 10px 0 14px 0;
+    padding-left: 26px;
 }
 
 .bot li {
     margin: 4px 0;
     line-height: 1.6;
     color: var(--text-primary);
-    text-align: justify;
+    text-align: left;
+}
+
+.bot li + li {
+    margin-top: 6px;
 }
 
 .bot strong, .bot b {
@@ -524,6 +533,7 @@ input:focus {
     box-sizing: border-box;
     width: 100%;
     margin-top: 10px;
+    flex-shrink: 0;
 }
 
 /* Контейнер для textarea */
@@ -1171,6 +1181,10 @@ body.sidebar-collapsed .sidebar-toggle-btn {
         padding: 10px 12px;
         font-size: 14px;
     }
+    /* .msg в медиа перебивает clamp() базового .bot — возвращаем пропорции */
+    .bot {
+        padding: 16px 18px;
+    }
     #input-area {
         padding: 8px 12px;
         border-radius: 20px;
@@ -1239,6 +1253,9 @@ body.sidebar-collapsed .sidebar-toggle-btn {
     .msg {
         padding: 8px 10px;
         font-size: 13px;
+    }
+    .bot {
+        padding: 14px 16px;
     }
     #input-area {
         padding: 6px 10px;
@@ -1372,6 +1389,11 @@ body.dark-mode .bot {
 body.dark-mode .bot:hover {
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6) !important;
     border-color: #4a4a4a !important;
+}
+
+/* Футер ответа: единственный div в .bot с инлайновым text-align: right */
+body.dark-mode .bot > div[style*="text-align: right"] {
+    color: #9ca3af !important;
 }
 
 body.dark-mode .bot p,
