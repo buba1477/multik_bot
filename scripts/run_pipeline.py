@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.ingestion import html_to_markdown
 from app.ingestion import markdown_structure_parser
 from app.ingestion import pdf_ocr
+from app.chunking import legal_chunker
 
 PROJECT = Path(__file__).resolve().parent.parent
 REGISTRY = PROJECT / "documents.json"
@@ -129,6 +130,18 @@ def validate_pairs() -> dict:
             "missing_pdf": sorted(missing_pdf)}
 
 
+def step_chunk() -> list[Path]:
+    """Structure JSON -> chunks JSONL (legal_chunker)."""
+    print("\n" + "=" * 60)
+    print("SHAG 4: Chanking structure -> chunks")
+    print("=" * 60)
+    results = legal_chunker.batch_convert()
+    print(f"\n  Sozdano .jsonl faylov: {len(results)}")
+    for p in results:
+        print(f"  - {p}")
+    return results
+
+
 def report_parser_results(results: list[dict]) -> None:
     print("\n" + "=" * 60)
     print("OTChYoT PO PARSINGU")
@@ -165,6 +178,7 @@ def main() -> None:
     do_ocr = "--ocr" in args or do_all
     do_convert = "--convert" in args or do_all
     do_parse = "--parse" in args or do_all
+    do_chunk = "--chunk" in args or do_all
     t_start = time.time()
 
     if do_download:
@@ -181,10 +195,15 @@ def main() -> None:
         results = step_parse()
         report_parser_results(results)
 
+    if do_chunk:
+        chunk_results = step_chunk()
+
     pairs = validate_pairs()
     elapsed = time.time() - t_start
 
     print(f"\n{'=' * 60}")
+    if "chunk_results" in dir() and chunk_results:
+        print(f"  Chunks: {len(chunk_results)} faylov")
     print(f"PAJPLAJN ZAVERShYON za {elapsed:.1f} sec")
     print(f"  PDF: {pairs['pdf_count']}, HTML: {pairs['html_count']}, Par: {pairs['paired']}")
     if ocr_stats:

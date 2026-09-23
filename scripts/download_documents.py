@@ -43,6 +43,9 @@ import app.publication_api as pub  # noqa: E402  (основной официа�
 from app.ingestion.html_to_pdf import convert_html_to_pdf  # noqa: E402
 from app.ingestion.html_to_markdown import batch_convert  # noqa: E402
 
+from nltk.stem import SnowballStemmer  # noqa: E402
+
+
 PROJECT = Path(__file__).resolve().parent.parent
 REGISTRY = PROJECT / "documents.json"
 RAW_DIR = PROJECT / "raw"
@@ -176,16 +179,52 @@ def resolve_doc(doc: dict, force: bool = False, cache_path: Path | None = None) 
 # ============================================================================
 # Проверка/конвертация PDF
 # ============================================================================
+_WORD_RE = re.compile(r"[а-яёa-z0-9-]+", re.IGNORECASE)
+_STOP_WORDS = frozenset({
+    "о", "об", "по", "в", "на", "к", "от", "с", "со",
+    "из", "для", "при", "про", "и", "или", "не", "за",
+    "у", "во", "обо", "а", "но", "да", "же", "ли",
+    "ни", "без", "до", "над", "под", "пред", "через",
+})
+
+
 def verify_document(html: str, number: str, title: str) -> bool:
+    """Проверить, что HTML действительно соответствует реквизитам документа.
+
+    Номер проверяется строго (буквальное вхождение).
+    Заголовок проверяется через стемминг Snowball (русский) — это устойчиво
+    к морфологическим вариациям (падежи, род, число).
+    Порог качества: не менее половины значащих стемов заголовка (минимум 2)
+    должны присутствовать в тексте HTML.
+    """
     text = re.sub(r"<script.*?</script>", "", html, flags=re.S)
     text = re.sub(r"<[^>]+>", " ", text)
-    words = title.split()
+
+    # Строгая проверка: номер обязан присутствовать в тексте
+    if number not in text:
+        return False
+
+    if not title:
+        return True  # проверка номера достаточна
+
+    # Извлекаем значащие слова из заголовка (без стоп-слов)
+    words = _WORD_RE.findall(title.lower())
+    words = [w for w in words if w not in _STOP_WORDS]
+
     if not words:
-        return number in text
-    core = (
-        " ".join(words[1:3]) if words[0].lower() in ("о", "об") else " ".join(words[:3])
-    )
-    return (number in text) and (core.lower() in text.lower())
+        return True  # только стоп-слова, номер уже совпал
+
+    # Стемминг через nltk SnowballStemmer (русский)
+    stemmer = SnowballStemmer("russian")
+    title_stems = {stemmer.stem(w) for w in words}
+    doc_stems = {stemmer.stem(w) for w in _WORD_RE.findall(text.lower())}
+
+    # Сколько значащих стемов заголовка встречается в тексте документа
+    matches = sum(1 for s in title_stems if s in doc_stems)
+
+    # Порог качества: не менее половины стемов (минимум 2)
+    threshold = max(2, len(title_stems) // 2)
+    return matches >= threshold
 
 
 

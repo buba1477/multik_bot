@@ -1,14 +1,9 @@
-import nltk
-import ssl
+from nltk.stem import SnowballStemmer
 
-try:
-    _create_unverified_https_context = ssl._create_unverified_context
-except AttributeError:
-    pass
-else:
-    ssl._create_default_https_context = _create_unverified_https_context
+print("🔎 Проверяю Russian SnowballStemmer...")
 
-print("📡 Скачиваю словари NLTK...")
-nltk.download('punkt_tab')
-nltk.download('snowball_data')
-print("✅ Готово!")
+stemmer = SnowballStemmer("russian")
+result = stemmer.stem("государственный")
+
+print(f"Тест: {result}")
+print("✅ Russian SnowballStemmer работает")
