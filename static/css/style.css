@@ -264,7 +264,7 @@ header h2 .subtext {
     border-bottom-left-radius: 4px;
     border: 1px solid var(--border-color);
     border-left: 4px solid #cbd5e1;
-    max-width: min(100%, 700px);
+    max-width: 95%;
     width: 100%;
     padding: clamp(18px, 2.2vw, 26px) clamp(20px, 2.6vw, 30px);
     box-sizing: border-box;
