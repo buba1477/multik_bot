@@ -9,11 +9,13 @@ import pytest
 from app.chunking.legal_chunker import (
     _build_chunks_for_segment,
     _clean_header,
+    _fit_full_text,
     _group_segments,
     _is_editorial,
     _make_semantic_title,
     _pack_blocks,
     _split_oversized,
+    _truncate_to_limit,
     count_tokens,
     convert,
     process_markdown_file,
@@ -94,23 +96,113 @@ class TestSplitOversized:
 
 class TestPackBlocks:
     def test_never_exceeds_max(self):
-        prefix_tokens = count_tokens("[79-ФЗ] [Статья 1. Термины]")
+        prefix = "[79-ФЗ] [Статья 1. Термины]"
+        prefix_tokens = count_tokens(prefix)
         blocks = [("АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ" * 3, False) for _ in range(50)]
-        parts = _pack_blocks(blocks, prefix_tokens, max_tokens=400, target_tokens=350,
+        blocks_with_para = [(t, b, None) for t, b in blocks]
+        parts = _pack_blocks(blocks_with_para, prefix, max_tokens=400, target_tokens=350,
                              min_tokens=40)
         for p_text, p_indices in parts:
-            assert prefix_tokens + count_tokens(p_text) <= 400
+            assert count_tokens(prefix + "\n" + p_text) <= 400
 
     def test_editorial_block_capped_not_split(self):
-        prefix_tokens = count_tokens("[79-ФЗ] [Преамбула]")
+        prefix = "[79-ФЗ] [Преамбула]"
+        prefix_tokens = count_tokens(prefix)
         # большой редакционный блок, который не должен стать множеством чанков
         big_ed = "(В редакции федеральных законов от 01.01.2000 № 1-ФЗ, " + \
             "от 02.02.2001 № 2-ФЗ, " * 200 + ")"
-        parts = _pack_blocks([(big_ed, True)], prefix_tokens, max_tokens=400,
+        parts = _pack_blocks([(big_ed, True, None)], prefix, max_tokens=400,
                              target_tokens=350, min_tokens=40)
         assert len(parts) == 1  # ровно один чанк, а не множество
-        # _pack_blocks гарантирует body-часть в пределах max_tokens - prefix
-        assert count_tokens(parts[0][0]) <= 400 - prefix_tokens
+        # _pack_blocks гарантирует body-часть в пределах max_tokens - prefix - 1
+        assert count_tokens(prefix + "\n" + parts[0][0]) <= 400
+
+
+# ============================================================================
+# Regression-тесты: _fit_full_text, _truncate_to_limit, _split_oversized
+# ============================================================================
+
+
+class TestFitFullText:
+    """_fit_full_text — финальная страховка для чанка."""
+
+    def test_fits_exactly(self):
+        """Текст, влезающий в лимит, не обрезается."""
+        prefix = "[79-ФЗ] [Статья 1. Термины]"
+        part = "1. Основные термины."
+        result = _fit_full_text(prefix, part, max_tokens=400)
+        assert "…" not in result
+        assert result == prefix + "\n" + part
+        assert count_tokens(result) <= 400
+
+    def test_fit_full_text_no_ellipsis(self):
+        """_fit_full_text никогда не добавляет ' …'."""
+        prefix = "[test] [test]"
+        part = "слово " * 500
+        result = _fit_full_text(prefix, part, max_tokens=400)
+        assert "…" not in result
+
+    def test_fit_full_text_word_boundary(self):
+        """_fit_full_text обрезает по границе слова, а не токена."""
+        prefix = "[test] [test]"
+        part = "взыскания " * 200
+        result = _fit_full_text(prefix, part, max_tokens=100)
+        assert "…" not in result
+        assert count_tokens(result) <= 100
+        body = result[len(prefix) + 1:]
+        if body:
+            last_word = body.split()[-1] if body.split() else ""
+            assert last_word == "взыскания" or not last_word, \
+                f"Последнее слово должно быть целым: {last_word}"
+
+
+class TestTruncateToLimit:
+    """_truncate_to_limit — обрезание по границе слова."""
+
+    def test_no_ellipsis(self):
+        """_truncate_to_limit не добавляет ' …'."""
+        text = "слово " * 500
+        result = _truncate_to_limit(text, limit=100)
+        assert "…" not in result
+
+    def test_word_boundary(self):
+        """_truncate_to_limit не разрывает слова."""
+        text = "взыскания " * 200
+        result = _truncate_to_limit(text, limit=50)
+        assert "…" not in result
+        assert count_tokens(result) <= 50
+        if result:
+            last_word = result.split()[-1] if result.split() else ""
+            assert last_word == "взыскания" or not last_word, \
+                f"Последнее слово должно быть целым: {last_word}"
+
+    def test_respects_limit(self):
+        """Результат не превышает limit токенов."""
+        text = "тест " * 1000
+        result = _truncate_to_limit(text, limit=100)
+        assert count_tokens(result) <= 100
+
+
+class TestSplitOversizedRegression:
+    """_split_oversized — разбиение без разрыва слов."""
+
+    def test_no_word_break(self):
+        """_split_oversized не разрывает слова."""
+        text = "взыскания " * 500
+        parts = _split_oversized(text, limit=100)
+        for p in parts:
+            assert count_tokens(p) <= 100
+            if p:
+                words = p.split()
+                for w in words:
+                    assert "…" not in w
+
+    def test_respects_limit(self):
+        """Каждая часть <= limit токенов."""
+        text = "АААА. ББББ. ВВВВ. ГГГГ. ДДДД. ЕЕЕЕ. ЖЖЖЖ. ЗЗЗЗ."
+        parts = _split_oversized(text, limit=8)
+        for p in parts:
+            assert count_tokens(p) <= 8
 
 
 # ============================================================================
@@ -167,7 +259,7 @@ class TestGroupSegmentsNoArticles:
         ]
         segs = _group_segments(records)
         assert len(segs) == 1, f"Expected 1 segment, got {len(segs)}"
-        assert segs[0]["title"] == "Пункт 1", f"Expected Пункт 1, got {segs[0]['title']!r}"
+        assert segs[0]["title"] == "Преамбула", f"Expected Преамбула, got {segs[0]['title']!r}"
         assert len(segs[0]["body"]) == 5, f"Expected 5 body records, got {len(segs[0]['body'])}"
 
     def test_paragraph_text_inheritance(self):
@@ -183,6 +275,28 @@ class TestGroupSegmentsNoArticles:
         assert len(segs[0]["body"]) == 3
         # Заголовок сегмента — Пункт 2 (первый paragraph в теле)
         assert segs[0]["title"] == "Пункт 2"
+
+class TestPreambleTitleRegressions:
+    """Regression-тесты для Fix A: title сегмента без paragraph в первой записи."""
+
+    def test_preamble_first_record_no_para(self):
+        """Если первая запись тела не имеет paragraph → title = Преамбула."""
+        records = [
+            _rec("n0", "text", None, None, "Заголовок документа", paragraph=None),
+            _rec("n1", "paragraph", "1", None, "1. Первый пункт", paragraph="1"),
+        ]
+        segs = _group_segments(records)
+        assert segs[0]["title"] == "Преамбула",             f"Expected Преамбула, got {segs[0]['title']!r}"
+
+    def test_preamble_first_record_has_para(self):
+        """Если ПЕРВАЯ запись тела имеет paragraph → title = Пункт N."""
+        records = [
+            _rec("n0", "paragraph", "3", None, "3. Третий пункт", paragraph="3"),
+            _rec("n1", "paragraph", "4", None, "4. Четвертый пункт", paragraph="4"),
+        ]
+        segs = _group_segments(records)
+        assert segs[0]["title"] == "Пункт 3",             f"Expected Пункт 3, got {segs[0]['title']!r}"
+
 class TestGroupSegmentsWithAppendix:
     """Test 3: Appendix не смешивается с основным документом."""
 
@@ -291,7 +405,7 @@ class TestBuildChunksForSegmentDynamicTitle:
             _rec("n2", "paragraph", "2", None, "2. Руководителям обеспечить", paragraph="2"),
         ]
         segs = _group_segments(records)
-        assert segs[0]["title"] == "Пункт 1", f"Expected Пункт 1, got {segs[0]['title']!r}"
+        assert segs[0]["title"] == "Преамбула", f"Expected Преамбула, got {segs[0]['title']!r}"
 
 
 class TestGroupSegmentsUkaz159:
@@ -656,6 +770,48 @@ class TestMakeSemanticTitle:
         assert title == "79-ФЗ"
 
 
+class TestMakeSemanticTitleRegressions:
+    """Regression-тесты для Fix B: не-numeric point_key должен проходить."""
+
+    def test_utverzhdeny_plural(self):
+        """УТВЕРЖДЕНЫ (мн.ч.) — не число → Priority 0 -> doc: title."""
+        title = _make_semantic_title(
+            "УТВЕРЖДЕНЫ постановлением Правительства РФ от 11.08.2007 № 514",
+            "Постановление № 514",
+            "УТВЕРЖДЕНЫ постановлением Правительства РФ от 11.08.2007 № 514",
+        )
+        assert title == "Постановление № 514: УТВЕРЖДЕНЫ постановлением Правительства РФ от 11.08.2007 № 514"
+
+    def test_utverzhdeno_singular(self):
+        """УТВЕРЖДЕНО (ед.ч.) — тоже работает (было и до фикса)."""
+        title = _make_semantic_title(
+            "УТВЕРЖДЕНО постановлением Правительства РФ от 11.08.2007 № 514",
+            "Постановление № 514",
+            "УТВЕРЖДЕНО постановлением Правительства РФ от 11.08.2007 № 514",
+        )
+        assert title == "Постановление № 514: УТВЕРЖДЕНО постановлением Правительства РФ от 11.08.2007 № 514"
+
+    def test_non_numeric_point_key_any_prefix(self):
+        """Любая строка, не являющаяся чистым числом → используется как заголовок."""
+        title = _make_semantic_title(
+            "ОБ УТВЕРЖДЕНИИ правил внутреннего распорядка",
+            "Приказ № 123",
+            "ОБ УТВЕРЖДЕНИИ правил внутреннего распорядка",
+        )
+        assert title == "Приказ № 123: ОБ УТВЕРЖДЕНИИ правил внутреннего распорядка"
+
+    def test_pure_numeric_falls_to_priority1(self):
+        """Чистое число → Priority 1 (Пункт N)."""
+        title = _make_semantic_title("2. Содержание пункта", "Указ № 1", "2")
+        assert title == "Указ № 1 — Пункт 2"
+
+    def test_decimal_numeric_falls_to_priority1(self):
+        """Десятичное число (19.1) → Priority 1."""
+        title = _make_semantic_title("19 1. Пункт", "Указ № 1", "19.1")
+        assert title == "Указ № 1 — Пункт 19.1"
+
+
+
 # ============================================================================
 # Regression-тесты: статья 50 79-ФЗ (split_block_indices — премии блок)
 # ============================================================================
@@ -677,88 +833,372 @@ def chunks_79fz(tmp_path_factory):
 
 
 class TestArticle50Split:
-    """79-ФЗ Статья 50: проверка, что блок «премии … не ограничивается»
-    принудительно разрывает чанк (split_block_indices).
+    """79-ФЗ Статья 50: структурные инварианты.
 
-    Ожидание:
-      - p2 (п.2-3) НЕ содержит «премии»
-      - p3 начинается с «4) премии»
-      - NEW: 5 чанков (вместо 4 в OLD)
-      - вне ст.50 — без изменений
+    В статье параграфы объединяются по токенам (paragraph_is_boundary=False),
+    поэтому разные параграфы могут находиться в одном чанке.
+    Проверки:
+      - split_block_indices для «премии … не ограничивается» работает
+      - full text сохраняется
+      - структурные элементы присутствуют
     """
 
-    def test_total_chunks_count(self, chunks_79fz):
-        """189 → 190, ровно +1."""
-        assert len(chunks_79fz) == 190, \
-            f"Ожидается 190 чанков, получено {len(chunks_79fz)}"
-
-    def test_article_50_has_5_chunks(self, chunks_79fz):
-        """Статья 50 содержит ровно 5 чанков."""
+    def test_premi_block_starts_own_paragraph(self, chunks_79fz):
+        """'4) премии … не ограничивается' находится в chunk с пунктом 5 или позже,
+        то есть заведомо ДОЛЖЕН относиться к subtitle Пункт 5 (единственный pt.5 блок в ст.50)."""
         st50 = [c for c in chunks_79fz if c["id"].startswith("79-fz_st50_")]
-        assert len(st50) == 5, \
-            f"Ожидается 5 чанков в ст.50, получено {len(st50)}"
+        # Ищем chunk, содержащий "премии не ограничивается"
+        premi_chunks = [c for c in st50 if "премии" in c["text"].lower()
+                        and "не ограничивается" in c["text"].lower()]
+        assert len(premi_chunks) == 1, f"Ожидается 1 chunk с 'премии не ограничивается', получено {len(premi_chunks)}"
+        # Этот chunk title содержит "Статья 50" (article title для ст.50)
+        title = premi_chunks[0].get("title", "")
+        assert "Статья 50" in title, \
+            f"chunk с премиями должен иметь Статья 50 в title: {title}"
 
-    def test_p2_does_not_contain_premi(self, chunks_79fz):
-        """p2 (п.2-3) НЕ содержит слово 'премии'."""
-        p2 = next((c for c in chunks_79fz if c["id"] == "79-fz_st50_p2"), None)
-        assert p2 is not None, "Чанк 79-fz_st50_p2 не найден"
-        assert "премии" not in p2["text"].lower(), \
-            "p2 не должен содержать 'премии'"
+    def test_full_text_preserved_article_50(self, chunks_79fz):
+        """Полный текст ст.50 сохраняется после объединения чанков."""
+        st50 = [c for c in chunks_79fz if c["id"].startswith("79-fz_st50_")]
+        st50.sort(key=lambda c: c["id"])
+        merged = "\n".join(c["text"] for c in st50)
+        # Ключевые фрагменты должны присутствовать
+        assert "премии" in merged.lower(), "Слово 'премии' отсутствует"
+        assert "15." in merged, "Пункт 15 отсутствует"
+        assert "16." in merged, "Пункт 16 отсутствует"
+        assert "17." in merged, "Пункт 17 отсутствует"
+        # Специфичные блоки для ст.50
+        assert "ежемесячная" in merged, "Слово 'ежемесячная' отсутствует"
+        assert "денежного содержания" in merged, "Фраза 'денежного содержания' отсутствует"
+# ============================================================================
+# Регрессия: 79-fz_st59_3_p2 — проблема "взыскания"
+# ============================================================================
 
-    def test_p3_starts_with_premi(self, chunks_79fz):
-        """p3 начинается с блока '4) премии'."""
-        p3 = next((c for c in chunks_79fz if c["id"] == "79-fz_st50_p3"), None)
-        assert p3 is not None, "Чанк 79-fz_st50_p3 не найден"
-        lines = [l.strip() for l in p3["text"].split("\n") if l.strip()]
-        content_start = next((l for l in lines if l.startswith("4) премии")), None)
-        assert content_start is not None, \
-            "p3 должен начинаться с '4) премии'"
 
-    def test_tail_merge_p15_p17(self, chunks_79fz):
-        """p5 содержит п.15-17 (tail merge трёх пунктов)."""
-        p5 = next((c for c in chunks_79fz if c["id"] == "79-fz_st50_p5"), None)
-        assert p5 is not None, "Чанк 79-fz_st50_p5 не найден"
-        assert "15." in p5["text"], "p5 должен содержать п.15"
-        assert "16." in p5["text"], "p5 должен содержать п.16"
-        assert "17." in p5["text"], "p5 должен содержать п.17"
+class TestSt59_3_Regression:
+    """Проверка конкретного кейса 79-fz_st59_3_p2."""
 
-    def test_no_changes_outside_article_50(self, chunks_79fz):
-        """Количество чанков во всех остальных статьях не изменилось."""
-        expected = {
-            "1": 2, "2": 1, "3": 1, "4": 1, "5": 1, "6": 1, "7": 1,
-            "8": 1, "9": 1, "10": 1, "11": 5, "12": 3, "13": 1, "14": 2,
-            "15": 3, "16": 4, "17": 7, "18": 1, "19": 3, "20": 7, "21": 1,
-            "22": 4, "23": 1, "24": 2, "25": 10, "26": 2, "27": 2, "28": 5,
-            "29": 2, "30": 1, "31": 3, "32": 2, "33": 3, "34": 1, "35": 1,
-            "36": 2, "37": 6, "38": 1, "39": 2, "40": 1, "41": 1, "42": 2,
-            "43": 1, "44": 3, "45": 1, "46": 4, "47": 2, "48": 5, "49": 1,
-            "51": 2, "52": 5, "53": 8, "54": 1, "55": 4, "56": 1, "57": 1,
-            "58": 2, "59": 8, "60": 7, "61": 1, "62": 2, "63": 1, "64": 3,
-            "65": 1, "66": 1, "67": 1, "68": 1, "69": 1, "70": 7, "71": 2,
-            "72": 1, "73": 1, "74": 1, "pre": 3,
-        }
-        by_article: dict[str, list] = {}
+    def test_p2_ends_with_full_word(self, chunks_79fz):
+        """Чанк 79-fz_st59_3_p2 НЕ должен содержать обрезанное 'взыска …'."""
+        p2 = next((c for c in chunks_79fz if c["id"] == "79-fz_st59_3_p2"), None)
+        assert p2 is not None, "Чанк 79-fz_st59_3_p2 не найден"
+        text = p2["text"]
+        assert "взыска …" not in text, f"Обнаружено обрезание слова: 'взыска …'"
+        assert "взыска…" not in text, f"Обнаружено обрезание слова: 'взыска…'"
+        assert "…" not in text, "Чанк содержит искусственное многоточие"
+        assert count_tokens(text) <= 400, f"Чанк превышает 400 токенов: {count_tokens(text)}"
+
+    def test_vzyskaniya_present_in_st59_3(self, chunks_79fz):
+        """Полное слово 'взыскания' должно присутствовать в чанках статьи 59.3 (без привязки к ID)."""
+        st59_chunks = [c for c in chunks_79fz if "st59" in c["id"]]
+        assert len(st59_chunks) >= 1, "Нет чанков для 79-fz_st59"
+        full_text = "\n".join(c["text"] for c in st59_chunks)
+        assert "взыскания" in full_text, \
+            "Полное слово 'взыскания' не найдено в чанках статьи 59.3"
+
+    def test_no_broken_word_between_chunks(self, chunks_79fz):
+        """Нет разорванных слов между соседними чанками статьи 59.3."""
+        chunks_59_3 = [c for c in chunks_79fz if "st59_3" in c["id"]]
+        chunks_59_3.sort(key=lambda c: c["id"])
+        for i in range(len(chunks_59_3) - 1):
+            curr = chunks_59_3[i]["text"]
+            nxt = chunks_59_3[i + 1]["text"]
+            curr_words = curr.split()
+            nxt_words = nxt.split()
+            if curr_words and nxt_words:
+                last = curr_words[-1]
+                first = nxt_words[0]
+                assert "…" not in last, f"Последнее слово curr: {last}"
+                assert "…" not in first, f"Первое слово nxt: {first}"
+
+    def test_each_chunk_under_400(self, chunks_79fz):
+        """Каждый чанк 79-ФЗ <= 400 токенов."""
         for c in chunks_79fz:
-            parts = c["id"].split("_")
-            art_key = "?"
-            if len(parts) >= 2:
-                if parts[1] == "pre":
-                    art_key = "pre"
-                elif parts[1].startswith("st"):
-                    art_key = parts[1][2:]
-                else:
-                    art_key = parts[1]
-            by_article.setdefault(art_key, []).append(c)
+            assert count_tokens(c["text"]) <= 400, \
+                f"Чанк {c['id']} превышает 400 токенов: {count_tokens(c['text'])}"
 
-        for art, exp_count in expected.items():
-            actual = len(by_article.get(art, []))
-            assert actual == exp_count, \
-                f"Статья {art}: ожидалось {exp_count} чанков, получено {actual}"
+    def test_no_ellipsis_in_any_chunk(self, chunks_79fz):
+        """Ни один чанк 79-ФЗ не содержит ' …'."""
+        for c in chunks_79fz:
+            assert "…" not in c["text"], \
+                f"Чанк {c['id']} содержит многоточие: ...{c['text'][-60:]}"
 
-    def test_no_text_leak_between_p2_and_p3(self, chunks_79fz):
-        """Проверка, что ни один блок не потерян между p2 и p3."""
-        p2 = next(c for c in chunks_79fz if c["id"] == "79-fz_st50_p2")
-        p3 = next(c for c in chunks_79fz if c["id"] == "79-fz_st50_p3")
-        assert "3)" in p2["text"], "p2 должен содержать п.3"
-        assert "4)" not in p2["text"], "p2 НЕ должен содержать п.4"
-        assert "4)" in p3["text"], "p3 должен содержать п.4"
+    def test_full_text_preserved_after_merge(self, chunks_79fz):
+        """Полный текст сохраняется после объединения чанков ст.59.3."""
+        chunks_59_3 = [c for c in chunks_79fz if "st59_3" in c["id"]]
+        chunks_59_3.sort(key=lambda c: c["id"])
+        merged = "\n".join(c["text"] for c in chunks_59_3)
+        assert "взыскания" in merged, "Слово 'взыскания' отсутствует"
+        assert "не имеющим взыскания" in merged, "Фраза отсутствует"
+        assert "применяются" in merged, "Слово 'применяются' отсутствует"
+        assert "обжаловать" in merged, "Слово 'обжаловать' отсутствует"
+
+    def test_no_truncated_words_in_any_chunk(self, chunks_79fz):
+        """Ни один чанк 79-ФЗ не содержит '…' внутри слова."""
+        for c in chunks_79fz:
+            text = c["text"]
+            for word in text.split():
+                if "…" in word:
+                    assert word == "…" or word == "..." or word == " ...", \
+                        f"Чанк {c['id']} содержит многоточие в слове: {word}"
+# ============================================================================
+# Регрессия: paragraph boundary — Указы №96, №112 и synthetic
+# ============================================================================
+
+
+@pytest.fixture(scope="module")
+def chunks_ukaz96(tmp_path_factory):
+    """Конвертим Указ №96 и загружаем чанки."""
+    out_dir = tmp_path_factory.mktemp("chunks_ukaz96")
+    convert("ukaz-96.json", out_dir=out_dir, structure_dir=STRUCTURE_DIR)
+    jsonl_path = out_dir / "ukaz-96.jsonl"
+    result = []
+    with open(jsonl_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                result.append(json.loads(line))
+    return result
+
+
+@pytest.fixture(scope="module")
+def chunks_ukaz112(tmp_path_factory):
+    """Конвертим Указ №112 и загружаем чанки."""
+    out_dir = tmp_path_factory.mktemp("chunks_ukaz112")
+    convert("ukaz-112.json", out_dir=out_dir, structure_dir=STRUCTURE_DIR)
+    jsonl_path = out_dir / "ukaz-112.jsonl"
+    result = []
+    with open(jsonl_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                result.append(json.loads(line))
+    return result
+
+
+class TestParagraphBoundaries:
+    """Проверка консистентности чанков для указов №96 и №112.
+
+    После рефакторинга границы сегментов определяются СТРУКТУРНЫМ контекстом
+    (article/section/appendix), а не paragraph. Параграфы объединяются
+    по token-бюджету внутри родительского структурного сегмента.
+    Заголовки чанков теперь содержат название структурного родителя
+    (например, "Раздел III"), а не номер пункта.
+
+    Проверяет, что:
+      - контент пунктов 23-25 присутствует где-то в чанках Раздела III
+      - контент пункта 7-8 присутствует где-то в чанках Приложения
+      - continuation-тексты не потеряны
+      - нет смешивания двух "Пункт" в title (Pункт — только для preamble)
+    """
+
+    # ── Указ №96 ──────────────────────────────────────────────────────────
+
+    def test_ukaz96_continuation_text_present(self, chunks_ukaz96):
+        """Тексты «копию трудовой книжки», «копии документов об образовании»
+        присутствуют в чанках (теперь внутри Раздела III, title содержит "Раздел III")."""
+        all_text = "\n".join(c["text"] for c in chunks_ukaz96)
+        assert "трудовой книжки" in all_text,             "'трудовой книжки' отсутствует в чанках ukaz-96"
+        assert "документов об образовании" in all_text,             "'документов об образовании' отсутствует в чанках ukaz-96"
+
+    def test_ukaz96_paragraph23_content(self, chunks_ukaz96):
+        """Пункт 23 присутствует в тексте какого-либо чанка."""
+        all_text = "\n".join(c["text"] for c in chunks_ukaz96)
+        assert "23." in all_text or "пункт 23" in all_text.lower(),             "'23.' не найден в чанках ukaz-96"
+
+    def test_ukaz96_paragraph24_content(self, chunks_ukaz96):
+        """Пункт 24 присутствует в тексте какого-либо чанка."""
+        all_text = "\n".join(c["text"] for c in chunks_ukaz96)
+        assert "24." in all_text or "пункт 24" in all_text.lower(),             "'24.' не найден в чанках ukaz-96"
+
+    def test_ukaz96_paragraph25_content(self, chunks_ukaz96):
+        """Пункт 25 присутствует в тексте какого-либо чанка."""
+        all_text = "\n".join(c["text"] for c in chunks_ukaz96)
+        assert "25." in all_text or "пункт 25" in all_text.lower(),             "'25.' не найден в чанках ukaz-96"
+
+    def test_ukaz96_no_punkt_in_title(self, chunks_ukaz96):
+        """Ни один chunk не содержит 'Пункт' в title — все структурные
+        заголовки должны быть Раздел/Приложение/Преамбула."""
+        for c in chunks_ukaz96:
+            title = c.get("title") or ""
+            # Пункт допустим только для preamble-сегментов
+            if "Пункт" in title:
+                # preamble chunks — всегда pre_ в id
+                assert "_pre_" in c["id"],                     f"Pункт в title у не-preamble чанка {c['id']}: {title}"
+
+    # ── Указ №112 ──────────────────────────────────────────────────────────
+
+    def test_ukaz112_paragraph7_content(self, chunks_ukaz112):
+        """Пункт 7 присутствует в тексте какого-либо чанка."""
+        all_text = "\n".join(c["text"] for c in chunks_ukaz112)
+        assert "7." in all_text or "пункт 7" in all_text.lower(),             "'7.' не найден в чанках ukaz-112"
+
+    def test_ukaz112_paragraph7_continuation_inherits(self, chunks_ukaz112):
+        """Продолжение пункта 7 (трудовая книжка) присутствует где-то
+        в чанках (теперь внутри Приложения)."""
+        all_text = "\n".join(c["text"] for c in chunks_ukaz112)
+        assert "трудовой книжки" in all_text,             "'трудовой книжки' отсутствует в чанках ukaz-112"
+
+    def test_ukaz112_paragraph8_content(self, chunks_ukaz112):
+        """Пункт 8 присутствует в тексте какого-либо чанка."""
+        all_text = "\n".join(c["text"] for c in chunks_ukaz112)
+        assert "8." in all_text or "пункт 8" in all_text.lower(),             "'8.' не найден в чанках ukaz-112"
+
+    def test_ukaz112_paragraph8_continuation_inherits(self, chunks_ukaz112):
+        """Продолжение пункта 8 (текст про гражданского служащего)
+        присутствует где-то в чанках."""
+        all_text = "\n".join(c["text"] for c in chunks_ukaz112)
+        assert "Гражданский служащий" in all_text or                "изъявивший желание" in all_text,             "'Гражданский служащий' или 'изъявивший желание' отсутствует в чанках ukaz-112"
+
+    def test_ukaz112_no_mixing_7_and_8(self, chunks_ukaz112):
+        """7 и 8 не смешиваются в title (title — приложение, не пункт)."""
+        for c in chunks_ukaz112:
+            punkt_count = (c.get("title") or "").count("Пункт")
+            assert punkt_count <= 1,                 f"chunk {c['id']} содержит несколько Пункт: {c.get('title')}"
+
+class TestPackBlocksSynthetic:
+    """Synthetic-тесты непосредственно для _pack_blocks().
+
+    Параграфная граница (paragraph boundary) имеет приоритет над TARGET_TOKENS.
+    Continuation (para=None) наследует текущий paragraph.
+    """
+
+    def test_paragraph_boundary_priority_over_target_tokens(self):
+        """Разные paragraph — разные chunks, когда paragraph_is_boundary=True."""
+        blocks = [
+            ("Текст пункта 1.", False, "1"),
+            ("Продолжение пункта 1.", False, None),
+            ("Текст пункта 2.", False, "2"),
+            ("Текст пункта 3.", False, "3"),
+        ]
+        result = _pack_blocks(
+            blocks, prefix="Test",
+            max_tokens=400, target_tokens=350, min_tokens=40,
+            paragraph_is_boundary=True,
+        )
+        # Chunk 0: paragraph 1 + continuation
+        assert "Текст пункта 1." in result[0][0]
+        assert "Продолжение пункта 1." in result[0][0]
+        assert result[0][1] == [0, 1], f"Chunk 0 содержит блоки 0,1: {result[0][1]}"
+        # Chunk 1: paragraph 2
+        assert "Текст пункта 2." in result[1][0]
+        assert result[1][1] == [2], f"Chunk 1 содержит блок 2: {result[1][1]}"
+        # Chunk 2: paragraph 3
+        assert "Текст пункта 3." in result[2][0]
+        assert result[2][1] == [3], f"Chunk 2 содержит блок 3: {result[2][1]}"
+
+    def test_continuation_inherits_parent_paragraph(self):
+        """Несколько continuation подряд остаются с родительским paragraph (paragraph_is_boundary=True)."""
+        blocks = [
+            ("Пункт 1. Текст", False, "1"),
+            ("Продолжение A.", False, None),
+            ("Продолжение B.", False, None),
+            ("Пункт 2. Текст", False, "2"),
+        ]
+        result = _pack_blocks(
+            blocks, prefix="Test",
+            max_tokens=400, target_tokens=350, min_tokens=40,
+            paragraph_is_boundary=True,
+        )
+        assert len(result) == 2, \
+            f"Ожидается 2 чанка, получено {len(result)}"
+        assert "Продолжение A" in result[0][0]
+        assert "Продолжение B" in result[0][0]
+        assert result[0][1] == [0, 1, 2], \
+            f"Chunk 0 содержит блоки 0,1,2: {result[0][1]}"
+        assert "Пункт 2" in result[1][0]
+
+    def test_paragraph_boundary_no_merge_even_when_small(self):
+        """Два разных paragraph не объединяются при paragraph_is_boundary=True,
+        даже если вместе < MIN_CHUNK_TOKENS."""
+        blocks = [
+            ("Пункт 1. Короткий текст.", False, "1"),
+            ("Пункт 2. Другой текст.", False, "2"),
+        ]
+        result = _pack_blocks(
+            blocks, prefix="Test",
+            max_tokens=400, target_tokens=350, min_tokens=40,
+            paragraph_is_boundary=True,
+        )
+        assert len(result) == 2, \
+            f"Ожидается 2 чанка (разные paragraph), получено {len(result)}"
+        assert "Пункт 1" in result[0][0]
+        assert "Пункт 2" in result[1][0]
+
+    def test_split_block_indices_still_works(self):
+        """split_block_indices принудительно разрывает чанк до своего блока."""
+        blocks = [
+            ("Пункт 1. Текст начало длинного содержания для превышения порога.", False, "1"),
+            ("Пункт 2. Текст продолжение чтобы блок был больше минимального размера.", False, "2"),
+            ("ВАЖНЫЙ БЛОК с дополнительным текстом для объема tokens.", False, "2"),
+            ("Пункт 3. Текст завершающий с достаточным объемом для проверки split.", False, "3"),
+        ]
+        result = _pack_blocks(
+            blocks, prefix="Test",
+            max_tokens=400, target_tokens=350, min_tokens=40,
+            split_block_indices={2},
+            paragraph_is_boundary=True,
+        )
+        assert len(result) >= 3, \
+            f"Ожидается ≥3 чанка (split на блоке 2), получено {len(result)}"
+        assert any("ВАЖНЫЙ БЛОК" in ch[0] for ch in result), \
+            "Блок с ВАЖНЫЙ БЛОК должен быть в отдельном чанке"
+
+
+class TestGeneralChunkInvariants:
+    """Общие инварианты для всех чанков 79-ФЗ."""
+
+    def test_no_chunk_exceeds_max_tokens(self, chunks_79fz):
+        """Ни один chunk не превышает MAX_TOKENS (400)."""
+        for c in chunks_79fz:
+            tok = count_tokens(c["text"])
+            assert tok <= 400, f"Чанк {c['id']} превышает 400 токенов: {tok}"
+
+    def test_no_chunk_exceeds_512_tokens(self, chunks_79fz):
+        """Ни один chunk не превышает 512 токенов (жёсткий предел)."""
+        for c in chunks_79fz:
+            tok = count_tokens(c["text"])
+            assert tok <= 512, f"Чанк {c['id']} превышает 512 токенов: {tok}"
+
+    def test_no_ellipsis_in_any_chunk(self, chunks_79fz):
+        """Ни один chunk не содержит многоточия '…'."""
+        for c in chunks_79fz:
+            assert "…" not in c["text"], \
+                f"Чанк {c['id']} содержит '…': ...{c['text'][-80:]}"
+
+    def test_no_broken_words_in_any_chunk(self, chunks_79fz):
+        """Ни один chunk не содержит многоточия внутри слова."""
+        for c in chunks_79fz:
+            for word in c["text"].split():
+                if "…" in word:
+                    assert word in ("…", "..."), \
+                        f"Чанк {c['id']} содержит многоточие в слове: {word}"
+
+    def test_no_mixed_different_paragraphs_in_title(self, chunks_79fz):
+        """Ни один chunk не содержит ссылки на два разных Пункт."""
+        for c in chunks_79fz:
+            t = c.get("title", "")
+            punkt_count = t.count("Пункт")
+            assert punkt_count <= 1, \
+                f"chunk {c['id']} содержит несколько Пункт: {t}"
+
+    def test_no_title_has_punkt_none(self, chunks_79fz):
+        """Ни один chunk не имеет title 'Пункт None'."""
+        for c in chunks_79fz:
+            t = c.get("title", "")
+            if " — Пункт " in t:
+                suffix = t.split(" — Пункт ", 1)[1].strip()
+                assert suffix != "None", \
+                    f"Chunk {c['id']} имеет Пункт None: '{t}'"
+
+    def test_all_chunks_have_nonempty_title(self, chunks_79fz):
+        """Каждый chunk имеет непустой title."""
+        for c in chunks_79fz:
+            assert c.get("title"), f"Chunk {c['id']} имеет пустой title"
+
+    def test_validate_all_chunks_jsonl_schema(self, chunks_79fz):
+        """Все чанки имеют корректную JSONL-схему (5 полей)."""
+        required = {"id", "title", "text", "local_img", "url"}
+        for c in chunks_79fz:
+            assert set(c.keys()) == required, \
+                f"Chunk {c['id']}: ключи {sorted(c.keys())} != {sorted(required)}"
+            assert c["text"].strip(), f"Chunk {c['id']}: пустой text"

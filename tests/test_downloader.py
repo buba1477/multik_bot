@@ -660,7 +660,7 @@ TITLE_667R = (
 
 
 class TestVerifyDocument:
-    """verify_document(): number + date строго (fail-closed), title — fail-open."""
+    """verify_document(): number (fail-closed), title — морфологическая проверка."""
 
     @pytest.fixture()
     def html_667r(self) -> str:
@@ -668,27 +668,25 @@ class TestVerifyDocument:
         return raw.decode("windows-1251", "replace")
 
     def test_667r_real_html_passes(self, html_667r):
-        """Правильные number + date + title → True."""
-        assert dd.verify_document(html_667r, NUM_667R, DATE_667R, TITLE_667R) is True
+        """Правильные number + title → True."""
+        assert dd.verify_document(html_667r, NUM_667R, TITLE_667R) is True
 
-    def test_title_mismatch_warns_but_passes(self, html_667r, caplog):
-        """Правильные number + date, но title не совпадает → True + warning."""
+    def test_title_mismatch_rejected(self, html_667r):
+        """Номер совпал, но title про другое → False (fail-closed через стемминг)."""
         other_title = "Об утверждении правил пожарной безопасности на объектах"
-        with caplog.at_level("WARNING", logger=dd.logger.name):
-            assert dd.verify_document(html_667r, NUM_667R, DATE_667R, other_title) is True
-        assert any("title не найден" in r.getMessage() for r in caplog.records)
+        assert dd.verify_document(html_667r, NUM_667R, other_title) is False
 
     def test_wrong_number_rejected(self, html_667r):
         """Неправильный number → False (fail-closed)."""
-        assert dd.verify_document(html_667r, "999-р", DATE_667R, TITLE_667R) is False
+        assert dd.verify_document(html_667r, "999-р", TITLE_667R) is False
 
-    def test_wrong_date_rejected(self, html_667r):
-        """Неправильная date → False (fail-closed)."""
-        assert dd.verify_document(html_667r, NUM_667R, "01.01.2000", TITLE_667R) is False
+    def test_wrong_date_not_affects(self, html_667r):
+        """Дата не проверяется verify_document (проверяется выше по стеку)."""
+        # Функция не принимает date: проверяет только number + title
+        assert dd.verify_document(html_667r, NUM_667R, TITLE_667R) is True
 
-    def test_79fz_number_date_passes(self):
-        """79-ФЗ: правильные number + date → True (название из «шапочных» слов не мешает)."""
-        # Шапка реального print_url-представления nd=102088054
+    def test_79fz_number_title_passes(self):
+        """79-ФЗ: правильные number + title → True."""
         html = (
             "<html><body><span>Федеральный закон от 27.07.2004 г. № 79-ФЗ "
             '("Парламентская газета" от 31.07.2004 г.; Собрание законодательства '
@@ -699,7 +697,6 @@ class TestVerifyDocument:
         assert dd.verify_document(
             html,
             "79-ФЗ",
-            "27.07.2004",
             "О государственной гражданской службе Российской Федерации",
         ) is True
 class TestTimeoutResilience:

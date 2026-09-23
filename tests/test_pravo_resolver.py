@@ -352,6 +352,109 @@ class TestCache:
         assert calls["n"] == 2
 
 
+
+
+
+# ============================================================================
+# Retry-логика get_bytes
+# ============================================================================
+class TestGetBytesRetry:
+    """Проверка, что get_bytes() повторяет запрос при временных сетевых ошибках."""
+
+    def test_first_attempt_success(self, monkeypatch):
+        """Первый запрос успешен — retry не вызывается."""
+        from app.pravo_resolver import get_bytes
+        import urllib.request
+
+        calls = []
+
+        class FakeResp:
+            def read(self):
+                return b"ok"
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return None
+
+        def mock_urlopen(req, timeout=60):
+            calls.append(1)
+            return FakeResp()
+
+        monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+        result = get_bytes("http://example.com/doc", timeout=10)
+        assert result == b"ok"
+        assert len(calls) == 1
+
+    def test_timeout_then_success(self, monkeypatch):
+        """Первая попытка — timeout, вторая — успех."""
+        import socket
+        from app.pravo_resolver import get_bytes
+        import urllib.request
+
+        calls = []
+
+        class FakeResp:
+            def read(self):
+                return b"recovered"
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return None
+
+        def mock_urlopen(req, timeout=60):
+            calls.append(1)
+            if len(calls) == 1:
+                raise socket.timeout("timed out")
+            return FakeResp()
+
+        monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+        monkeypatch.setattr("app.pravo_resolver.time.sleep", lambda s: None)
+
+        result = get_bytes("http://example.com/doc", timeout=10)
+        assert result == b"recovered"
+        assert len(calls) == 2
+
+    def test_all_timeout_failure(self, monkeypatch):
+        """Все 3 попытки падают — PravoError."""
+        import socket
+        from app.pravo_resolver import get_bytes, PravoError
+        import urllib.request
+
+        calls = []
+
+        def mock_urlopen(req, timeout=60):
+            calls.append(1)
+            raise socket.timeout("always timeout")
+
+        monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+        monkeypatch.setattr("app.pravo_resolver.time.sleep", lambda s: None)
+
+        with pytest.raises(PravoError, match="после 3 попыток"):
+            get_bytes("http://example.com/doc", timeout=10)
+        assert len(calls) == 3
+
+    def test_http_error_no_retry(self, monkeypatch):
+        """HTTP-ошибка (404) НЕ повторяется — сразу PravoError."""
+        import urllib.error
+        from app.pravo_resolver import get_bytes, PravoError
+        import urllib.request
+
+        calls = []
+
+        def mock_urlopen(req, timeout=60):
+            calls.append(1)
+            raise urllib.error.HTTPError(
+                "http://example.com/doc", 404, "Not Found", {}, None
+            )
+
+        monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
+        monkeypatch.setattr("app.pravo_resolver.time.sleep", lambda s: None)
+
+        with pytest.raises(PravoError, match="HTTP 404"):
+            get_bytes("http://example.com/doc", timeout=10)
+        assert len(calls) == 1
+
+
 # ============================================================================
 # Интеграционные тесты (реальные запросы к pravo.gov.ru)
 # ============================================================================

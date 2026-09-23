@@ -266,8 +266,581 @@ class TestFullPipeline:
 
 
 # ============================================================================
-# 4. Тест coverage records
+# 3.1. Тесты прикрепления continuation-блоков (text) к родителю
 # ============================================================================
+
+class TestContinuationAttachment:
+    """Проверяет, что text-блоки (continuation) правильно прикрепляются
+    к структурным родителям (paragraph, subparagraph, item), а не всплывают
+    на уровень section/chapter/article."""
+
+    # ------------------------------------------------------------------
+    # Synthetic: continuation после subparagraph
+    # ------------------------------------------------------------------
+
+    def test_continuation_after_subparagraph(self):
+        """б) → continuation text → в): continuation остаётся внутри б)."""
+        md_text = (
+            "10. Foo:\n"
+            "\n"
+            "а) first;\n"
+            "\n"
+            "б) second:\n"
+            "\n"
+            "continuation one;\n"
+            "\n"
+            "continuation two;\n"
+            "\n"
+            "в) third.\n"
+        )
+        lines = md_text.splitlines(keepends=True)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+        records = build_records(tree)
+
+        # Ищем в дереве subparagraph б) и проверяем его children
+        def _find_sub_b(node):
+            if node["type"] == "subparagraph" and node.get("number") == "б":
+                return node
+            for c in node.get("children", []):
+                found = _find_sub_b(c)
+                if found:
+                    return found
+            return None
+
+        sub_b = _find_sub_b(tree)
+        assert sub_b is not None, "Не найден subparagraph 'б'"
+
+        text_children = [c for c in sub_b.get("children", [])
+                         if c["type"] == "text"]
+        assert len(text_children) == 2, (
+            f"subparagraph 'б' должен иметь 2 text-ребёнка, "
+            f"найдено {len(text_children)}"
+        )
+        assert "continuation one" in text_children[0].get("content", ""), (
+            f"Первый text-ребёнок должен содержать 'continuation one', "
+            f"а не {text_children[0].get('content')!r}"
+        )
+        assert "continuation two" in text_children[1].get("content", ""), (
+            f"Второй text-ребёнок должен содержать 'continuation two', "
+            f"а не {text_children[1].get('content')!r}"
+        )
+
+        # subparagraph в) НЕ должен содержать эти text-блоки
+        def _find_sub_v(node):
+            if node["type"] == "subparagraph" and node.get("number") == "в":
+                return node
+            for c in node.get("children", []):
+                found = _find_sub_v(c)
+                if found:
+                    return found
+            return None
+
+        sub_v = _find_sub_v(tree)
+        assert sub_v is not None, "Не найден subparagraph 'в'"
+        v_text_children = [c for c in sub_v.get("children", [])
+                           if c["type"] == "text"]
+        assert len(v_text_children) == 0, (
+            f"subparagraph 'в' не должен иметь text-детей, "
+            f"найдено {len(v_text_children)}"
+        )
+
+        # Проверяем context_flat в records для text-блоков
+        text_records = [r for r in records
+                        if r["structure"]["type"] == "text"
+                        and "continuation" in r["text"]]
+        for tr in text_records:
+            cf = tr["structure"]["context_flat"]
+            assert cf.get("paragraph") == "10", (
+                f"text record должен иметь paragraph=10, "
+                f"а не {cf.get('paragraph')!r}"
+            )
+            assert cf.get("subparagraph") == "б", (
+                f"text record должен иметь subparagraph='б', "
+                f"а не {cf.get('subparagraph')!r}"
+            )
+
+    def test_multiple_continuation_groups(self):
+        """г) → continuation → д) → continuation → е)."""
+        md_text = (
+            "5. Points:\n"
+            "\n"
+            "г) first continuation group;\n"
+            "\n"
+            "second line of first group;\n"
+            "\n"
+            "д) second continuation group;\n"
+            "\n"
+            "third continuation group;\n"
+            "\n"
+            "е) final.\n"
+        )
+        lines = md_text.splitlines(keepends=True)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+        records = build_records(tree)
+
+        def _count_text_children(sub_num):
+            def _find(node):
+                if node["type"] == "subparagraph" and node.get("number") == sub_num:
+                    return node
+                for c in node.get("children", []):
+                    found = _find(c)
+                    if found:
+                        return found
+                return None
+            sub = _find(tree)
+            if sub is None:
+                return -1
+            return len([c for c in sub.get("children", []) if c["type"] == "text"])
+
+        assert _count_text_children("г") == 1, "sub г) должно иметь 1 text child"
+        assert _count_text_children("д") == 1, "sub д) должно иметь 1 text child"
+        assert _count_text_children("е") == 0, "sub е) не должно иметь text children"
+
+    def test_next_paragraph_closes_context(self):
+        """Параграф 10 с continuation → параграф 11: continuation НЕ перетекает."""
+        md_text = (
+            "10. First point:\n"
+            "\n"
+            "а) sub one;\n"
+            "\n"
+            "б) sub two;\n"
+            "\n"
+            "continuation text;\n"
+            "\n"
+            "11. Second point.\n"
+        )
+        lines = md_text.splitlines(keepends=True)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+        records = build_records(tree)
+
+        text_records = [r for r in records
+                        if r["structure"]["type"] == "text"
+                        and "continuation" in r["text"]]
+        assert len(text_records) == 1, f"Ожидается 1 text record, найдено {len(text_records)}"
+        cf = text_records[0]["structure"]["context_flat"]
+        assert cf.get("paragraph") == "10", (
+            f"continuation должен быть под paragraph=10, "
+            f"а не {cf.get('paragraph')!r}"
+        )
+        assert cf.get("subparagraph") == "б", (
+            f"continuation должен быть под subparagraph='б', "
+            f"а не {cf.get('subparagraph')!r}"
+        )
+
+    def test_continuation_no_next_subparagraph(self):
+        """subparagraph → continuation → (больше sub нет): остаётся под sub."""
+        md_text = (
+            "3. A point:\n"
+            "\n"
+            "а) just one sub;\n"
+            "\n"
+            "continuation text.\n"
+        )
+        lines = md_text.splitlines(keepends=True)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+        records = build_records(tree)
+
+        def _find_sub_a(node):
+            if node["type"] == "subparagraph" and node.get("number") == "а":
+                return node
+            for c in node.get("children", []):
+                found = _find_sub_a(c)
+                if found:
+                    return found
+            return None
+
+        sub_a = _find_sub_a(tree)
+        assert sub_a is not None, "Не найден subparagraph 'а'"
+        text_children = [c for c in sub_a.get("children", [])
+                         if c["type"] == "text"]
+        assert len(text_children) == 1, (
+            f"subparagraph 'а' должен иметь 1 text-ребёнка, "
+            f"найдено {len(text_children)}"
+        )
+
+    def test_numbered_point_after_continuation(self):
+        """Следующий нумерованный пункт закрывает контекст."""
+        md_text = (
+            "1. First point:\n"
+            "\n"
+            "а) sub;\n"
+            "\n"
+            "text under sub;\n"
+            "\n"
+            "2. Second point:\n"
+            "\n"
+            "а) other sub;\n"
+            "\n"
+            "other text.\n"
+        )
+        lines = md_text.splitlines(keepends=True)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+        records = build_records(tree)
+
+        texts = [r for r in records if r["structure"]["type"] == "text"]
+
+        text_under_1 = [t for t in texts
+                        if "text under sub" in t["text"]]
+        assert len(text_under_1) == 1
+        cf1 = text_under_1[0]["structure"]["context_flat"]
+        assert cf1.get("paragraph") == "1", (
+            f"context_flat paragraph={cf1.get('paragraph')!r}"
+        )
+        assert cf1.get("subparagraph") == "а", (
+            f"context_flat subparagraph={cf1.get('subparagraph')!r}"
+        )
+
+        text_under_2 = [t for t in texts
+                        if "other text" in t["text"]]
+        assert len(text_under_2) == 1
+        cf2 = text_under_2[0]["structure"]["context_flat"]
+        assert cf2.get("paragraph") == "2", (
+            f"context_flat paragraph={cf2.get('paragraph')!r}"
+        )
+        assert cf2.get("subparagraph") == "а", (
+            f"context_flat subparagraph={cf2.get('subparagraph')!r}"
+        )
+
+    # ------------------------------------------------------------------
+    # Regression: ukaz-557
+    # ------------------------------------------------------------------
+
+    def test_ukaz_557_point_10_sub_b_continuation(self):
+        """ukaz-557: п.10 sub 'б)' → минимум 6 text-детей (continuation)."""
+        md_path = PROJECT_ROOT / "markdown/ukaz-557.md"
+        lines = read_markdown(md_path)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+
+        def _find_para_10(node):
+            if node["type"] == "paragraph" and node.get("number") == "10"                     and node.get("context_flat", {}).get("section") == "II":
+                return node
+            for c in node.get("children", []):
+                found = _find_para_10(c)
+                if found:
+                    return found
+            return None
+
+        para_10 = _find_para_10(tree)
+        assert para_10 is not None, "Не найден paragraph 10 (Section II)"
+
+        def _find_sub_in(node):
+            if node["type"] == "subparagraph" and node.get("number") == "б":
+                return node
+            for c in node.get("children", []):
+                found = _find_sub_in(c)
+                if found:
+                    return found
+            return None
+
+        sub_b = _find_sub_in(para_10)
+        assert sub_b is not None, "Не найден subparagraph 'б' под п.10"
+        text_children = [c for c in sub_b.get("children", [])
+                         if c["type"] == "text"]
+        assert len(text_children) >= 6, (
+            f"subparagraph 'б' п.10 должен иметь >=6 text-детей, "
+            f"найдено {len(text_children)}"
+        )
+
+    def test_ukaz_557_point_10_sub_v_continuation(self):
+        """ukaz-557: п.10 sub 'в)' → минимум 2 text-ребёнка."""
+        md_path = PROJECT_ROOT / "markdown/ukaz-557.md"
+        lines = read_markdown(md_path)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+
+        def _find_para_10(node):
+            if node["type"] == "paragraph" and node.get("number") == "10"                     and node.get("context_flat", {}).get("section") == "II":
+                return node
+            for c in node.get("children", []):
+                found = _find_para_10(c)
+                if found:
+                    return found
+            return None
+
+        para_10 = _find_para_10(tree)
+        assert para_10 is not None, "Не найден paragraph 10 (Section II)"
+
+        def _find_sub_in(node):
+            if node["type"] == "subparagraph" and node.get("number") == "в":
+                return node
+            for c in node.get("children", []):
+                found = _find_sub_in(c)
+                if found:
+                    return found
+            return None
+
+        sub_v = _find_sub_in(para_10)
+        assert sub_v is not None, "Не найден subparagraph 'в' под п.10"
+        text_children = [c for c in sub_v.get("children", [])
+                         if c["type"] == "text"]
+        assert len(text_children) >= 1, (
+            f"subparagraph 'в' п.10 должен иметь >=1 text-детей, "
+            f"найдено {len(text_children)}"
+        )
+
+    def test_ukaz_557_point_14_sub_g_continuation(self):
+        """ukaz-557: п.14 sub 'г)' → минимум 3 text-ребёнка."""
+        md_path = PROJECT_ROOT / "markdown/ukaz-557.md"
+        lines = read_markdown(md_path)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+
+        def _find_para_14(node):
+            if node["type"] == "paragraph" and node.get("number") == "14":
+                return node
+            for c in node.get("children", []):
+                found = _find_para_14(c)
+                if found:
+                    return found
+            return None
+
+        para_14 = _find_para_14(tree)
+        assert para_14 is not None, "Не найден paragraph 14"
+
+        def _find_sub_in(node):
+            if node["type"] == "subparagraph" and node.get("number") == "г":
+                return node
+            for c in node.get("children", []):
+                found = _find_sub_in(c)
+                if found:
+                    return found
+            return None
+
+        sub_g = _find_sub_in(para_14)
+        assert sub_g is not None, "Не найден subparagraph 'г' под п.14"
+        text_children = [c for c in sub_g.get("children", [])
+                         if c["type"] == "text"]
+        assert len(text_children) >= 3, (
+            f"subparagraph 'г' п.14 должен иметь >=3 text-детей, "
+            f"найдено {len(text_children)}"
+        )
+
+    def test_ukaz_557_point_15_sub_b_continuation(self):
+        """ukaz-557: п.15 sub 'б)' → минимум 3 text-ребёнка."""
+        md_path = PROJECT_ROOT / "markdown/ukaz-557.md"
+        lines = read_markdown(md_path)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+
+        def _find_para_15(node):
+            if node["type"] == "paragraph" and node.get("number") == "15":
+                return node
+            for c in node.get("children", []):
+                found = _find_para_15(c)
+                if found:
+                    return found
+            return None
+
+        para_15 = _find_para_15(tree)
+        assert para_15 is not None, "Не найден paragraph 15"
+
+        def _find_sub_in(node):
+            if node["type"] == "subparagraph" and node.get("number") == "б":
+                return node
+            for c in node.get("children", []):
+                found = _find_sub_in(c)
+                if found:
+                    return found
+            return None
+
+        sub_b = _find_sub_in(para_15)
+        assert sub_b is not None, "Не найден subparagraph 'б' под п.15"
+        text_children = [c for c in sub_b.get("children", [])
+                         if c["type"] == "text"]
+        assert len(text_children) >= 3, (
+            f"subparagraph 'б' п.15 должен иметь >=3 text-детей, "
+            f"найдено {len(text_children)}"
+        )
+
+
+    # ------------------------------------------------------------------
+    # Regression: ukaz-96 — text под subparagraph в II.8
+    # ------------------------------------------------------------------
+
+    def test_ukaz_96_paragraph_8_sub_a_text(self):
+        """ukaz-96: п.8 sub 'а)' → >=1 text-ребёнок."""
+        md_path = PROJECT_ROOT / "markdown/ukaz-96.md"
+        lines = read_markdown(md_path)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+
+        def _find_para_8(node):
+            if node["type"] == "paragraph" and node.get("number") == "8"                     and node.get("context_flat", {}).get("section") == "II":
+                return node
+            for c in node.get("children", []):
+                found = _find_para_8(c)
+                if found:
+                    return found
+            return None
+
+        para_8 = _find_para_8(tree)
+        assert para_8 is not None, "Не найден paragraph 8 (Section II)"
+
+        def _find_sub_in(node):
+            if node["type"] == "subparagraph" and node.get("number") == "а":
+                return node
+            for c in node.get("children", []):
+                found = _find_sub_in(c)
+                if found:
+                    return found
+            return None
+
+        sub_a = _find_sub_in(para_8)
+        assert sub_a is not None, "Не найден subparagraph 'а' под п.8"
+        text_children = [c for c in sub_a.get("children", [])
+                         if c["type"] == "text"]
+        assert len(text_children) >= 1, (
+            f"subparagraph 'а' п.8 должен иметь >=1 text-ребёнка, "
+            f"найдено {len(text_children)}"
+        )
+
+    def test_ukaz_96_paragraph_8_sub_b_text(self):
+        """ukaz-96: п.8 sub 'б)' → >=1 text-ребёнок."""
+        md_path = PROJECT_ROOT / "markdown/ukaz-96.md"
+        lines = read_markdown(md_path)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+
+        def _find_para_8(node):
+            if node["type"] == "paragraph" and node.get("number") == "8"                     and node.get("context_flat", {}).get("section") == "II":
+                return node
+            for c in node.get("children", []):
+                found = _find_para_8(c)
+                if found:
+                    return found
+            return None
+
+        para_8 = _find_para_8(tree)
+        assert para_8 is not None, "Не найден paragraph 8 (Section II)"
+
+        def _find_sub_in(node):
+            if node["type"] == "subparagraph" and node.get("number") == "б":
+                return node
+            for c in node.get("children", []):
+                found = _find_sub_in(c)
+                if found:
+                    return found
+            return None
+
+        sub_b = _find_sub_in(para_8)
+        assert sub_b is not None, "Не найден subparagraph 'б' под п.8"
+        text_children = [c for c in sub_b.get("children", [])
+                         if c["type"] == "text"]
+        assert len(text_children) >= 1, (
+            f"subparagraph 'б' п.8 должен иметь >=1 text-ребёнка, "
+            f"найдено {len(text_children)}"
+        )
+
+    def test_ukaz_96_paragraph_8_sub_v_text(self):
+        """ukaz-96: п.8 sub 'в)' → >=1 text-ребёнок."""
+        md_path = PROJECT_ROOT / "markdown/ukaz-96.md"
+        lines = read_markdown(md_path)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+
+        def _find_para_8(node):
+            if node["type"] == "paragraph" and node.get("number") == "8"                     and node.get("context_flat", {}).get("section") == "II":
+                return node
+            for c in node.get("children", []):
+                found = _find_para_8(c)
+                if found:
+                    return found
+            return None
+
+        para_8 = _find_para_8(tree)
+        assert para_8 is not None, "Не найден paragraph 8 (Section II)"
+
+        def _find_sub_in(node):
+            if node["type"] == "subparagraph" and node.get("number") == "в":
+                return node
+            for c in node.get("children", []):
+                found = _find_sub_in(c)
+                if found:
+                    return found
+            return None
+
+        sub_v = _find_sub_in(para_8)
+        assert sub_v is not None, "Не найден subparagraph 'в' под п.8"
+        text_children = [c for c in sub_v.get("children", [])
+                         if c["type"] == "text"]
+        assert len(text_children) >= 1, (
+            f"subparagraph 'в' п.8 должен иметь >=1 text-ребёнка, "
+            f"найдено {len(text_children)}"
+        )
+
+    # ------------------------------------------------------------------
+    # Regression: ukaz-112 — text под subparagraph
+    # ------------------------------------------------------------------
+
+    def test_ukaz_112_point_7_sub_continuation(self):
+        """ukaz-112: п.7 sub 'г' имеет text-детей (continuation)."""
+        md_path = PROJECT_ROOT / "markdown/ukaz-112.md"
+        lines = read_markdown(md_path)
+        blocks = parse_blocks(lines)
+        linear = build_linear(blocks)
+        tree = build_tree(linear)
+        build_context_recursive(tree)
+
+        def _find_para_7(node):
+            if node["type"] == "paragraph" and node.get("number") == "7":
+                return node
+            for c in node.get("children", []):
+                found = _find_para_7(c)
+                if found:
+                    return found
+            return None
+
+        para_7 = _find_para_7(tree)
+        assert para_7 is not None, "Не найден paragraph 7"
+
+        def _find_sub_g(node):
+            if node["type"] == "subparagraph" and node.get("number") == "г":
+                return node
+            for c in node.get("children", []):
+                found = _find_sub_g(c)
+                if found:
+                    return found
+            return None
+
+        sub_g = _find_sub_g(para_7)
+        assert sub_g is not None, "Не найден subparagraph 'г' под п.7"
+        text_children = [c for c in sub_g.get("children", [])
+                         if c["type"] == "text"]
+        assert len(text_children) >= 3, (
+            f"subparagraph 'г' п.7 должен иметь >=3 text-детей, "
+            f"найдено {len(text_children)}"
+        )
+
 
 class TestRecordsCoverage:
     def test_article_paragraph_item_table_have_records(self):
