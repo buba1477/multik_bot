@@ -35,6 +35,8 @@ pravo.gov.ru не предоставляет официального JSON-API: 
 from __future__ import annotations
 
 import json
+import socket
+import time
 import re
 import urllib.error
 import urllib.parse
@@ -66,15 +68,28 @@ class DocumentNotFoundError(PravoError):
 
 
 def get_bytes(url: str, timeout: int = 60) -> bytes:
-    """Выполнить GET и вернуть исходные байты ответа."""
-    req = urllib.request.Request(url, headers=UA)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read()
-    except urllib.error.HTTPError as exc:
-        raise PravoError(f"HTTP {exc.code} для {url}") from exc
-    except urllib.error.URLError as exc:
-        raise PravoError(f"Сеть недоступна для {url}: {exc.reason}") from exc
+    """Выполнить GET и вернуть исходные байты ответа.
+
+    При временных сетевых ошибках (timeout, URLError) — до 3 попыток
+    с exponential backoff (2/4/8 сек). HTTP-ошибки (4xx/5xx) не повторяются.
+    """
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        req = urllib.request.Request(url, headers=UA)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as exc:
+            raise PravoError(f"HTTP {exc.code} для {url}") from exc
+        except (urllib.error.URLError, socket.timeout, OSError) as exc:
+            if attempt == max_retries:
+                raise PravoError(
+                    f"Сеть недоступна для {url} после {max_retries} попыток: {exc}"
+                ) from exc
+            delay = 2 ** attempt  # 2, 4, 8
+            print(f"  get_bytes: попытка {attempt}/{max_retries} не удалась: {exc}. "
+                  f"Повтор через {delay}с...")
+            time.sleep(delay)
 
 
 def get_html(url: str, timeout: int = 60) -> str:

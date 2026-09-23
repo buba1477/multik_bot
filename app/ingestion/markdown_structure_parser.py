@@ -114,7 +114,7 @@ RECORD_TYPES = {
 
 CONTEXT_FLAT_FIELDS = [
     "chapter", "section", "subsection", "article",
-    "paragraph", "item", "appendix",
+    "paragraph", "subparagraph", "item", "appendix",
 ]
 
 STRUCTURAL_NODE_TYPES = {
@@ -323,7 +323,7 @@ def _find_tree_parent(stack: list[dict], child_type: str) -> dict | None:
                 return parent
         return stack[0] if stack else None
     for i in range(len(stack) - 1, -1, -1):
-        if stack[i]["type"] in STRUCTURAL_NODE_TYPES:
+        if stack[i]["type"] in STRUCTURAL_NODE_TYPES | {"paragraph", "subparagraph", "item"}:
             return stack[i]
     return stack[-1] if stack else None
 
@@ -366,7 +366,7 @@ def build_tree(linear: list[dict]) -> dict:
 
 def _build_context_node(node: dict, parent_ctx: dict) -> None:
     ancestors = list(parent_ctx.get("ancestors", []))
-    if parent_ctx.get("type") in STRUCTURAL_NODE_TYPES:
+    if parent_ctx.get("type") in STRUCTURAL_NODE_TYPES | {"paragraph", "subparagraph", "item"}:
         ancestors.append({
             "type": parent_ctx["type"],
             "number": parent_ctx["number"],

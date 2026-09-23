@@ -255,31 +255,96 @@ class _SourceGroup:
 
 
 def _iter_nodes(nodes):
+    """Итератор по nodes: выдаёт (title, url, score, point, node_id).
+
+    point   — metadata["point"] (в текущем пайплайне пуст);
+    node_id — технический идентификатор чанка (<doc>_<segment>_p<part>).
+    """
     for n in nodes if nodes else []:
         if hasattr(n, "node"):
             meta = getattr(n.node, "metadata", {}) or {}
             score = getattr(n, "score", None)
-            yield meta.get("title", ""), meta.get("source_url", ""), score
+            node_id = getattr(n.node, "node_id", "")
+            yield meta.get("title", ""), meta.get("source_url", ""), score, meta.get("point", ""), node_id
         elif isinstance(n, dict):
             meta = n.get("metadata", n)
             yield (
                 meta.get("title", n.get("title", "")),
                 meta.get("source_url", n.get("url", "")),
                 n.get("score"),
+                meta.get("point", ""),
+                n.get("id", n.get("node_id", "")),
             )
         else:
-            yield getattr(n, "title", ""), getattr(n, "url", ""), getattr(n, "score", None)
+            yield (
+                getattr(n, "title", ""), getattr(n, "url", ""),
+                getattr(n, "score", None), getattr(n, "point", ""),
+                getattr(n, "node_id", ""),
+            )
+
+
+def _strip_part(node_id: str) -> str:
+    """Убрать суффикс части чанка (_pN/_cN/_chN/_partN) из node_id.
+
+    node_id строится chunker'ом детерминированно: "<doc>_<segment>_p<part>".
+    Убираем только завершающий суффикс части, оставляя структурный сегмент.
+      "79-fz_st46_p1"      -> "79-fz_st46"
+      "ukaz-1532_pre_p2"   -> "ukaz-1532_pre"
+      "ukaz-1532_app1_p1"  -> "ukaz-1532_app1"
+    """
+    if not node_id:
+        return node_id
+    m = re.search(r"(?i)(_p\d+)(_[a-z]\d+)?$|(_part\d+|_c\d+|_ch\d+)$", node_id)
+    if m:
+        return node_id[: m.start()]
+    return node_id
+
+
+def _make_structural_key(url: str, struct: str | None, point: str = "", node_id: str = "") -> tuple:
+    """Ключ группировки источников.
+
+    Приоритет определения структурной единицы (от наиболее надёжного):
+      1. point (каноническое структурное поле метаданных, если задано);
+      2. node_id (структурный сегмент, без суффикса части) — главный источник
+        для текущего пайплайна, где point не заполняется;
+      3. title (kind/num из struct) — legacy fallback;
+      4. (url,) — только если нет никакой структуры.
+
+    node_id не зависит от формата title (двоеточия/тире), поэтому разные
+    структурные элементы одного PDF не схлопываются при неудачном parse title.
+    """
+    if point:
+        return (url, "point", point)
+    stripped = _strip_part(node_id)
+    if stripped:
+        return (url, "node", stripped)
+    if not struct:
+        return (url,)
+    _, kind, num = _last_struct_part(struct)
+    if kind:
+        if num is not None:
+            return (url, kind, num)
+        return (url, kind)
+    return (url,)
 
 
 def collect_sources(nodes, max_sources: int = 3) -> list[dict]:
-    """Собрать и дедуплицировать источники из нод."""
-    groups: dict[str, _SourceGroup] = {}
-    for title, url, score in _iter_nodes(nodes):
+    """Собрать и дедуплицировать источники из нод.
+
+    Группировка: по (source_url, структурная единица). Уникальность
+    структурной единицы определяется прежде всего по node_id
+    (без суффикса части чанка), затем по point, затем по title-kind/num.
+    Несколько чанков одного структурного элемента объединяются
+    в один источник с max_score; разные элементы одного PDF — нет.
+    """
+    groups: dict[tuple, _SourceGroup] = {}
+    for title, url, score, point, node_id in _iter_nodes(nodes):
         if not url:
             continue
-        g = groups.setdefault(url, _SourceGroup(url, ""))
         doc, struct = _split_title(title)
-        if doc:
+        key = _make_structural_key(url, struct, point=point, node_id=node_id)
+        g = groups.setdefault(key, _SourceGroup(url, ""))
+        if doc and not g.doc:
             g.doc = doc
         g.add(struct, score)
 

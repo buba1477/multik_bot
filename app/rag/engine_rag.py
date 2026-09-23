@@ -26,20 +26,13 @@ from sentence_transformers import SentenceTransformer, models
 
 from ollama import ChatResponse
 from datetime import datetime
+import uuid
 import pickle
 
 from llama_index.core.schema import MetadataMode  # <--- ДОБАВЬ MetadataMode
 
 # Импорт графиков и визуализации (для будущего использования в ECharts)
 from .chart_engine import DynamicChartEngine
-# Утилиты retrieval (чистые функции, тестируемые без тяжелых зависимостей)
-from .retrieval_utils import (
-    multi_part_boost as _mp_boost,
-    reconstruct_article_context as _reconstruct_ctx,
-    extract_article_prefix as _extract_prefix,
-    is_enumeration_query as _is_enum_q,
-)
-
 from qdrant_client import QdrantClient  # СТРОГО ТАК
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
@@ -57,6 +50,9 @@ from pydantic.v1 import PrivateAttr
 # LlamaIndex пытается записать 'usage' в ChatResponse, который это запрещает.
 # Удалить, когда в llama-index-llms-ollama выйдет фикс.
 
+from gigachat import GigaChat as GigaChatSDK
+from llama_index.core.llms import CustomLLM, CompletionResponse, CompletionResponseGen, LLMMetadata
+from llama_index.core.llms.callbacks import llm_completion_callback
 # ========== ЛОГИРОВАНИЕ ==========
 from ..logger import logger as app_logger
 
@@ -101,72 +97,26 @@ if not MODEL_PATH.exists():
 else:
     logger.info(f"🚀 Использую RoSBERTa из {MODEL_PATH}")
 
-_QA_PROMPT_STR = """
-Ты — эксперт по вопросам ФНС России и государственной службы. Используй только предоставленный КОНТЕКСТ. Отвечай СТРОГО на русском языке.
+_QA_PROMPT_STR = """Отвечай ТОЛЬКО на основании предоставленного КОНТЕКСТА.
 
-ФОРМАТИРУЙ ОТВЕТ:
-- Выделяй **ключевые термины и названия статей жирным шрифтом** (**денежное содержание**, **служебный контракт**, **статья 15**)
-- Используй маркированные списки (с дефиса) для перечислений и характеристик
-- Используй нумерованные списки (1. 2. 3.) для последовательных шагов, этапов, условий
-- Разделяй смысловые блоки пустыми строками
-- Для табличных данных используй markdown-таблицы с | и ---
-- Пиши лаконично, структурированно, по существу вопроса
+Отвечай только на русском языке.
 
-ПРАВИЛА:
-1. Отвечай только на основе предоставленного КОНТЕКСТА. Не используй внешние знания.
+Не используй внутренние знания модели, память и внешнюю информацию.
 
-2. Если необходимая информация отсутствует в КОНТЕКСТЕ, напиши:
-«БАЗА_ПУСТА: Информация отсутствует».
+Не выдумывай, отвечай только по контексту
 
-3. Если вопрос не относится к ФНС России, государственной службе или предоставленному КОНТЕКСТУ, напиши:
-«БАЗА_ПУСТА: Я эксперт по вопросам ФНС России».
+Не путай норму гражданин (впервые поступающий на государсвенную гражданскую службу) и граджанский служащий (уже на службе)
 
-4. Отвечай непосредственно на поставленный вопрос. Не заменяй вопрос близким по смыслу вопросом.
-
-5. Если вопрос требует объединения нескольких положений КОНТЕКСТА, используй их совместно, но сохраняй условия и область применения каждого положения.
-
-6. Не переноси условия, числовые значения, ограничения или исключения из одной нормы на другую.
-
-7. Если несколько положений регулируют разные случаи, не объединяй их в одно правило.
-
-8. Если в КОНТЕКСТЕ есть общее правило и специальные условия или исключения, укажи их раздельно и не смешивай область их применения.
-
-9. Если вопрос содержит несколько частей, ответь на каждую часть отдельно.
-
-10. Если КОНТЕКСТ позволяет сделать вывод путём непосредственного сопоставления нескольких его положений, такой вывод разрешён. Не добавляй сведения, которых нет в КОНТЕКСТЕ.
-
-11. Числовые значения воспроизводи точно как в КОНТЕКСТЕ. Не пересчитывай и не меняй единицы измерения.
-
-12. Если положения КОНТЕКСТА противоречат друг другу, укажи наличие противоречия и не выбирай один вариант самостоятельно.
-
-13. Если вопрос содержит варианты ответа, выбери один вариант, который непосредственно подтверждается КОНТЕКСТОМ.
-
-14. ЮРИДИЧЕСКИЕ ПРАВИЛА ВЫВОДОВ (имеют приоритет над правилом 10):
-    - Отсутствие в КОНТЕКСТЕ прямого разрешения НЕ означает наличие запрета.
-    - Отсутствие в КОНТЕКСТЕ прямого запрета НЕ означает наличие разрешения.
-    - Отсутствие указания на обязанность НЕ означает наличие запрета.
-    - Отсутствие указания на запрет НЕ означает наличие права.
-    - Не выводи юридическую обязанность, запрет, право, санкцию, основание
-      для увольнения или отстранения, если это прямо не следует из КОНТЕКСТА.
-    - Не превращай общую норму о предотвращении или урегулировании конфликта
-      интересов в конкретный запрет или обязанность, если такой запрет
-      или обязанность прямо не указаны.
-    - ЗАПРЕЩЕНЫ следующие логические подмены:
-      • «в КОНТЕКСТЕ не указано, что разрешено» → «значит запрещено»
-      • «представитель нанимателя вправе отстранить» → «служащий обязан прекратить»
-      • «представитель нанимателя обязан принять меры» → «обязан именно отстранить»
-      • «может привести к конфликту интересов» → «конфликт уже возник»
-    - Если юридическое последствие прямо не установлено в КОНТЕКСТЕ,
-      напиши: «В представленном КОНТЕКСТЕ это прямо не установлено».
+ФОРМАТ ОТВЕТА:
+Ответ ВСЕГДА должен начинаться строго с фразы:
+**Ответ:** [короткий ответ норма контекста]
 
 КОНТЕКСТ:
 {context_str}
-------------------------
 
-ВОПРОС:
+Вопрос пользователя:
 {query_str}
 
-ОТВЕТ ЭКСПЕРТА:
 """
 
 qa_prompt = PromptTemplate(_QA_PROMPT_STR)
@@ -213,29 +163,99 @@ Settings.embed_model = SberRoSBERTaEmbedding(
 
 # ========== LLM (OLLAMA) ==========
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama_container:11434")
+API_KEY_GIGACHAT = os.getenv("API_KEY_GIGACHAT", "")
 
 # Инициализируем наш новый изолированный движок
 chart_engine = DynamicChartEngine(ollama_url=OLLAMA_HOST)
 
-Settings.llm = Ollama(
+# API GigaChat
+# class LlamaGigaChat(CustomLLM):
+#     context_window: int = 8096
+#     num_output: int = 512
+#     model_name: str = "GigaChat-2-Max"
+#     # 🔥 Жестко берем ключ из переменной окружения
+#     auth_data: str = API_KEY_GIGACHAT
+
+#     @property
+#     def metadata(self) -> LLMMetadata:
+#         return LLMMetadata(
+#             context_window=self.context_window,
+#             num_output=self.num_output,
+#             is_chat_model=True,
+#             model_name=self.model_name,
+#         )
+
+#     @llm_completion_callback()
+#     def complete(self, prompt: str, **kwargs: Any) -> CompletionResponse:
+#         if not self.auth_data:
+#             raise ValueError("❌ Ошибка: Переменная GIGACHAT_AUTH_KEY не задана!")
+            
+#         payload = {
+#             "model": self.model_name,
+#             "messages": [{"role": "user", "content": prompt}],
+#             "temperature": 0.0,
+#             "stream": False # Здесь обычный запрос
+#         }
+
+#         with GigaChatSDK(credentials=self.auth_data, verify_ssl_certs=False) as giga:
+#             response = giga.chat(payload)
+#             text = response.choices[0].message.content
+            
+#         return CompletionResponse(text=text)
+
+#     @llm_completion_callback()
+#     def stream_complete(self, prompt: str, **kwargs: Any) -> CompletionResponseGen:
+#         """🔥 НАСТОЯЩИЙ СТРИМИНГ ДЛЯ СБЕРА: отдаем буквы по очереди во фронтенд"""
+#         if not self.auth_data:
+#             raise ValueError("❌ Ошибка: Переменная GIGACHAT_AUTH_KEY не задана!")
+
+#         payload = {
+#             "model": self.model_name,
+#             "messages": [{"role": "user", "content": prompt}],
+#             "temperature": 0.0,
+#             "stream": True # 🔥 ПРИКАЗЫВАЕМ СБЕРУ СТРИМИТЬ ОТВЕТ
+#         }
+
+#         def gen():
+#             with GigaChatSDK(credentials=self.auth_data, verify_ssl_certs=False) as giga:
+#                 # Используем метод обсчета потока от Сбера
+#                 for chunk in giga.stream(payload):
+#                     content = chunk.choices[0].delta.content
+#                     if content:
+#                         # Отдаем каждый кусочек текста в LlamaIndex по мере прилета из облака
+#                         yield CompletionResponse(text=content, delta=content)
+#         return gen()
+
+# Settings.llm = LlamaGigaChat()
+
+
+# ===== FIX: отключаем reasoning (think=False) на верхнем уровне /api/chat =====
+# В установленной llama-index-llms-ollama==0.1.3 (контейнер) нет поля `thinking`,
+# а `additional_kwargs` уходят внутрь `options`, где think игнорируется сервером.
+# Поле `thinking` появилось в более новых версиях (host-venv 0.9.1).
+# Минимальный подкласс: только для фактического streaming-метода добавляем
+# top-level think=False, делегируя остальное в родителя (все options сохраняются).
+
+class NoThinkOllama(Ollama):
+    def stream_chat(self, messages, **kwargs):
+        # В 0.1.3 payload = {...; "options": self._model_kwargs; "stream": True; **kwargs},
+        # поэтому think=False через kwargs уходит НА ВЕРХНИЙ уровень, а не в options.
+        kwargs["think"] = False
+        return super().stream_chat(messages, **kwargs)
+
+Settings.llm = NoThinkOllama(
     model="yagpt5_fns:latest",
     base_url=OLLAMA_HOST,
     request_timeout=300.0,
     temperature=0.0,
-    context_window=6144,  # 🔥 Чтобы чанки влезали: 5 чанков * ~800 токенов + промпт
-    options={
-        "seed": 42,
-        "num_ctx": 6144,  # 🔥 Синхронизировано с Modelfile
-        "num_predict": 512,
-        "repeat_penalty": 1.05,
-        # Спасатели памяти (Оставляем!)
-        # "f16_kv": False,
-        # "flash_attn": True,
-        # "num_thread": 4,
-    },
+    context_window=8144,
     additional_kwargs={
-        "keep_alive": -1
-    }
+        "keep_alive": -1,
+        "num_predict": 512,
+        "seed": 42,
+        "num_ctx": 8144,
+        "repeat_penalty": 1.05,
+    },
 )
 
 
@@ -291,19 +311,27 @@ _EMPTY_RESPONSE_RE = re.compile(
 _ARTICLE_CHUNK_ID_RE = re.compile(r'^(.+)_p(\d+)$')
 
 
+# Служебные metadata-поля: используются только внутри retrieval/ranking,
+# НИКОГДА не должны попадать ни в embedding, ни в LLM-контекст.
+# Единый источник истины (module-level) для _init_bm25 и _sync_query.
+_META_ONLY_KEYS = [
+    "document_id", "point", "subpoint", "part", "total_parts",
+    "subjects", "categories", "references", "keywords", "context_flat",
+    "_em_input",
+]
+
+
+
 class RerankedEngine:
 
     # =========================================================
     # CONFIG
     # =========================================================
-    VECTOR_WEIGHT = 0.45
-    BM25_WEIGHT = 0.55
+    VECTOR_WEIGHT = 0.65
+    BM25_WEIGHT = 0.45
 
     BM25_TOP_K = 30
     RERANK_TOP_K = 10
-
-    ENTITY_BONUS = 0.02
-    MAX_ENTITY_BONUS = 0.08
 
     NEGATIVE_PATTERNS = [
         "не относится",
@@ -331,9 +359,10 @@ class RerankedEngine:
     ]
 
     QUERY_REPLACEMENTS = {
-        "госслужащему": "гражданскому служащему",
+        "госслужащему": "государственному гражданскому служащему",
         "госслужащий": "гражданский служащий",
         "госслужба": "гражданская служба",
+        "госслужащих": "государственных гражданских служащих",
         "на госслужбе": "на гражданской службе",
         "иноагент": "иностранный агент",
         "инагент": "иностранный агент",
@@ -385,8 +414,8 @@ class RerankedEngine:
         self.node_tokens_cache = {}
         self.reranker = None
         self.known_entities = set()
-
         logger.info("🛠 Init synthesizers...")
+
 
         self.compact_synthesizer = get_response_synthesizer(
             text_qa_template=self.qa_prompt,
@@ -491,7 +520,7 @@ class RerankedEngine:
                     "local_img": payload.get("local_img", ""),
                 }
 
-                # Сохраняем все остальные payload-поля (document_id, point, part,
+                # Сохраняем """ в """се остальные payload-поля (document_id, point, part,
                 # total_parts, categories, subjects и т.д.) для internal-использования
                 # в ranking/boost — но не для LLM.
                 _INTERNAL_PAYLOAD_SKIP = {"_node_content", "_node_type", "doc_id", "ref_doc_id"}
@@ -500,12 +529,8 @@ class RerankedEngine:
                         meta[pk] = payload[pk]
 
                 # Поля, которые используются только внутри retrieval/ranking,
-                # никогда не должны попадать ни в embedding, ни в LLM-контекст
-                _META_ONLY_KEYS = [
-                    "document_id", "point", "subpoint", "part", "total_parts",
-                    "subjects", "categories", "references", "keywords", "context_flat",
-                    "_em_input",
-                ]
+                # никогда не должны попадать ни в embedding, ни в LLM-контекст.
+                # Единый список — _META_ONLY_KEYS (module-level константа).
 
                 node = TextNode(
                     text=node_text,
@@ -513,7 +538,7 @@ class RerankedEngine:
                     metadata=meta,
                     excluded_embed_metadata_keys=["id", "source_url", "local_img", *_META_ONLY_KEYS],
                     excluded_llm_metadata_keys=[
-                        "id", "source_url", "local_img", "graph_structure", *_META_ONLY_KEYS
+                        "id", "source_url", "local_img", "graph_structure", "text", *_META_ONLY_KEYS
                     ],
                 )
                 node.metadata_template = "{key}: {value}"
@@ -673,42 +698,17 @@ class RerankedEngine:
     # =========================================================
     # QUERY
     # =========================================================
-    def _dump_debug_info(self, query: str, norm_query: str, nodes: list, final_prompt: str):
+    def _dump_debug_info(self, query: str, norm_query: str, nodes: list):
         try:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             file_path = self.debug_dir / f"query_{ts}.txt"
             with open(file_path, "w", encoding="utf-8") as f:
-                f.write(f"ORIGINAL QUERY: {query}\nNORM SEARCH: {norm_query}\n\nPROMPT:\n{final_prompt}\n")
-                f.write(f"{'=' * 60}\n")
+                f.write(f"QUERY: {query}\nNORM: {norm_query}\n\n")
                 for i, n in enumerate(nodes):
                     llm_content = n.node.get_content(metadata_mode=MetadataMode.LLM)
                     f.write(f"\n[CHUNK {i + 1}] ID: {n.node.id_} | SCORE: {n.score:.4f}\n{'-' * 30}\n{llm_content}\n")
         except Exception as e:
             logger.error(f"❌ Debug Error: {e}", exc_info=True)
-
-    # =========================================================
-    # MULTI-PART BOOST (делегировано в retrieval_utils)
-    # =========================================================
-    def _multi_part_boost(self, nodes: list, top_n: int = 10) -> list:
-        """Делегирует multi_part_boost в retrieval_utils (с fallback для legacy-чанков)."""
-        return _mp_boost(nodes, top_n=top_n)
-
-    # =========================================================
-    # STRUCTURE-AWARE RECONSTRUCTION
-    # =========================================================
-    @staticmethod
-    def _extract_article_prefix(chunk_id: str) -> Optional[str]:
-        """Делегирует extract_article_prefix в retrieval_utils."""
-        return _extract_prefix(chunk_id)
-
-    @staticmethod
-    def _is_enumeration_query(query_text: str) -> bool:
-        """Делегирует is_enumeration_query в retrieval_utils."""
-        return _is_enum_q(query_text)
-
-    def _reconstruct_article_context(self, query_text: str, final_nodes: list) -> list:
-        """Делегирует reconstruct_article_context в retrieval_utils."""
-        return _reconstruct_ctx(query_text, final_nodes, self.node_map)
 
     def _sync_query(self, query_text: str):
         from llama_index.core.schema import MetadataMode, QueryBundle, NodeWithScore
@@ -725,66 +725,7 @@ class RerankedEngine:
         else:
             combined_nodes = vector_nodes
 
-        # 3. ENTITY BOOST
-        query_entities = self._extract_query_entities(query_text)
-        if query_entities:
-            entity_token_cache = {ent: set(self._tokenize(ent)) for ent in query_entities}
-            boosted_nodes = []
-
-            for node in combined_nodes:
-                node_tokens = self.node_tokens_cache.get(node.node.node_id, set())
-                bonus = 0.0
-                for ent_tokens in entity_token_cache.values():
-                    if ent_tokens & node_tokens:
-                        bonus += self.ENTITY_BONUS
-
-                bonus = min(bonus, self.MAX_ENTITY_BONUS)
-                new_score = node.score + (bonus * 0.1)
-                boosted_nodes.append(NodeWithScore(node=node.node, score=new_score))
-
-            combined_nodes = sorted(boosted_nodes, key=lambda x: x.score, reverse=True)
-
-        # 3b. METADATA BOOST (soft boost по категориям/субъектам)
-        metadata_boosted = []
-        query_lower = query_text.lower()
-        # Список категорий/субъектов для буста (можно расширять)
-        _QUERY_CATEGORY_KEYWORDS = {
-            "срок": "сроки",
-            "документ": "документы",
-            "подать": "порядок_подачи",
-            "подача": "порядок_подачи",
-            "направить": "порядок_подачи",
-            "конкурс": "конкурс",
-            "комиссия": "комиссия",
-            "требование": "требования",
-            "обязан": "требования",
-            "запрет": "ограничения",
-            "ограничение": "ограничения",
-            "назначение": "назначение",
-            "должность": "назначение",
-        }
-        matched_categories = set()
-        for kw, cat in _QUERY_CATEGORY_KEYWORDS.items():
-            if kw in query_lower:
-                matched_categories.add(cat)
-
-        if matched_categories:
-            METADATA_BONUS = 0.05
-            for node in combined_nodes:
-                meta = node.node.metadata
-                node_cats = meta.get("categories", [])
-                if isinstance(node_cats, list) and matched_categories & set(node_cats):
-                    new_score = node.score + METADATA_BONUS
-                else:
-                    new_score = node.score
-                metadata_boosted.append(NodeWithScore(node=node.node, score=new_score))
-            combined_nodes = sorted(metadata_boosted, key=lambda x: x.score, reverse=True)
-            logger.info(f"📊 Metadata boost applied for categories: {matched_categories}")
-
-        # 3c. MULTI-PART BOOST (групповая поддержка многочастных блоков)
-        combined_nodes = self._multi_part_boost(combined_nodes, top_n=10)
-
-        # ДЕБАГ ХАЙБРИД
+        # ДЕБАГ HYBRID
         logger.info(f"\n{'=' * 20} HYBRID TOP-10 {'=' * 20}")
         for i, n in enumerate(combined_nodes[:10]):
             logger.info(f"Rank {i + 1}: [{n.score:.4f}] ID: {n.node.id_}")
@@ -798,8 +739,8 @@ class RerankedEngine:
             )
             top_5_reranked = reranked_nodes[:5]
             SCORE_THRESHOLD = 0.05
-            final_nodes = [node for node in top_5_reranked if node.score >= SCORE_THRESHOLD]
-
+            # final_nodes = [node for node in top_5_reranked if node.score >= SCORE_THRESHOLD]
+            final_nodes = top_5_reranked
             logger.info(
                 f"🛡️ [BGE RERANK FILTER]: Из 5 переранжированных чанков "
                 f"проверку по порогу >= {SCORE_THRESHOLD} прошли строго {len(final_nodes)}."
@@ -813,71 +754,26 @@ class RerankedEngine:
             logger.info(f"Rank {i + 1}: [{n.score:.4f}] ID: {n.node.id_}")
         logger.info("=" * 55 + "\n")
 
-        # 5. FORCED QUERY
-        forced_query = (
-            f"ВОПРОС:\n{query_text}\n\n"
-            f"ВАЖНО:\n"
-            f"- отвечай только по русски;\n"
-            f"- БАЗА_ПУСТА возвращать ТОЛЬКО если ответ вообще отсутствует в тексте.\n"
-        )
-        q_lower = query_text.lower()
-        if any(p in q_lower for p in self.NEGATIVE_PATTERNS):
-            forced_query += (
-                "- вопрос содержит отрицание (НЕ, кроме, исключением);\n"
-                "- определи, какой из перечисленных пунктов НЕ входит в перечень по контексту;\n"
-                "- выбери один пункт, который отсутствует в списке;\n"
-                "- отвечай только по контексту.\n"
-            )
-
         # ИНИЦИАЛИЗАЦИЯ СИНТЕЗАТОРА И КОНТЕКСТА
         synthesizer = self._select_response_mode(query_text)
         final_chunks = final_nodes[:self.final_top_k]
         logger.info(f"🧬 Final chunks allowed for LLM context: {len(final_chunks)}")
 
-        # 5a. STRUCTURE-AWARE RECONSTRUCTION (для запросов на перечень/полноту)
-        final_chunks = self._reconstruct_article_context(query_text, final_chunks)
 
-        # ============================================================
-        # 5b. CONTEXT BUDGET ENFORCEMENT (единственная точка ограничения)
-        # ============================================================
-        # Используем ту же эвристику char/4 для оценки токенов (как в строках 988-989).
-        # Резерв токенов на системный промпт + вопрос.
-        # Если суммарный контекст превышает budget, обрезаем чанки (по score).
-        # ============================================================
-        CONTEXT_WINDOW = 6144  # Значение из Settings.llm (context_window и num_ctx)
-        PROMPT_BUDGET = 800
-        remaining_budget = CONTEXT_WINDOW - PROMPT_BUDGET
-
-        if remaining_budget > 0 and final_chunks:
-            budget_used = 0
-            kept_chunks = []
-            truncated = False
-            for nws in final_chunks:
-                content = nws.node.get_content(metadata_mode=MetadataMode.LLM)
-                chunk_tokens = max(1, len(content) // 4)
-                if budget_used + chunk_tokens <= remaining_budget:
-                    kept_chunks.append(nws)
-                    budget_used += chunk_tokens
-                else:
-                    truncated = True
-                    logger.warning(
-                        f"⚠️ Context budget exceeded ({budget_used + chunk_tokens} > {remaining_budget}): "
-                        f"dropping {nws.node.node_id} (score={nws.score:.4f})"
-                    )
-                    break
-            if truncated:
-                logger.info(
-                    f"📏 Context budget enforced: kept {len(kept_chunks)}/{len(final_chunks)} chunks "
-                    f"(estimated ~{budget_used}/{remaining_budget} tokens)"
-                )
-                final_chunks = kept_chunks
-        # ============================================================
+        # Явно включаем title/source_url из metadata в LLM-контекст (вместо чистого {content})
+        for nws in final_chunks:
+            nws.node.text_template = "📄 {metadata_str}\n{content}"
+            nws.node.metadata_template = "{key}: {value}"
+            nws.node.excluded_llm_metadata_keys = [
+                "id", "source_url", "local_img", "graph_structure", "text",
+                *_META_ONLY_KEYS,
+            ]
 
         # 🔥 УМНЫЙ ДЕБАГ: Пишем файлы строго если флаг включен в .env
         if os.getenv("DEBUG_MODE", "False").lower() == "true":
             import asyncio
             asyncio.run(asyncio.to_thread(
-                self._dump_debug_info, query_text, norm_query, final_chunks, forced_query
+                self._dump_debug_info, query_text, norm_query, final_chunks
             ))
         else:
             logger.info("ℹ️ Debug dump skipped (Production mode)")
@@ -893,7 +789,7 @@ class RerankedEngine:
                 full_input_text += chunk.node.get_content(
                     metadata_mode=MetadataMode.LLM
                 ) + "\n"
-            full_input_text += forced_query
+            full_input_text += query_text
 
             exact_prompt_tokens = (
                 max(1, int(len(full_input_text) / 4))
@@ -904,9 +800,32 @@ class RerankedEngine:
             exact_prompt_tokens = f"Ошибка подсчета: {e}"
 
         # Запускаем оригинальный синтез стрима (с защитой от nodes=[])
+                # ===== DIAGNOSTIC DUMP v2 =====
+        _diag_ts = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        _diag_id = str(uuid.uuid4())[:8]
+        _diag_path = "/tmp/rag_diag_" + _diag_ts + "_" + _diag_id
+        try:
+            with open(_diag_path + "_context.txt", "w", encoding="utf-8") as _f:
+                _f.write("QUERY_TEXT: %s\n" % query_text)
+                _f.write("NORM_QUERY: %s\n" % norm_query)
+                _f.write("QUESTION: %s\n" % query_text)
+                _f.write("NUM_CHUNKS: %d\n" % len(final_chunks))
+                for _i, _nws in enumerate(final_chunks):
+                    _f.write("\n--- CHUNK %d ---\n" % (_i + 1))
+                    _f.write("  ID: %s\n" % _nws.node.node_id)
+                    _f.write("  SCORE: %s\n" % str(_nws.score))
+                    _f.write("  CONTENT: %s\n" % _nws.node.get_content(metadata_mode=MetadataMode.LLM))
+        except Exception as _e:
+            import logging
+            logging.getLogger().error("DIAG dump error: %s" % str(_e))
+        # ============================
+
+
+
+
         if not is_empty_context:
             streaming_response = synthesizer.synthesize(
-                query=forced_query,
+                query=query_text,
                 nodes=final_chunks,
             )
         else:
@@ -978,6 +897,7 @@ query_engine = RerankedEngine(
 )
 logger.info("✅ Query engine ТЕПЕРЬ РЕАЛЬНО НА QDRANT!")
 
+
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 # Обёртка над общим модулем источников (app.rag.sources).
 def _collect_sources(nodes: list, max_sources: int = 3) -> list:
@@ -1025,7 +945,33 @@ async def get_ai_streaming_response(query_text: str):
         nodes = response.source_nodes if hasattr(response, "source_nodes") else []
         has_real_context = bool(nodes)
 
+        # SOURCE INPUT DIAGNOSTIC
+        logger.info("═" * 40)
+        logger.info("📋 SOURCE INPUT")
+        for _i, _nws in enumerate(nodes):
+            _meta = getattr(_nws, "node", _nws)
+            _meta = getattr(_meta, "metadata", {}) if hasattr(_meta, "metadata") else {}
+            logger.info(
+                f"  Rank {_i+1} | node_id={getattr(getattr(_nws, 'node', _nws), 'node_id', '?')} "
+                f"| score={getattr(_nws, 'score', '?'):.4f} "
+                f"| source_url={_meta.get('source_url', '?')} "
+                f"| title={_meta.get('title', '?')[:60]}"
+            )
+        logger.info("═" * 40)
+
         sources = _collect_sources(nodes)
+
+        # SOURCE OUTPUT DIAGNOSTIC
+        logger.info("═" * 40)
+        logger.info("📋 SOURCE OUTPUT")
+        for _i, _src in enumerate(sources):
+            logger.info(
+                f"  Rank {_i+1} | url={_src.get('url', '?')} "
+                f"| title={_src.get('title', '?')[:60]} "
+                f"| score={_src.get('score', '?')}"
+            )
+        logger.info("═" * 40)
+
         logger.info(f"🧩 Источников для фронта: {len(sources)}")
         local_img = nodes[0].node.metadata.get('local_img', '') if nodes else ''
 
@@ -1059,6 +1005,7 @@ async def get_ai_streaming_response(query_text: str):
                     t = str(token)
                     yield json.dumps({"type": "text", "content": t}, ensure_ascii=False) + "\n"
                 full_response_text = "".join(tokens)
+
             else:
                 rag_context = "\n\n".join([node.node.get_content() for node in nodes])
 

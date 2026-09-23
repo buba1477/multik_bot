@@ -48,7 +48,7 @@ MODEL_PATH = BASE_DIR / "hf_cache" / "FRIDA"
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
 COLLECTION_NAME = "fns_collection"
-MAX_TOKENS = 400
+MAX_TOKENS = 600
 
 # Vspomogatelnye funkcii
 

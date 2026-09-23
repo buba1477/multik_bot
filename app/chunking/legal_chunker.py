@@ -26,6 +26,7 @@ import json
 import os
 import re
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
@@ -35,8 +36,8 @@ CHUNKS_DIR = PROJECT_DIR / "chunks"
 RESOLVED_CACHE = PROJECT_DIR / "app" / "resolved_documents.json"
 
 # Лимиты (в токенах FRIDA).
-TARGET_TOKENS = 350
-MAX_TOKENS = 400
+TARGET_TOKENS = 450
+MAX_TOKENS = 512
 # Хвостовые обрывки короче этого порога объединяются с предыдущим чанком.
 MIN_CHUNK_TOKENS = 40
 
@@ -75,16 +76,34 @@ def _load_tokenizer():
         return None
 
 
+@lru_cache(maxsize=1024)
+def _tokenize_cached(text: str):
+    """Точные token IDs текста (tuple), либо None, если токенизатор недоступен.
+
+    Кэш: один и тот же длинный текст (гигантский editorial/preamb-блок) не
+    токенизируется повторно — и в count_tokens, и в нарезке используются
+    одни и те же ids. Возвращаем tuple (неизменяемо, безопасно резать).
+    """
+    tok = _load_tokenizer()
+    if tok is None:
+        return None
+    try:
+        return tuple(tok.encode(text, add_special_tokens=False))
+    except Exception:
+        return None
+
+
 def count_tokens(text: str) -> int:
-    """Число токенов. Считает токенами FRIDA; при их недоступности — эвристика."""
+    """Число токенов. Точный подсчёт токенами FRIDA (через кэш ids).
+
+    Эвристика ~4 символа на токен используется ТОЛЬКО как fallback,
+    если токенизатор недоступен или упал.
+    """
     if not text:
         return 0
-    tok = _load_tokenizer()
-    if tok is not None:
-        try:
-            return len(tok.encode(text, add_special_tokens=False))
-        except Exception:
-            pass
+    ids = _tokenize_cached(text)
+    if ids is not None:
+        return len(ids)
     return max(1, (len(text) + 3) // 4)
 
 
@@ -105,87 +124,112 @@ def _is_editorial(text: str) -> bool:
 
 
 def _truncate_to_limit(text: str, limit: int) -> str:
-    """Обрезать текст до limit токенов (единым блоком), сохраняя начало + ' …'.
+    """Обрезать текст до limit токенов по границе слова.
 
-    Использует запас в 1 токен для компенсации расхождений decode/re-encode.
+    НИКОГДА не разрывает слово и не добавляет " …".
     """
-    tok = _load_tokenizer()
-    if tok is not None:
-        try:
-            ids = tok.encode(text, add_special_tokens=False)
-            if len(ids) <= limit:
-                return text
-            safe_limit = max(1, limit - 1)
-            cut = tok.decode(ids[:safe_limit], skip_special_tokens=True)
-            result = cut.rstrip() + " …"
-            # Дополнительная страховка: если после decode/re-encode всё ещё
-            # превышает limit, уменьшаем ещё на 1.
-            while count_tokens(result) > limit and safe_limit > 1:
-                safe_limit -= 1
-                cut = tok.decode(ids[:safe_limit], skip_special_tokens=True)
-                result = cut.rstrip() + " …"
-            return result
-        except Exception:
-            pass
-    safe_chars = max(1, limit * 4 - 4)
-    if len(text) <= safe_chars:
+    if count_tokens(text) <= limit:
         return text
-    return text[:safe_chars].rstrip() + " …"
+
+    # 1. Обрезаем по предложениям
+    sents = _SENT_RE.split(text)
+    if len(sents) <= 1:
+        sents = [text]
+
+    for n in range(len(sents) - 1, 0, -1):
+        candidate = "".join(sents[:n]).strip()
+        if not candidate:
+            continue
+        if count_tokens(candidate) <= limit:
+            return candidate
+
+    # 2. Обрезаем по словам
+    words = text.split()
+    for n in range(len(words) - 1, 0, -1):
+        candidate = " ".join(words[:n])
+        if not candidate:
+            continue
+        if count_tokens(candidate) <= limit:
+            return candidate
+
+    # 3. Крайний случай — первое слово (если и оно не влезает, то пустая строка)
+    if words and count_tokens(words[0]) <= limit:
+        return words[0]
+    return ""
 
 
 def _fit_full_text(prefix: str, part: str, max_tokens: int) -> str:
     """Гарантировать count_tokens(prefix + '\\n' + part) <= max_tokens.
 
-    Финализирующая страховка на уровне полного текста чанка. Учитывает,
-    что декод/пере-кодирование токенов может дать +1-2 токена к границе.
+    Если полный текст не влезает, обрезает part по естественным границам
+    (предложение → слово). НИКОГДА не разрывает слово и не добавляет " …".
     """
     full = prefix + "\n" + part
     if count_tokens(full) <= max_tokens:
         return full
-    tok = _load_tokenizer()
-    if tok is not None:
-        try:
-            ids = tok.encode(full, add_special_tokens=False)
-            # используем запас в 1 токен для компенсации расхождений
-            safe_n = len(ids) - 1
-            while safe_n > 0:
-                candidate = tok.decode(ids[:safe_n], skip_special_tokens=True).rstrip() + " …"
-                if count_tokens(candidate) <= max_tokens:
-                    return candidate
-                safe_n -= 1
-            return full[:1]
-        except Exception:
-            pass
-    safe_chars = max(1, max_tokens * 4 - 4)
-    return full[:safe_chars].rstrip() + " …"
+
+    # 1. Обрезаем по предложениям
+    sents = _SENT_RE.split(part)
+    if len(sents) <= 1:
+        sents = [part]
+
+    for n in range(len(sents) - 1, 0, -1):
+        candidate_body = "".join(sents[:n]).strip()
+        if not candidate_body:
+            continue
+        candidate = prefix + "\n" + candidate_body
+        if count_tokens(candidate) <= max_tokens:
+            return candidate
+
+    # 2. Если не влезает даже одно предложение — режем по словам
+    words = part.split()
+    for n in range(len(words) - 1, 0, -1):
+        candidate_body = " ".join(words[:n])
+        if not candidate_body:
+            continue
+        candidate = prefix + "\n" + candidate_body
+        if count_tokens(candidate) <= max_tokens:
+            return candidate
+
+    # 3. Крайний случай — только префикс (тело пустое)
+    return prefix
 
 
 
-def _split_oversized(para: str, limit: int) -> list[str]:
-    """Разрезать слишком длинный элемент: по предложениям, затем по токенам.
+def _split_oversized(para: str, limit: int, prefix: str | None = None) -> list[str]:
+    """Разрезать слишком длинный элемент: по предложениям, затем по словам.
 
     Каждая возвращаемая часть гарантированно <= limit токенов.
+    Ни одна часть не содержит разорванных слов.
     """
     result: list[str] = []
 
     def _cut_by_tokens(text: str) -> list[str] | None:
-        """Нарезать текст на части <= limit токенов за один encode/decode.
+        """Нарезать текст на части <= limit токенов, не разрывая слова.
 
-        Возвращает None, если токенизатор недоступен или упал (тогда
-        вызывающий использует запасной путь по словам).
+        Разбиение идёт по словам (split()), группировка по limit токенов.
+        Гарантирует, что ни одно слово не будет разрезано.
+        Возвращает None, если токенизатор недоступен (тогда вызывающий
+        использует запасной путь _push_words).
         """
-        tok = _load_tokenizer()
-        if tok is None:
+        # Проверка доступности токенизатора через кэш
+        ids = _tokenize_cached(text)
+        if ids is None:
             return None
-        try:
-            ids = tok.encode(text, add_special_tokens=False)
-        except Exception:
-            return None
+        words = text.split()
         parts: list[str] = []
-        for i in range(0, len(ids), limit):
-            chunk = tok.decode(ids[i:i + limit], skip_special_tokens=True).strip()
-            if chunk:
-                parts.append(chunk)
+        cur: list[str] = []
+        ct = 0
+        for w in words:
+            tw = count_tokens(w)
+            if ct + tw > limit and cur:
+                parts.append(" ".join(cur))
+                cur = []
+                ct = 0
+            cur.append(w)
+            ct += tw
+        if cur:
+            parts.append(" ".join(cur))
         return parts
 
     def _push_words(words: list[str]) -> None:
@@ -216,7 +260,7 @@ def _split_oversized(para: str, limit: int) -> list[str]:
         else:
             _push_words(sent.split())
 
-    # Финальная гарантия: любой кусок, всё ещё превышающий лимит, режем по токенам.
+    # Финальная гарантия: любой кусок, всё ещё превышающий лимит, режем по словам.
     fitted: list[str] = []
     for p in result:
         if count_tokens(p) > limit:
@@ -231,83 +275,114 @@ def _split_oversized(para: str, limit: int) -> list[str]:
 
 
 def _pack_blocks(
-    blocks: list[tuple[str, bool]],
-    prefix_tokens: int,
+    blocks: list[tuple[str, bool, str | None]],
+    prefix: str,
     max_tokens: int,
     target_tokens: int,
     min_tokens: int,
     split_block_indices: set[int] | None = None,
+    paragraph_is_boundary: bool = False,
 ) -> list[tuple[str, list[int]]]:
-    """Упаковать блоки (текст, is_editorial) в чанки.
+    """Упаковать блоки (текст, is_editorial, paragraph_num) в чанки.
 
     Правила:
-      - Никогда не превышать max_tokens (с учётом фиксированного префикса).
+      - Никогда не превышать max_tokens.
       - Стремиться к target_tokens.
       - Не разрывать блоки; редакционные блоки не дробить (обрезать одним чанком).
       - Мелкие хвостовые части объединять с предыдущим чанком.
+      - Если paragraph_is_boundary=True, смена paragraph вызывает flush()
+        (для сегментов, где paragraph — основная структурная единица).
+      - Если paragraph_is_boundary=False, paragraph используется только
+        для метаданных, но не как граница чанка.
 
     Возвращает:
         list[tuple[str, list[int]]] — (текст части, индексы исходных блоков).
     """
-    limit = max(max_tokens - prefix_tokens, 1)
+    prefix_tokens = count_tokens(prefix)
+    # Запас в 1 токен на "\n" между префиксом и телом.
+    # Для editorial-блоков и split_oversized используется limit.
+    # Для обычных блоков решение принимается по полному тексту через count_tokens.
+    limit = max(max_tokens - prefix_tokens - 1, 1)
     chunks: list[tuple[str, list[int]]] = []
     current: list[str] = []
     current_indices: list[int] = []
-    current_t = 0
+    current_para: str | None = None
+
+    def _full_tokens(body_parts: list[str]) -> int:
+        """Токены полного текста чанка: prefix + '\\n' + body."""
+        if not body_parts:
+            return prefix_tokens
+        return count_tokens(prefix + "\n" + "\n".join(body_parts))
 
     def flush() -> None:
-        nonlocal current, current_indices, current_t
+        nonlocal current, current_indices
         if current:
             chunks.append(("\n".join(current), current_indices))
             current = []
             current_indices = []
-            current_t = 0
 
-    for bi, (text, is_editorial) in enumerate(blocks):
-        b_t = count_tokens(text)
+    for bi, (text, is_editorial, para) in enumerate(blocks):
 
         # Force split before this block if in split_block_indices
         if split_block_indices and bi in split_block_indices:
             flush()
 
+        # Граница параграфа: новый пункт — новый chunk (только для сегментов,
+        # где paragraph — основная структурная единица, например preamble).
+        # Для article/appendix/section параграфы объединяются по токенам.
+        # Continuation (para=None) наследует текущий paragraph и НЕ вызывает flush.
+        if current and para is not None and current_para is not None and para != current_para and paragraph_is_boundary:
+            flush()
+
         if is_editorial:
             # Редакционный блок — единый, НЕ дробить на много чанков.
+            b_t = count_tokens(text)
             if b_t > limit:
                 flush()
                 chunks.append((_truncate_to_limit(text, limit), [bi]))
                 continue
-            if current and current_t + b_t > limit:
+            if current and _full_tokens(current + [text]) > max_tokens:
                 flush()
             current.append(text)
             current_indices.append(bi)
-            current_t += b_t
             continue
 
         # Обычный блок: если один элемент превышает лимит — дробить.
+        b_t = count_tokens(text)
         if b_t > limit:
             flush()
-            for fragment in _split_oversized(text, limit):
+            for fragment in _split_oversized(text, limit, prefix):
                 chunks.append((fragment, [bi]))
             continue
 
-        if current and current_t + b_t > limit:
+        # Проверка по полному тексту: влезает ли блок в текущий чанк?
+        candidate_t = _full_tokens(current + [text])
+        if current and candidate_t > max_tokens:
             flush()
-        elif current and current_t >= target_tokens and current_t + b_t > target_tokens:
-            flush()
+        if para is not None:
+            current_para = para
         current.append(text)
         current_indices.append(bi)
-        current_t += b_t
 
     flush()
 
-    # Объединение мелких хвостовых частей (в пределах одной статьи/преамбулы).
+    # Объединение мелких хвостовых частей.
+    # При paragraph_is_boundary=True НЕ объединять чанки из разных параграфов.
+    # При paragraph_is_boundary=False разные параграфы могут объединяться.
     if len(chunks) >= 2:
         merged: list[tuple[str, list[int]]] = []
         for ch_text, ch_indices in chunks:
             if merged:
                 prev_text, prev_indices = merged[-1]
+                # Определяем параграф для каждого чанка (по первому блоку в нём).
+                prev_para = blocks[prev_indices[0]][2] if prev_indices else None
+                curr_para = blocks[ch_indices[0]][2] if ch_indices else None
+                # Разные известные параграфы — не объединять (только для boundary-режима).
+                if paragraph_is_boundary and prev_para is not None and curr_para is not None and prev_para != curr_para:
+                    merged.append((ch_text, ch_indices))
+                    continue
                 prev_t = count_tokens(prev_text)
-                if prev_t < min_tokens and count_tokens(prev_text + "\n" + ch_text) <= limit:
+                if prev_t < min_tokens and _full_tokens([prev_text, ch_text]) <= max_tokens:
                     merged[-1] = (prev_text + "\n" + ch_text, prev_indices + ch_indices)
                     continue
             merged.append((ch_text, ch_indices))
@@ -325,20 +400,38 @@ def _get_paragraph_ctx(rec: dict) -> str | None:
 def _group_segments(records: list[dict]) -> list[dict]:
     """Сгруппировать records в сегменты.
 
-    Границы сегментов определяются по context_flat:
-      - article: record type = article
-      - appendix: record type = appendix (с context_flat.appendix)
-      - section внутри appendix: изменение context_flat.section
+    Границы сегментов определяются по context_flat НА СТРУКТУРНОМ уровне:
 
-    Paragraph-контекст НЕ создаёт нового сегмента, но отслеживается
-    в теле через context_flat.paragraph для динамического заголовка чанков.
+      - chapter:    изменение context_flat.chapter
+      - section:    изменение context_flat.section
+      - subsection: изменение context_flat.subsection
+      - article:    запись с type='article' (или смена context_flat.article)
+      - appendix:   запись с type='appendix' (или смена context_flat.appendix)
 
-    Каждый сегмент: {type, number, title, article, appendix, body(list[dict])}.
+    Paragraph/subparagraph/item НЕ создают границ сегментов: дочерние
+    структурные элементы объединяются по token-бюджету внутри РОДИТЕЛЬСКОГО
+    структурного сегмента. Так один и тот же универсальный алгоритм работает
+    для федеральных законов (статьи), указов/положений (разделы/главы) и
+    приказов (приложения/пункты) без специальных условий про конкретный
+    тип документа.
+
+    Каждый сегмент:
+      {type, number, title, article, appendix, chapter, section, body(list[dict])}.
     """
     segments: list[dict] = []
     current: dict | None = None
-    last_appendix: str | None = None
-    last_section: str | None = None
+    prev_ctx: dict = {}
+
+    # Структурные ключи в порядке приоритета: если меняется несколько сразу,
+    # выбираем самый верхний уровень иерархии.
+    STRUCTURAL = ("chapter", "section", "subsection", "article", "appendix")
+    TYPE_BY_KEY = {
+        "chapter": "chapter",
+        "section": "section",
+        "subsection": "subsection",
+        "article": "article",
+        "appendix": "appendix",
+    }
 
     def flush() -> None:
         nonlocal current
@@ -350,78 +443,92 @@ def _group_segments(records: list[dict]) -> list[dict]:
         st = rec["structure"]
         rtype = st["type"]
         ctx = st.get("context_flat") or {}
-        article = ctx.get("article")
-        appendix = ctx.get("appendix")
-        section = ctx.get("section")
 
-        # Определяем, нужно ли создать новый сегмент
-        is_new = False
-        seg_type = None
+        # Определяем изменившийся структурный ключ (самый приоритетный).
+        change_key = None
+        for key in STRUCTURAL:
+            cur_val = ctx.get(key)
+            prev_val = prev_ctx.get(key)
+            # «cur_val truthy» — защита от ложного сегмента при выходе
+            # из структурного элемента (номер уходит в None после последней
+            # статьи/раздела), когда это не начало нового элемента.
+            if cur_val and cur_val != prev_val:
+                change_key = key
+                break
 
+        # Явные heading-записи (article/appendix) — всегда граница,
+        # даже если context_flat не изменился (например, статьи-подпункты
+        # «Статья 59», «Статья 59 1», «Статья 59 2» имеют одинаковый
+        # context_flat.article=59, но это самостоятельные статьи).
         if rtype == "article":
-            is_new = True
-            seg_type = "article"
-        elif rtype == "appendix" and appendix:
-            # Приложение: только при переходе контекста
-            if current is None or current.get("appendix") != appendix:
-                is_new = True
-                seg_type = "appendix"
-                last_appendix = appendix
-                last_section = None  # сбрасываем при входе в appendix
-        elif appendix and section and section != last_section:
-            # Смена раздела внутри приложения
-            is_new = True
-            seg_type = "section"
-            last_section = section
+            change_key = "article"
+        elif rtype == "appendix" and ctx.get("appendix"):
+            change_key = "appendix"
 
-        if is_new:
+        if change_key is not None:
             flush()
+            seg_type = TYPE_BY_KEY[change_key]
+            seg_number = ctx.get(change_key) or st.get("number")
+
             if seg_type == "section":
-                # Заголовок раздела строится синтетически, т.к. section-узлы
-                # не попадают в records (structural nodes with children).
-                section_num = section or st.get("number") or ""
+                section_num = ctx.get("section") or st.get("number") or ""
                 title = f"Раздел {section_num}" if section_num else ""
+            elif seg_type == "chapter":
+                chapter_num = ctx.get("chapter") or st.get("number") or ""
+                title = f"Глава {chapter_num}" if chapter_num else ""
+            elif seg_type == "subsection":
+                sub_num = ctx.get("subsection") or st.get("number") or ""
+                title = f"Подраздел {sub_num}" if sub_num else ""
             else:
+                # article/appendix — используем текст записи (в нём уже есть
+                # номер + полное название, например:
+                # «Статья 59 3. Порядок применения взысканий...»).
                 title = _clean_header(rec["text"])
+
             current = {
                 "type": seg_type,
-                "number": st.get("number"),
+                "number": seg_number,
                 "title": title,
-                "article": article,
-                "appendix": appendix,
+                "article": ctx.get("article"),
+                "appendix": ctx.get("appendix"),
+                "chapter": ctx.get("chapter"),
+                "section": ctx.get("section"),
                 "body": [],
             }
-            if seg_type == "section":
-                # Для section триггер-запись — content (paragraph/text),
-                # и её нужно добавить в тело сегмента.
+            # Для section/chapter/subsection триггер-запись — content-запись
+            # (paragraph/text), её нужно добавить в тело сегмента.
+            if seg_type in ("section", "chapter", "subsection", "appendix"):
                 current["body"].append(rec)
+            prev_ctx = ctx
             continue
 
         if current is None:
             current = {
                 "type": "preamble", "number": None,
                 "title": "Преамбула", "article": None,
-                "appendix": None, "body": [],
+                "appendix": None, "chapter": None,
+                "section": None, "body": [],
             }
 
         current["body"].append(rec)
+        prev_ctx = ctx
 
     flush()
 
-    # Финальный проход: уточняем заголовки для сегментов без фиксированного title
+    # Финальный проход: уточняем заголовки для сегментов без фиксированного
+    # структурного title (preamble/прочее). Если в таком сегменте пункт —
+    # верхний значимый структурный элемент без более релевантного родителя,
+    # title = «Пункт N». Иначе — «Преамбула».
     for seg in segments:
-        if seg["type"] not in ("article", "appendix", "section"):
+        if seg["type"] not in ("article", "appendix", "section", "chapter", "subsection"):
             body = seg["body"]
             if body:
-                first_para = None
-                for br in body:
-                    pn = _get_paragraph_ctx(br)
-                    if pn:
-                        first_para = pn
-                        break
+                first_para = _get_paragraph_ctx(body[0]) if body else None
                 seg["title"] = f"Пункт {first_para}" if first_para else "Преамбула"
 
     return segments
+
+
 def _make_doc_display_name(safe_doc_id: str, doc_display: str) -> str:
     """Преобразовать идентификатор документа в читаемое название.
 
@@ -496,10 +603,7 @@ def _make_semantic_title(text: str, doc_display_name: str, point_key: str | None
     # Если point_key — это полный заголовок статьи/раздела/главы/
     # приложения/пункта/преамбулы, используем его как есть.
     # ==================================================================
-    if point_key and re.match(
-        r'^(?:Статья|Раздел|Глава|Приложение|Пункт|Преамбула)',
-        point_key,
-    ):
+    if point_key and not re.match(r'^\d+(?:[.]\d+)*$', point_key):
         return f"{doc_display_name}: {point_key}"
 
     # ==================================================================
@@ -555,13 +659,21 @@ def _build_chunks_for_segment(
     seg_type = seg["type"]
 
     # Собираем блоки + отслеживаем, какие body-рекорды в какой блок попали
-    blocks: list[tuple[str, bool]] = []
+    # Каждый блок хранит (text, is_editorial, paragraph_num) —
+    # paragraph_num наследуется от последнего явного paragraph/пункта для text-блоков,
+    # что позволяет корректно определять границы между разными пунктами.
+    blocks: list[tuple[str, bool, str | None]] = []
     block_to_record: list[int] = []  # индекс body-рекорда для каждого блока
+    current_para: str | None = None
     for bi, r in enumerate(seg["body"]):
         txt = _norm_text(r["text"])
         if not txt:
             continue
-        blocks.append((txt, _is_editorial(txt)))
+        para = _get_paragraph_ctx(r)
+        if para is not None:
+            current_para = para  # явный номер пункта — обновляем контекст
+        # text-блоки без номера наследуют номер последнего явного пункта
+        blocks.append((txt, _is_editorial(txt), current_para))
         block_to_record.append(bi)
 
     if not blocks:
@@ -570,15 +682,12 @@ def _build_chunks_for_segment(
     # Пробуем сегментный префикс; для динамических заголовков используем
     # первый попавшийся paragraph в теле
     prefix_title = seg["title"]
-    if seg_type not in ("article", "appendix", "section"):
+    if seg_type not in ("article", "appendix", "section", "chapter", "subsection"):
         # Пробуем найти paragraph-контекст для префикса
-        pn = None
-        for br in seg["body"]:
-            pn = _get_paragraph_ctx(br)
-            if pn:
-                prefix_title = f"Пункт {pn}"
-                break
-        if pn is None:
+        pn = _get_paragraph_ctx(seg["body"][0]) if seg["body"] else None
+        if pn:
+            prefix_title = f"Пункт {pn}"
+        else:
             prefix_title = "Преамбула"
 
     prefix = f"[{doc_display}] [{prefix_title}]"
@@ -587,12 +696,13 @@ def _build_chunks_for_segment(
     # Detect blocks with premiums «maximum size is not limited» -
     # they should not be merged with bonus blocks into one chunk.
     split_block_indices: set[int] = set()
-    for bi_p, (txt_p, _) in enumerate(blocks):
+    for bi_p, (txt_p, _, _) in enumerate(blocks):
         if "премии" in txt_p.lower() and "не ограничивается" in txt_p.lower():
             split_block_indices.add(bi_p)
 
-    parts = _pack_blocks(blocks, prefix_tokens, max_tokens, target_tokens, min_tokens,
-                         split_block_indices=split_block_indices)
+    parts = _pack_blocks(blocks, prefix, max_tokens, target_tokens, min_tokens,
+                         split_block_indices=split_block_indices,
+                         paragraph_is_boundary=False)
 
     chunks: list[dict] = []
     for i, (part, part_block_indices) in enumerate(parts, 1):
@@ -600,18 +710,13 @@ def _build_chunks_for_segment(
         if not part:
             continue
 
-        # Определяем заголовок для этого чанка
-        if seg_type not in ("article", "appendix", "section"):
-            # Находим body-рекорд для первого блока в part
-            first_block_in_part = part_block_indices[0] if part_block_indices else 0
-            record_idx = block_to_record[first_block_in_part]
-            pn = _get_paragraph_ctx(seg["body"][record_idx])
-            if pn:
-                point_key = pn
-                chunk_title = f"Пункт {pn}"
-            else:
-                point_key = prefix_title
-                chunk_title = prefix_title
+        # Определяем заголовок для этого чанка из paragraph первого блока.
+        # blocks[][2] уже содержит наследованный paragraph для continuation.
+        first_block_in_part = part_block_indices[0] if part_block_indices else 0
+        pn_block = blocks[first_block_in_part][2]  # paragraph из блока (уже наследован)
+        if pn_block and seg_type not in ("article", "appendix", "section", "chapter", "subsection"):
+            point_key = pn_block
+            chunk_title = f"Пункт {pn_block}"
         else:
             point_key = prefix_title
             chunk_title = prefix_title
@@ -662,7 +767,7 @@ def _make_chunk_id(seg: dict, doc_id: str, part_index: int, seg_type: str,
 
     Для article дополнительно извлекает полный номер из заголовка,
     чтобы «Статья 12» и «Статья 12 1» (12.1) получали разные ID.
-    Для section с отсутствующим номером используется seg_idx,
+    Для section/chapter/subsection с отсутствующим номером используется seg_idx,
     чтобы разные секции не получали одинаковые ID.
     """
     if seg_type == "article":
@@ -682,9 +787,22 @@ def _make_chunk_id(seg: dict, doc_id: str, part_index: int, seg_type: str,
         else:
             safe_num = f"s{seg_idx}"
         return f"{doc_id}_sec{safe_num}_p{part_index}"
+    elif seg_type == "chapter":
+        raw_num = seg.get("number")
+        if raw_num:
+            safe_num = str(raw_num).replace(".", "_")
+        else:
+            safe_num = f"ch{seg_idx}"
+        return f"{doc_id}_ch{safe_num}_p{part_index}"
+    elif seg_type == "subsection":
+        raw_num = seg.get("number")
+        if raw_num:
+            safe_num = str(raw_num).replace(".", "_")
+        else:
+            safe_num = f"sub{seg_idx}"
+        return f"{doc_id}_sub{safe_num}_p{part_index}"
     else:  # preamble или body
         return f"{doc_id}_pre_p{part_index}"
-
 
 def _load_resolved_meta() -> dict:
     """Метаданные документов из app/resolved_documents.json (содержат pdf_path)."""
@@ -842,7 +960,7 @@ def process_markdown_file(
         "min_tokens": min(token_counts) if token_counts else 0,
         "max_tokens": max(token_counts) if token_counts else 0,
         "avg_tokens": round(sum(token_counts) / len(token_counts), 1) if token_counts else 0,
-        "over_400": sum(1 for t in token_counts if t > 400),
+        "over_400": sum(1 for t in token_counts if t > 512),
     }
 
 
