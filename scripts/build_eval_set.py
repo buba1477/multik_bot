@@ -459,7 +459,8 @@ def mode_validate(args) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Сборка golden set для eval retrieval (offline)")
+    p = argparse.ArgumentParser(description="Сборка golden set для eval_retrieval "
+                                            "(retrieval офлайн, LLM-разметка — GigaChat)")
     p.add_argument("--mode", required=True,
                    choices=["llm-gen", "from-questions", "finalize", "validate"])
     p.add_argument("--out", default=str(PROJECT_DIR / "eval" / "qrels.jsonl"))
