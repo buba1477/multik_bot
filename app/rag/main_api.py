@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
     
     logger.info("🛑 Остановка приложения...")
     if ollama_client:
-        await ollama_client.close()
+        await ollama_client.aclose()
     if cache:
         await cache.close()
 

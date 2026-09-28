@@ -2,7 +2,7 @@
 
 Документ описывает фактическое состояние pipeline на момент последней проверки.
 
-Дата: 20.08.2026
+Дата: 23.09.2026
 
 ---
 
@@ -13,16 +13,17 @@ documents.json  (содержит nd для legacy-документов)
     │
     ▼
 scripts/download_documents.py
+    │   (инкрементальное скачивание; см. секцию 3.3)
     │
     ├── app/publication_api.py           (ОСНОВНОЙ путь)
     │       │
-    │       ├── /api/Documents (поиск по number)
+    │       ├── /api/Documents (поиск по number, затем number + name)
     │       ├── /api/Document?eoNumber=… (детали)
     │       ├── /file/pdf?eoNumber=… → raw/<id>.pdf
     │       └── /Document/View/<eoNumber> → raw_html/<id>.html
     │
-    └── app/pravo_resolver.py            (LEGACY-резерв)
-            │
+    └── app/pravo_resolver.py            (LEGACY-резерв, только для актов
+            │                              отсутствующих в базе публикации)
             ├── /proxy/ips/ (поиск nd по реквизитам)
             ├── print-представление → raw_html/<id>.html
             └── app/ingestion/html_to_pdf.py
@@ -31,9 +32,16 @@ scripts/download_documents.py
 
 === RAG pipeline (на основе HTML) ===
 
-raw_html/<id>.html
-    │
-    ▼
+raw_html/<id>.html         raw/<id>.pdf (OCR fallback)
+    │                           │
+    │              ┌────────────┤
+    │              ▼            ▼
+    │     pdf_ocr.is_scanned_pdf() → True → pdf_ocr.ocr_pdf()
+    │              │            │
+    │              ▼            ▼
+    │     convert_from_text()   │
+    │              │            │
+    ▼              ▼            │
 app/ingestion/html_to_markdown.py
     │   BeautifulSoup (санитизация)
     │   → pandoc (html→gfm-raw_html)
@@ -53,16 +61,38 @@ structure/<id>.json
     ▼
 app/chunking/legal_chunker.py
     │   Нарезка по article/paragraph/subparagraph
-    │   → FRIDA-токенизация (~350 токенов target, ~400 max)
+    │   → FRIDA-токенизация (TARGET=450, MAX=512, MIN=40)
+    │   → Редакционные блоки (преамбула) не дробятся
     ▼
 chunks/<id>.jsonl
     │
     ▼
 app/chunking/create_index_qdrant_chunks.py
-    │   FRIDA embedding (Sber RoSBERTa)
+    │   FRIDA embedding (Sber RoSBERTa, 1536-dim, CLS-pooling)
     │   → загрузка векторов в Qdrant fns_collection
+    │   → спот-чек верификация 10 точек после загрузки
     ▼
-Qdrant vector DB
+Qdrant vector DB (4294 уникальных чанка)
+    │
+    ▼
+app/rag/engine_rag.py
+    │   Гибридный поиск (dense + BM25, weighted RRF)
+    │   → SentenceTransformerRerank (cross-encoder, top-10 → top-5)
+    │   → Ollama (yagpt5_fns:latest) / GigaChat
+    │   → ChartEngine (ECharts JSON, опционально)
+    │   → Автоподбор фотографий сотрудников
+    ▼
+app/rag/sources.py — дедупликация и форматирование источников ответа
+    │
+    ▼
+Streaming JSON-ответ → фронтенд
+```
+
+Унифицированный запуск пайплайна:
+
+```bash
+venv/bin/python scripts/run_pipeline.py --all
+# Отдельные шаги: --download, --ocr, --convert, --parse, --chunk
 ```
 
 
@@ -79,8 +109,19 @@ Qdrant vector DB
 | `structure/<id>.json` | Результат структурного парсинга (markdown_structure_parser). Содержит linear (точное восстановление), tree, records. |
 | `chunks/<id>.jsonl` | Нарезанные чанки (legal_chunker). JSONL-формат: id, title, text, local_img, url. Непосредственный вход для индексации. |
 | `app/resolved_documents.json` | Кэш разрешений. Для каждого документа хранит method (publication/legacy), revision, pdf_path, html_path, html_sha256, pdf_size, pdf_pages. |
+| `app/rag/sources.py` | Дедупликация и форматирование источников ответа: группировка по URL, объединение структурных частей (пункты 8–10), без hardcode под документы. |
+| `app/rag/chart_engine.py` | DynamicChartEngine — детекция запросов на график, генерация ECharts JSON-конфигурации. |
+| `app/logger.py` | Единый модуль логирования: ротация 10 MB / 5 бэкапов в `app_audit.log`, дублирование в stdout, ContextVar для request_id. |
+| `app/search_fragments.py` | Построение поисковых фрагментов названия (от специфичного к общему) для двухэтапного разрешения документов. |
 | `hf_cache/FRIDA/` | Локальный кэш модели Sber RoSBERTa (FRIDA) для embedding-векторов. Offline-режим. |
 | `images_cache/` | Кэш изображений сотрудников для автоподбора фотографий в ответах RAG. |
+| `employees.txt` | Список сотрудников для автоподбора фотографий (персональные данные, в gitignore). |
+| `scripts/download_documents.py` | Инкрементальный загрузчик НПА: publication API + legacy-резерв. |
+| `scripts/run_pipeline.py` | Унифицированный пайплайн ingestion: download → ocr → convert → parse → chunk. Флаги: `--all`, `--download`, `--ocr`, `--convert`, `--parse`, `--chunk`. |
+| `scripts/eval_retrieval.py` | Офлайн-харнесс оценки retrieval: recall@k, MRR, nDCG + ablation (dense/bm25/hybrid/hybrid_rerank). |
+| `scripts/build_eval_set.py` | Утилита сборки golden set (для будущего расширения). |
+| `eval/` | Артефакты оценки: qrels, вопросы, отчёты (не коммитятся, кроме шаблонов). |
+| `INTERVIEW_PREP.md` | Шпаргалка к собесу ML/LLM Engineer по проекту. |
 | `app_audit.log` | Ротируемый лог (10 MB, 5 бэкапов) с request_id для аудита. |
 
 
@@ -96,7 +137,7 @@ Qdrant vector DB
 
 2. **Верификация** — `_pick_unique()`:
    - Сравнение number + date + type со строгими реквизитами из documents.json.
-   - Канонизация типов ("Указ" + "Президент Российской Федерации" → "Указ Президента Российской Федерации").
+   - Канонизация типов (`_canonical_type`: "Указ" + "Президент Российской Федерации" → "Указ Президента Российской Федерации").
    - **Fail-closed**: при неоднозначности/несовпадении — `DocumentMismatchError` (останов, legacy-резерв НЕ используется).
 
 3. **Детали** — `GET /api/Document?eoNumber=<eoNumber>` 
@@ -105,6 +146,13 @@ Qdrant vector DB
 4. **Скачивание**:
    - PDF: `GET /file/pdf?eoNumber=...` → `raw/<id>.pdf` (проверка заголовка `%PDF-`).
    - HTML: `GET /Document/View/<eoNumber>` → `raw_html/<id>.html` (проверка `<!DOCTYPE html>`).
+
+**Двухэтапный поиск** (`resolve_exact`):
+   - Этап 1: строго по `number` → `_pick_unique()`.
+   - Этап 2: если неоднозначно/не найдено — `number + name` с короткими фрагментами названия
+     (`build_search_fragments` из `app/search_fragments.py`, от более специфичного к менее).
+   - Итоговое отсутствие → `DocumentNotFoundError` (переход на legacy-резерв).
+   - Несовпадение реквизитов → `DocumentMismatchError` (останов, без резерва).
 
 **Ограничение**: портал официального опубликования содержит акты примерно с 2011–2012 гг.
 Старые федеральные законы (79-ФЗ от 2004, 58-ФЗ от 2003) — отсутствуют → `DocumentNotFoundError`.
@@ -256,13 +304,19 @@ records (из structure JSON)
 
 | Параметр | Значение |
 |----------|----------|
-| TARGET_TOKENS | 350 |
-| MAX_TOKENS | 400 |
+| TARGET_TOKENS | 450 |
+| MAX_TOKENS | 512 |
 | MIN_CHUNK_TOKENS | 40 |
 
 Токенизация — FRIDA (Sber RoSBERTa) tokenizer. Offline. Если модель недоступна → эвристика (~4 символа на токен).
 
-### 6.4. Валидация JSONL
+### 6.4. Редакционные блоки
+
+Константа `_EDITORIAL_RE` = `r"\(В редакции[^)]*\)"` — паттерн для выявления редакционных блоков.
+- Блоки, соответствующие паттерну, возвращаются как единое целое без дробления.
+- При объединении мелких частей редакционный блок прикрепляется к предыдущему чанку.
+
+### 6.5. Валидация JSONL
 
 `validate_jsonl()`:
 - Парсинг JSON.
@@ -280,13 +334,15 @@ records (из structure JSON)
 ```
 1. Чтение и валидация всех chunks/*.jsonl
 2. Проверка дубликатов ID
-3. Проверка лимита токенов (≤400)
-4. Загрузка FRIDA (SentenceTransformer: Transformer + Pooling(CLS))
+3. Проверка лимита токенов (≤512)
+4. Загрузка FRIDA (SentenceTransformer: Transformer + Pooling(CLS), 1536-dim)
+   → lru_cache для tokenizer (functools.lru_cache, _tokenize_chunk)
 5. Вычисление embeddings (batch=32, префикс "search_document:")
 6. Подключение к Qdrant
 7. Удаление/пересоздание коллекции fns_collection
 8. Загрузка векторов с payload (id, title, text, local_img, source_url)
-9. Проверка: количество точек == количество чанков, размерность совпадает
+9. Спот-чек: верификация 10 случайных точек (embedding ≈)
+10. Проверка: количество точек == количество чанков, размерность совпадает
 ```
 
 ### 7.2. Параметры
@@ -294,11 +350,13 @@ records (из structure JSON)
 | Параметр | Значение |
 |----------|----------|
 | Collection | `fns_collection` |
-| Qdrant host | localhost (переопределяется через QDRANT_HOST) |
-| Qdrant port | 6333 (переопределяется через QDRANT_PORT) |
-| Embedding | FRIDA / Sber RoSBERTa (CLS-pooling) |
+| Qdrant host | `localhost` (переопределяется через `QDRANT_HOST`) |
+| Qdrant port | `6333` (переопределяется через `QDRANT_PORT`) |
+| Embedding | FRIDA / Sber RoSBERTa (CLS-pooling, 1536-dim) |
 | Batch size | 32 |
 | Префикс | `search_document:` |
+| TARGET_TOKENS | 450 |
+| MAX_TOKENS | 512 |
 
 ### 7.3. Payload точки
 
@@ -327,22 +385,26 @@ records (из structure JSON)
   └── Основной RAG-путь:
         │
         ├── 1. Гибридный поиск
-        │     ├── Векторный (FRIDA embedding → Qdrant)
-        │     ├── BM25 (rank_bm25, по всей коллекции)
+        │     ├── Векторный (FRIDA embedding → Qdrant, top_k=10)
+        │     ├── BM25 (rank_bm25, по всей коллекции, top_k=10)
         │     └── Fusion: weighted sum (α=0.7 векторный, β=0.3 BM25)
         │
         ├── 2. Re-rank
-        │     └── SentenceTransformerRerank (FRIDA cross-encoder, top_k=8)
+        │     └── SentenceTransformerRerank (FRIDA cross-encoder, top-10 → top-5)
         │
         ├── 3. Формирование контекста
         │     └── Сбор текстов source-чанков
         │
         ├── 4. Генерация
-        │     └── Ollama (модель "yagpt5_fns:latest")
+        │     ├── Ollama (модель "yagpt5_fns:latest") — основной LLM
+        │     └── GigaChat (через app/rag/gigachat_integration.py) — резерв/альтернатива
         │
-        └── 5. Пост-обработка
+        ├── 5. Дедупликация и форматирование источников
+        │     └── app/rag/sources.py — группировка по URL, объединение структурных частей
+        │
+        └── 6. Пост-обработка
               ├── Замена спецсимволов (HTML → unicode)
-              ├── Автоподбор фотографий (по тексту ответа)
+              ├── Автоподбор фотографий (по тексту ответа, employees.txt → images_cache/)
               └── Форматирование: **жирный**, списки, таблицы, пустые строки
 ```
 
@@ -354,18 +416,47 @@ records (из structure JSON)
 - Формат: **жирный** для ключевых терминов, маркированные/нумерованные списки, таблицы Markdown.
 - Запрет: вымышленных норм, нецензурной лексики, советов по уклонению.
 - При нехватке данных: вежливый отказ ("В моих регламентах про это ни слова").
+- `num_ctx=4096`, `temperature=0.8` (Ollama); `temperature=0.1` (GigaChat).
 
 ### 8.3. Потоковый ответ
 
 `get_ai_streaming_response()` — асинхронный генератор:
 - JSON-объекты по одному на строку: `{"type": "text"|"metadata"|"error"|"end", "content": ...}`.
-- Стриминг через Ollama `async chat()`.
-- Автоподбор фото на основе текста ответа.
+- Стриминг через Ollama `async chat()` или GigaChat `generate()`.
+- Автоподбор фото на основе текста ответа (поиск по employees.txt, сопоставление с images_cache/).
 
 ### 8.4. Чарт-режим
 
-`DynamicChartEngine.is_chart_request()` — определяет запросы на графики (по ключевым словам).
-Генерирует ECharts JSON-конфигурацию → рендерится на фронтенде.
+`DynamicChartEngine` (модуль `app/rag/chart_engine.py`):
+- `is_chart_request()` — определяет запросы на графики (по ключевым словам).
+- Генерирует ECharts JSON-конфигурацию → рендерится на фронтенде.
+
+### 8.5. GigaChat интеграция
+
+Модуль: `app/rag/gigachat_integration.py`
+
+- Использует библиотеку `gigachat` (GigaChat API).
+- Аутентификация через OAuth 2.0 (client_id / client_secret из .env).
+- Модель: `GigaChat:latest` (или указанная в переменной `GIGACHAT_MODEL`).
+- Потоковый режим: `generate()`.
+- Fallback: если GigaChat недоступен — возврат к Ollama.
+
+### 8.6. Дедупликация источников
+
+Модуль: `app/rag/sources.py`
+
+После генерации ответа:
+1. Парсинг текста ответа — выделение ссылок вида `[1], [2-4], [3, 5]`.
+2. Группировка source-чанков по `source_url`.
+3. Объединение структурных частей (пункты 8–10 одного документа → один источник).
+4. Форматирование: "Статья X → пункты Y–Z".
+5. Без hardcode под конкретные документы — полностью обобщённая логика.
+
+### 8.7. Автоподбор фотографий
+
+- Файл: `employees.txt` (список сотрудников, не коммитится).
+- Кэш изображений: `images_cache/` (названия файлов — фамилии).
+- Поиск: после генерации ответа извлекаются фамилии (через employees.txt) → сопоставление с images_cache/ → вставка в `metadata.employees`.
 
 
 ## 9. API
@@ -379,11 +470,15 @@ records (из structure JSON)
 | `/` | GET | HTML-страница чата (Jinja2, templates/base.html) |
 | `/chat` | GET | HTML-страница чата (та же) |
 | `/ask` | POST | Streaming-ответ (SSE, JSON lines). Параметр: `query`. |
+| `/ask_history` | POST | Streaming-ответ с историей диалога. Параметры: `query`, `history` (массив сообщений). |
+| `/ask_cache` | POST | Непотоковый ответ (JSON) с приоритетным кэшем. |
 
 ### 9.2. Маршрутизация запросов
 
 ```
 POST /ask  { query: "..." }
+  │
+  ├── is_chart_request() → True → DynamicChartEngine (ECharts JSON)
   │
   ├── "мультик" + не ФНС-ключевые → Ollama (yagpt5_fns, num_ctx=4096, temp=0.8)
   │
@@ -392,8 +487,14 @@ POST /ask  { query: "..." }
         ├── Redis-кэш (ключ: lower(query), TTL: 86400 сек)
         │   └── попали → stream из кэша
         │
-        └── не попали → engine_rag (get_ai_streaming_response)
-              └── успех → кэшируем полный ответ
+        ├── Ollama (yagpt5_fns:latest) — основной LLM
+        │   └── недоступен → GigaChat (gigachat_integration, fallback)
+        │
+        └── успех → кэшируем полный ответ
+
+POST /ask_history  { query: "...", history: [...] }
+  │
+  └── То же, но с history в системном промпте (контекст диалога).
 ```
 
 ### 9.3. Middleware
@@ -418,7 +519,12 @@ POST /ask  { query: "..." }
 | `QDRANT_HOST` | Хост Qdrant (qdrant) |
 | `QDRANT_PORT` | Порт Qdrant (6333) |
 | `REDIS_HOST` | Хост Redis (redis) |
+| `REDIS_PORT` | Порт Redis (6379) |
 | `REDIS_PASSWORD` | Пароль Redis |
+| `GIGACHAT_CLIENT_ID` | Client ID для GigaChat OAuth 2.0 |
+| `GIGACHAT_CLIENT_SECRET` | Client Secret для GigaChat OAuth 2.0 |
+| `GIGACHAT_MODEL` | Модель GigaChat (по умолч. `GigaChat:latest`) |
+| `GIGACHAT_SCOPE` | Scope авторизации GigaChat |
 
 ### 10.2. Сервисы Docker Compose
 
@@ -431,7 +537,7 @@ POST /ask  { query: "..." }
 
 ### 10.3. Dockerfile
 
-- База: python:3.11-slim.
+- База: python:3.13-slim.
 - Системные зависимости: Chromium (для Playwright), библиотеки GUI.
 - PyTorch CPU (torch==2.4.1, --index-url cpu).
 - Ключевые пакеты: llama-index-core==0.10.55, qdrant-client==1.9.0, sentence-transformers==3.1.1, fastapi==0.115.0.
@@ -456,33 +562,25 @@ POST /ask  { query: "..." }
    }
    ```
 
-2. Запустить скачивание:
+2. Запустить полный пайплайн ingestion:
    ```bash
-   venv/bin/python scripts/download_documents.py
+   venv/bin/python scripts/run_pipeline.py --all
+   ```
+   Или пошагово:
+   ```bash
+   venv/bin/python scripts/download_documents.py         # скачивание
+   venv/bin/python scripts/run_pipeline.py --ocr          # OCR fallback (если нужно)
+   venv/bin/python scripts/run_pipeline.py --convert      # HTML→Markdown
+   venv/bin/python scripts/run_pipeline.py --parse        # структурный парсинг
+   venv/bin/python scripts/run_pipeline.py --chunk        # чанкинг
    ```
 
-3. Конвертация HTML → Markdown:
-   ```bash
-   venv/bin/python -m app.ingestion.html_to_markdown
-   ```
-
-4. Структурный парсинг:
-   ```bash
-   venv/bin/python -m app.ingestion.markdown_structure_parser
-   ```
-   (или `batch_parse(markdown_dir='markdown', structure_dir='structure')`)
-
-5. Чанкинг:
-   ```bash
-   venv/bin/python -m app.chunking.legal_chunker --all
-   ```
-
-6. Переиндексация в Qdrant:
+3. Переиндексация в Qdrant:
    ```bash
    venv/bin/python -m app.chunking.create_index_qdrant_chunks
    ```
 
-7. (Опционально) сброс кэша Redis: `redis-cli -p 6381 FLUSHALL`.
+4. (Опционально) сброс кэша Redis: `redis-cli -p 6381 FLUSHALL`.
 
 ### 11.2. Полный цикл перезапуска (локально)
 
@@ -509,3 +607,42 @@ curl http://localhost:8000
 curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -d '{"query":"Что такое НДС?"}'
 ```
 
+## 12. Оценка retrieval (eval)
+
+### 12.1. Обзор
+
+Модуль: `scripts/eval_retrieval.py`
+
+Офлайн-харнесс для оценки качества поиска (retrieval). Не требует запуска LLM.
+
+### 12.2. Golden set
+
+- **Основной**: `eval/qrels100.jsonl` (99 запросов, 196 qrels, дата: 23.09.2026).
+- **Формат**: JSONL, каждое сообщение — `{"question": "...", "relevant_chunk_ids": [...]}`.
+- **Метрики**: Recall@k, MRR, nDCG.
+- **Варианты**: `dense` (только векторный), `bm25` (только BM25), `hybrid` (weighted RRF), `hybrid_rerank` (с cross-encoder).
+
+### 12.3. Результаты (best — hybrid_rerank)
+
+| Метрика | hybrid_rerank |
+|---------|--------------|
+| R@3 | 0.828 |
+| R@5 | 0.879 |
+| MRR@10 | 0.892 |
+| nDCG@10 | 0.792 |
+
+(Источник: `eval/eval_report.md` от 23.09.2026, run100.)
+
+### 12.4. Запуск
+
+```bash
+venv/bin/python scripts/eval_retrieval.py
+```
+
+- Читает `eval/qrels100.jsonl`.
+- Опции: `--mode` (dense/bm25/hybrid/hybrid_rerank), `--top-k`.
+- Результат: `eval/eval_report.json` + `eval/eval_report.md`.
+
+### 12.5. Вспомогательные утилиты
+
+- `scripts/build_eval_set.py` — утилита для сборки golden set (не является способом формирования основного набора; для будущего расширения).

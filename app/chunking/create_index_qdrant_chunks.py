@@ -413,6 +413,8 @@ def main() -> None:
 
     # Stavim embed_model v globalnyj Settings + ukazyvaem javno
     Settings.embed_model = embed_model
+    # Malen'kij batch, chtoby ne vyletet' po OOM na 6GB GPU
+    Settings.embed_batch_size = 16
 
     print(f"\nBuilding VectorStoreIndex from {len(nodes)} nodes...")
     t0 = time.perf_counter()
