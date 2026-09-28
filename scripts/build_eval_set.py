@@ -210,12 +210,13 @@ _QGEN_PROMPT = """Ты — методист, готовящий тестовые
 
 _JUDGE_PROMPT = """Вопрос пользователя: {question}
 
-Ниже пронумерованные фрагменты-кандидаты. Выбери ОДИН, который наиболее полно
-отвечает на вопрос. Верни ТОЛЬКО его номер (целое число), без пояснений.
+Ниже пронумерованные фрагменты-кандидаты. Верни ВСЕ номера, которые относятся к вопросу,
+через запятую: 1, 3, 5. Если ни один фрагмент не подходит — верни 0. Максимум 10 номеров.
+В ответе только номера через запятую, без пояснений.
 
 {candidates}
 
-НОМЕР:"""
+НОМЕРА:"""
 
 
 def clean_question(text: str) -> str:
@@ -370,25 +371,30 @@ def mode_from_questions(args) -> None:
                 no_candidates += 1
                 log(f"   ⚠️ [{i}] нет кандидатов для: {q[:60]}")
                 continue
-            chosen = cands[0]
+            relevant = [cands[0]]
             source = "dense-top1"
+            judge_raw = ""
             if args.auto_judge and len(cands) > 1:
                 listing = "\n".join(
                     f"{j}) [{c}] {id_to_text.get(c, '')[:300]}…"
                     for j, c in enumerate(cands, 1)
                 )
                 try:
-                    raw = gigachat_generate(_JUDGE_PROMPT.format(question=q, candidates=listing),
-                                            model=args.model, auth_data=args.gigachat_key,
-                                            temperature=0.0, max_tokens=8, client=giga)
-                    m = re.search(r"\d+", raw)
-                    if m and 1 <= int(m.group()) <= len(cands):
-                        chosen = cands[int(m.group()) - 1]
+                    judge_raw = gigachat_generate(
+                        _JUDGE_PROMPT.format(question=q, candidates=listing),
+                        model=args.model, auth_data=args.gigachat_key,
+                        temperature=0.0, max_tokens=64, client=giga)
+                    # Судья возвращает СПИСОК номеров: "1, 3, 5" (0 = ни один не подходит).
+                    nums = [int(n) for n in re.findall(r"\d+", judge_raw)]
+                    picked = [cands[n - 1] for n in nums if 1 <= n <= len(cands)]
+                    picked = list(dict.fromkeys(picked))  # дедуп, сохраняя порядок
+                    if picked:
+                        relevant = picked
                         source = f"judge:{args.model}"
                         judged += 1
                     else:
                         fallback += 1
-                        log(f"   ⚠️ [{i}] судья вернул нераспознанный ответ: {raw[:40]!r}")
+                        log(f"   ⚠️ [{i}] судья не выбрал ни одного фрагмента: {judge_raw[:40]!r}")
                 except Exception as e:  # noqa: BLE001
                     judge_errors += 1
                     fallback += 1
@@ -396,12 +402,13 @@ def mode_from_questions(args) -> None:
                 time.sleep(args.sleep)  # пауза между запросами к GigaChat (лимиты API)
             review.append({
                 "query": q,
-                "relevant": [chosen],
+                "relevant": relevant,
                 "candidates": cands,
                 "needs_review": True,
-                "meta": {"labeler": source},
+                "meta": {"labeler": source, "n_relevant": len(relevant),
+                         "judge_raw": judge_raw[:120]},
             })
-            log(f"   [{i}/{len(questions)}] {q[:55]} -> {chosen} ({source})")
+            log(f"   [{i}/{len(questions)}] {q[:55]} -> {', '.join(relevant)} ({source})")
 
     client.close()
     out = Path(args.review_out)
@@ -413,6 +420,14 @@ def mode_from_questions(args) -> None:
         f"(в т.ч. один кандидат без вызова судьи: {dense_only})")
     log(f"📊 Ошибок после retry: {judge_errors}")
     log(f"📊 Без кандидатов (запрос пропущен): {no_candidates}")
+    if review:
+        counts = [len(r["relevant"]) for r in review]
+        hist: dict[int, int] = {}
+        for c in counts:
+            hist[c] = hist.get(c, 0) + 1
+        hist_str = ", ".join(f"{n} шт.: {hist[n]}" for n in sorted(hist))
+        log(f"📊 Релевантных на запрос: mean {sum(counts) / len(counts):.2f} | "
+            f"max {max(counts)} | распределение ({hist_str})")
     if judge_errors > 5:
         log(f"⚠️ Gold может быть неточным: ошибок судьи после retry — {judge_errors}")
     log("👉 Проверь/поправь поле 'relevant' (и поставь \"needs_review\": false), затем:")

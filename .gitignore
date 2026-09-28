@@ -227,3 +227,13 @@ eval/eval_report.json
 eval/eval_report.md
 eval/qrels100.jsonl
 eval/run100/
+eval/qrels_exact.jsonl
+eval/qrels_exact_review.jsonl
+eval/qrels_review_gigachat.jsonl
+eval/qrels_manual.jsonl
+eval/weights_*/
+eval/gold99_check/
+eval/reranker_base_check/
+eval/manual5/
+eval/rrf_1_0/
+eval/without_rerank_99/

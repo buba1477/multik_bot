@@ -327,8 +327,20 @@ class RerankedEngine:
     # =========================================================
     # CONFIG
     # =========================================================
-    VECTOR_WEIGHT = 0.65
-    BM25_WEIGHT = 0.45
+    VECTOR_WEIGHT = 0.9
+    BM25_WEIGHT = 0.1
+
+    # Запросы с точными реквизитами (номер акта/статьи/пункта/приложения) — больше BM25
+    # (эмпирика scripts/eval_retrieval.py: R@1 на qrels_exact 0.20 -> 0.40 при 0.5/0.5).
+    EXACT_VECTOR_WEIGHT = 0.5
+    EXACT_BM25_WEIGHT = 0.5
+    _EXACT_TERM_RE = re.compile(
+        r"(?:\d+\s*[-–]?\s*фз|нк\s*рф|\bкодекс\w*"
+        r"|\bуказ\w*\s*№?\s*\d+|\bпостановлени\w*\s*№?\s*\d+"
+        r"|\b(?:стать[яиюе]|статей|ст\.|пункт|п\.|подпункт|пп\.|глав[аыуе]|раздел|приложени\w*)"
+        r"\s*№?\s*[\dIVXLC]+)",
+        re.IGNORECASE,
+    )
 
     BM25_TOP_K = 30
     RERANK_TOP_K = 10
@@ -375,7 +387,10 @@ class RerankedEngine:
         "коррупция": "коррупционное правонарушение",
         "коррупционный": "коррупционное правонарушение",
         "цкп": "цифровая кадровая платформа",
-        "ё": "е"
+        "ё": "е",
+        "ндфл": "налог на доход физических лиц",
+        "усн": "упрощенная система налогообложения",
+        "ндс": "налог на добавленную стоимость"
     }
 
     BASE_ENTITIES = [
@@ -536,9 +551,9 @@ class RerankedEngine:
                     text=node_text,
                     id_=node_id,
                     metadata=meta,
-                    excluded_embed_metadata_keys=["id", "source_url", "local_img", *_META_ONLY_KEYS],
+                    excluded_embed_metadata_keys=["id", "title", "source_url", "local_img", *_META_ONLY_KEYS],
                     excluded_llm_metadata_keys=[
-                        "id", "source_url", "local_img", "graph_structure", "text", *_META_ONLY_KEYS
+                        "id", "source_url", "title", "local_img", "graph_structure", "text", *_META_ONLY_KEYS
                     ],
                 )
                 node.metadata_template = "{key}: {value}"
@@ -638,20 +653,43 @@ class RerankedEngine:
     # =========================================================
     # RRF
     # =========================================================
-    def _reciprocal_rank_fusion(self, vector_nodes, bm25_scores, k=30):
+    def _get_weights(self, norm_query: str):
+        """Веса RRF по типу запроса (зеркало eval_retrieval.adaptive_weights).
+
+        Запрос с точными реквизитами ("117-ФЗ статья 217", "пункт 4 статьи 346.13",
+        "Указ 112 приложение 1") -> EXACT_VECTOR_WEIGHT/EXACT_BM25_WEIGHT;
+        user-style формулировка -> VECTOR_WEIGHT/BM25_WEIGHT.
+        """
+        if self._EXACT_TERM_RE.search(norm_query or ""):
+            logger.info(f"⚖️ RRF: exact-term запрос -> vector={self.EXACT_VECTOR_WEIGHT}, "
+                        f"bm25={self.EXACT_BM25_WEIGHT} (EXACT_*)")
+            return self.EXACT_VECTOR_WEIGHT, self.EXACT_BM25_WEIGHT
+        return self.VECTOR_WEIGHT, self.BM25_WEIGHT
+
+    def _reciprocal_rank_fusion(self, vector_nodes, bm25_scores, k=30, weights=None):
+        vector_weight, bm25_weight = weights or (self.VECTOR_WEIGHT, self.BM25_WEIGHT)
         scores = {}
 
         for rank, node in enumerate(vector_nodes):
             nid = str(node.node.metadata.get("id") or node.node.node_id)
-            scores[nid] = scores.get(nid, 0) + self.VECTOR_WEIGHT / (k + rank + 1)
+            scores[nid] = scores.get(nid, 0) + vector_weight / (k + rank + 1)
 
         bm25_indices = np.argsort(bm25_scores)[::-1][: self.BM25_TOP_K]
+
+        logger.info("=" * 20 + " BM25 TOP-30 " + "=" * 20)
+        for rank, idx in enumerate(bm25_indices):
+            nid = self.all_nodes[idx].node_id
+            score = bm25_scores[idx]
+            logger.info(f"BM25 Rank {rank + 1}: [{score:.4f}] ID: {nid}")
+        logger.info("=" * 55)
+
+        logger.info(f'ТОП-30 чанков после вектор: {scores}')
 
         for rank, idx in enumerate(bm25_indices):
             if bm25_scores[idx] <= 0:
                 continue
             nid = self.all_nodes[idx].node_id
-            scores[nid] = scores.get(nid, 0) + self.BM25_WEIGHT / (k + rank + 1)
+            scores[nid] = scores.get(nid, 0) + bm25_weight / (k + rank + 1)
 
         sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
 
@@ -721,7 +759,8 @@ class RerankedEngine:
         # 2. BM25 + HYBRID
         if self.bm25 and vector_nodes:
             bm25_scores = self.bm25.get_scores(self._tokenize(norm_query))
-            combined_nodes = self._reciprocal_rank_fusion(vector_nodes, bm25_scores)
+            weights = self._get_weights(norm_query)
+            combined_nodes = self._reciprocal_rank_fusion(vector_nodes, bm25_scores, weights=weights)
         else:
             combined_nodes = vector_nodes
 
