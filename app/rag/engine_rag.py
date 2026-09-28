@@ -666,6 +666,15 @@ class RerankedEngine:
             return self.EXACT_VECTOR_WEIGHT, self.EXACT_BM25_WEIGHT
         return self.VECTOR_WEIGHT, self.BM25_WEIGHT
 
+    def _should_rerank(self, norm_query: str) -> bool:
+        """Только exact-term запросы получают reranker (user-style — пропуск).
+
+        На честном gold реранк не улучшает R@1 на user-запросах (0.489→0.449),
+        но даёт +0.067 R@1 на точных реквизитах (0.400→0.467).
+        Экономия ~11–15 с на запросе CPU для user-style.
+        """
+        return bool(self._EXACT_TERM_RE.search(norm_query or ""))
+
     def _reciprocal_rank_fusion(self, vector_nodes, bm25_scores, k=30, weights=None):
         vector_weight, bm25_weight = weights or (self.VECTOR_WEIGHT, self.BM25_WEIGHT)
         scores = {}
@@ -770,8 +779,8 @@ class RerankedEngine:
             logger.info(f"Rank {i + 1}: [{n.score:.4f}] ID: {n.node.id_}")
         logger.info("=" * 55 + "\n")
 
-        # 4. RERANK & STRICT SCORE FILTERING
-        if self.reranker and combined_nodes:
+        # 4. RERANK (только для exact-term — user-style пропускает реранк)
+        if self.reranker and combined_nodes and self._should_rerank(norm_query):
             reranked_nodes = self.reranker.postprocess_nodes(
                 combined_nodes[:10],
                 query_bundle=QueryBundle(query_text),
@@ -786,6 +795,8 @@ class RerankedEngine:
             )
         else:
             final_nodes = combined_nodes[:self.final_top_k]
+            if self.reranker:
+                logger.info("⏭️ Rerank пропущен: запрос не exact-term (экономия ~11-15 с CPU)")
 
         # ДЕБАГ РЕРАНК
         logger.info(f"\n{'=' * 20} RERANKED TOP-5 {'=' * 20}")
