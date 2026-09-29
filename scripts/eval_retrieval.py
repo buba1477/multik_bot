@@ -54,6 +54,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import logging
 import math
 import os
 import re
@@ -63,6 +64,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
