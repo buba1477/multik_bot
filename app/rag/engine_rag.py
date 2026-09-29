@@ -1,4 +1,5 @@
 import os
+from .classifier import classify_query, is_exact
 from .sources import collect_sources
 import re
 import json
@@ -334,14 +335,6 @@ class RerankedEngine:
     # (эмпирика scripts/eval_retrieval.py: R@1 на qrels_exact 0.20 -> 0.40 при 0.5/0.5).
     EXACT_VECTOR_WEIGHT = 0.5
     EXACT_BM25_WEIGHT = 0.5
-    _EXACT_TERM_RE = re.compile(
-        r"(?:\d+\s*[-–]?\s*фз|нк\s*рф|\bкодекс\w*"
-        r"|\bуказ\w*\s*№?\s*\d+|\bпостановлени\w*\s*№?\s*\d+"
-        r"|\b(?:стать[яиюе]|статей|ст\.|пункт|п\.|подпункт|пп\.|глав[аыуе]|раздел|приложени\w*)"
-        r"\s*№?\s*[\dIVXLC]+)",
-        re.IGNORECASE,
-    )
-
     BM25_TOP_K = 30
     RERANK_TOP_K = 10
 
@@ -654,17 +647,12 @@ class RerankedEngine:
     # RRF
     # =========================================================
     def _get_weights(self, norm_query: str):
-        """Веса RRF по типу запроса (зеркало eval_retrieval.adaptive_weights).
+        """Веса RRF по типу запроса — делегировано LLM-классификатору.
 
-        Запрос с точными реквизитами ("117-ФЗ статья 217", "пункт 4 статьи 346.13",
-        "Указ 112 приложение 1") -> EXACT_VECTOR_WEIGHT/EXACT_BM25_WEIGHT;
+        Запрос с точными реквизитами/конкретной величиной -> EXACT_VECTOR_WEIGHT/EXACT_BM25_WEIGHT;
         user-style формулировка -> VECTOR_WEIGHT/BM25_WEIGHT.
         """
-        if self._EXACT_TERM_RE.search(norm_query or ""):
-            logger.info(f"⚖️ RRF: exact-term запрос -> vector={self.EXACT_VECTOR_WEIGHT}, "
-                        f"bm25={self.EXACT_BM25_WEIGHT} (EXACT_*)")
-            return self.EXACT_VECTOR_WEIGHT, self.EXACT_BM25_WEIGHT
-        return self.VECTOR_WEIGHT, self.BM25_WEIGHT
+        return classify_query(norm_query)
 
     def _should_rerank(self, norm_query: str) -> bool:
         """Только exact-term запросы получают reranker (user-style — пропуск).
@@ -673,7 +661,7 @@ class RerankedEngine:
         но даёт +0.067 R@1 на точных реквизитах (0.400→0.467).
         Экономия ~11–15 с на запросе CPU для user-style.
         """
-        return bool(self._EXACT_TERM_RE.search(norm_query or ""))
+        return is_exact(norm_query)
 
     def _reciprocal_rank_fusion(self, vector_nodes, bm25_scores, k=30, weights=None):
         vector_weight, bm25_weight = weights or (self.VECTOR_WEIGHT, self.BM25_WEIGHT)
@@ -685,14 +673,14 @@ class RerankedEngine:
 
         bm25_indices = np.argsort(bm25_scores)[::-1][: self.BM25_TOP_K]
 
-        logger.info("=" * 20 + " BM25 TOP-30 " + "=" * 20)
-        for rank, idx in enumerate(bm25_indices):
-            nid = self.all_nodes[idx].node_id
-            score = bm25_scores[idx]
-            logger.info(f"BM25 Rank {rank + 1}: [{score:.4f}] ID: {nid}")
-        logger.info("=" * 55)
+        # logger.info("=" * 20 + " BM25 TOP-30 " + "=" * 20)
+        # for rank, idx in enumerate(bm25_indices):
+        #     nid = self.all_nodes[idx].node_id
+        #     score = bm25_scores[idx]
+        #     logger.info(f"BM25 Rank {rank + 1}: [{score:.4f}] ID: {nid}")
+        # logger.info("=" * 55)
 
-        logger.info(f'ТОП-30 чанков после вектор: {scores}')
+        # logger.info(f'ТОП-30 чанков после вектор: {scores}')
 
         for rank, idx in enumerate(bm25_indices):
             if bm25_scores[idx] <= 0:

@@ -108,31 +108,26 @@ QUERY_REPLACEMENTS = {
     "ё": "е",
 }
 
-# --- adaptive: веса по типу запроса (зеркало engine_rag.RerankedEngine._get_weights) ---
-ADAPTIVE_EXACT_WEIGHTS = (0.5, 0.5)  # синхронно с EXACT_* в app/rag/engine_rag.py
-# user-style веса adaptive = текущие VECTOR_WEIGHT/BM25_WEIGHT (читаются в момент вызова)
-_EXACT_TERM_RE = re.compile(
-    r"(?:\d+\s*[-–]?\s*фз|нк\s*рф|\bкодекс\w*"
-    r"|\bуказ\w*\s*№?\s*\d+|\bпостановлени\w*\s*№?\s*\d+"
-    r"|\b(?:стать[яиюе]|статей|ст\.|пункт|п\.|подпункт|пп\.|глав[аыуе]|раздел|приложени\w*)"
-    r"\s*№?\s*[\dIVXLC]+)",
-    re.IGNORECASE,
-)
+# EXACT-веса (синхронно с app/rag/classifier.py)
+EXACT_VECTOR_WEIGHT = 0.5
+EXACT_BM25_WEIGHT = 0.5
 
 
-def _exact_term_query(text: str) -> bool:
-    """Запрос с точными реквизитами (номер акта/статьи/пункта/приложения).
-
-    Держать в синхроне с app/rag/engine_rag.py::RerankedEngine._get_weights.
-    """
-    return bool(_EXACT_TERM_RE.search(text or ""))
+def _are_exact_weights(w: tuple[float, float]) -> bool:
+    """True если веса соответствуют EXACT-режиму."""
+    return abs(w[0] - EXACT_VECTOR_WEIGHT) < 0.01 and abs(w[1] - EXACT_BM25_WEIGHT) < 0.01
 
 
+# --- adaptive: веса по типу запроса (делегировано LLM-классификатору app.rag.classifier) ---
 def adaptive_weights(query: str) -> tuple[float, float]:
-    """Веса RRF по типу запроса: точные реквизиты -> ADAPTIVE_EXACT_WEIGHTS, иначе дефолт."""
-    if _exact_term_query(normalize_query(query)):
-        return ADAPTIVE_EXACT_WEIGHTS
-    return (VECTOR_WEIGHT, BM25_WEIGHT)
+    """Веса RRF по типу запроса: EXACT -> (0.5, 0.5), USER -> (0.9, 0.1)."""
+    sys.path.insert(0, str(PROJECT_DIR))
+    try:
+        from app.rag.classifier import classify_query
+    except ImportError:
+        log("⚠️ app.rag.classifier не найден — fallback USER для всех запросов")
+        return (VECTOR_WEIGHT, BM25_WEIGHT)
+    return classify_query(normalize_query(query))
 
 
 def parse_config_spec(spec: str) -> tuple[str, tuple[float, float] | None]:
@@ -595,7 +590,7 @@ def run_config(cfg: str, qrels: list[dict], corpus: list[dict],
         query_weights = weights
         if cfg in ("adaptive", "adaptive_rerank"):
             query_weights = adaptive_weights(q)
-            if _exact_term_query(norm_q):
+            if _are_exact_weights(query_weights):
                 adaptive_exact += 1
         dense_ids = None
         if cfg in ("dense", "dense_rerank", "hybrid", "hybrid_rerank", "adaptive", "adaptive_rerank"):
