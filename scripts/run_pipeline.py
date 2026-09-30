@@ -42,66 +42,80 @@ def step_parse() -> list[dict]:
         MARKDOWN_DIR, STRUCTURE_DIR,
         registry=registry.get("documents", []),
     )
-def step_ocr() -> dict:
-    """Определить сканированные PDF и выполнить OCR.
+def step_pdf_fallback() -> dict:
+    """PDF fallback: OCR + pdftotext dlya PDF bez HTML ili s plohim Markdown.
 
-    Returns:
-        Словарь со статистикой: scanned, text, ocr_ok, ocr_fail, ocr_ids.
+    Zapuskaetsya POSLE step_convert(). Analiziruet rezultat convert
+    i dorabatyvaet: skanirovannye PDF (OCR), tekstovye PDF (pdftotext),
+    esli HTML otsutstvuet ili Markdown poluchilsya hilym (<=500 simvolov).
     """
     print("\n" + "=" * 60)
-    print("SHAG 1b: Proverka PDF na nalichie tekstovogo sloya (OCR fallback)")
+    print("SHAG 2b: PDF fallback (OCR / pdftotext)")
     print("=" * 60)
 
-    # Классифицируем PDF
     classification = pdf_ocr.classify_pdf_directory(RAW_DIR)
     scanned = classification["scanned"]
-    text_pdf = classification["text_pdf"]
+    text_pdfs = classification["text_pdf"]
+    html_ids = {h.stem for h in sorted(RAW_HTML_DIR.glob("*.html"))}
 
-    print(f"  Vsego PDF: {classification['total']}")
-    print(f"  S tekstovym sloem: {len(text_pdf)}")
+    total = classification["total"]
+    print(f"  Vsego PDF: {total}")
+    print(f"  S tekstovym sloem: {len(text_pdfs)}")
     print(f"  Skanirovannyh (nuzhen OCR): {len(scanned)}")
 
-    if scanned:
-        print(f"  Skanirovannye PDF: {scanned}")
-
-    if classification["errors"]:
-        print(f"  Oshibki proverki: {len(classification['errors'])}")
-        for e in classification["errors"]:
-            print(f"    ! {e}")
-
-    # Выполняем OCR для сканированных PDF, у которых нет HTML
-    html_ids = {h.stem for h in sorted(RAW_HTML_DIR.glob("*.html"))}
-    ocr_ok = []
-    ocr_fail = []
-
-    for pdf_name in scanned:
-        doc_id = Path(pdf_name).stem
-        if doc_id in html_ids:
-            print(f"  Propusk OCR: {pdf_name} (est' HTML)")
-            continue
-
-        pdf_path = RAW_DIR / pdf_name
-        try:
-            print(f"  OCR: {pdf_name}...")
-            text = pdf_ocr.ocr_pdf(pdf_path)
-            html_to_markdown.convert_from_text(text, doc_id)
-            ocr_ok.append(pdf_name)
-            print(f"    -> OK ({len(text)} simvolov)")
-        except Exception as exc:
-            ocr_fail.append(pdf_name)
-            print(f"    -> FAIL: {exc}")
-
-    print(f"\n  OCR vypolnen: {len(ocr_ok)}, oshibok: {len(ocr_fail)}")
-    if ocr_ok:
-        print(f"  Obrabotano: {ocr_ok}")
-
-    return {
-        "scanned": scanned,
-        "text_pdf": text_pdf,
-        "total": classification["total"],
-        "ocr_ok": ocr_ok,
-        "ocr_fail": ocr_fail,
+    stats = {
+        "total": total, "scanned": scanned, "text_pdf": text_pdfs,
+        "ocr_ok": [], "ocr_fail": [],
+        "pdftotext_ok": [], "pdftotext_fail": [], "skipped": [],
     }
+
+    for pdf_name in sorted(scanned + text_pdfs):
+        doc_id = Path(pdf_name).stem
+        pdf_path = RAW_DIR / pdf_name
+        is_scanned = pdf_name in scanned
+
+        if doc_id in html_ids:
+            md_path = MARKDOWN_DIR / f"{doc_id}.md"
+            if md_path.exists():
+                md_text = md_path.read_text(encoding="utf-8")
+                if len(md_text.strip()) > 500:
+                    stats["skipped"].append(pdf_name)
+                    print(f"  Propusk: {pdf_name} (est HTML, md={len(md_text.strip())}s, >500)")
+                    continue
+                print(f"  Plohoj Markdown ({len(md_text.strip())}s), fallback...")
+            else:
+                print(f"  .md ne najden, fallback...")
+
+        try:
+            if is_scanned:
+                print(f"  OCR: {pdf_name}...")
+                text = pdf_ocr.ocr_pdf(pdf_path)
+                stats["ocr_ok"].append(pdf_name)
+                print(f"    -> OK ({len(text)} simvolov)")
+            else:
+                print(f"  pdftotext: {pdf_name}...")
+                import subprocess
+                result_proc = subprocess.run(
+                    ["pdftotext", str(pdf_path), "-"],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if result_proc.returncode == 0 and len(result_proc.stdout.strip()) > 200:
+                    text = result_proc.stdout
+                    stats["pdftotext_ok"].append(pdf_name)
+                else:
+                    print(f"    -> SKIP (net teksta)")
+                    stats["pdftotext_fail"].append(pdf_name)
+                    continue
+            html_to_markdown.convert_from_text(text, doc_id)
+        except Exception as exc:
+            print(f"    -> FAIL: {exc}")
+            (stats["ocr_fail"] if is_scanned else stats["pdftotext_fail"]).append(pdf_name)
+
+    print(f"\n  OCR: {len(stats['ocr_ok'])} ok, {len(stats['ocr_fail'])} fail")
+    print(f"  pdftotext: {len(stats['pdftotext_ok'])} ok, {len(stats['pdftotext_fail'])} fail")
+    print(f"  Propusheno: {len(stats['skipped'])}")
+
+    return stats
 
 
 
@@ -175,7 +189,7 @@ def main() -> None:
     args = set(sys.argv[1:]) if len(sys.argv) > 1 else {"--all"}
     do_all = "--all" in args or not any(a.startswith("--") for a in args)
     do_download = "--download" in args or do_all
-    do_ocr = "--ocr" in args or do_all
+    do_pdf_fallback = "--pdf-fallback" in args or do_all
     do_convert = "--convert" in args or do_all
     do_parse = "--parse" in args or do_all
     do_chunk = "--chunk" in args or do_all
@@ -184,12 +198,12 @@ def main() -> None:
     if do_download:
         step_download()
 
-    ocr_stats = {}
-    if do_ocr:
-        ocr_stats = step_ocr()
-
     if do_convert:
         step_convert()
+
+    pdf_stats = {}
+    if do_pdf_fallback:
+        pdf_stats = step_pdf_fallback()
 
     if do_parse:
         results = step_parse()
@@ -206,10 +220,10 @@ def main() -> None:
         print(f"  Chunks: {len(chunk_results)} faylov")
     print(f"PAJPLAJN ZAVERShYON za {elapsed:.1f} sec")
     print(f"  PDF: {pairs['pdf_count']}, HTML: {pairs['html_count']}, Par: {pairs['paired']}")
-    if ocr_stats:
-        print(f"  OCR: {len(ocr_stats.get('ocr_ok', []))} ok, {len(ocr_stats.get('ocr_fail', []))} fail")
-        if ocr_stats.get("scanned"):
-            print(f"  Skanirovannyh PDF: {len(ocr_stats['scanned'])}")
+    if pdf_stats:
+        print(f"  PDF fallback: OCR {len(pdf_stats.get('ocr_ok', []))}/{len(pdf_stats.get('ocr_fail', []))} "
+              f"pdftotext {len(pdf_stats.get('pdftotext_ok', []))}/{len(pdf_stats.get('pdftotext_fail', []))} "
+              f"skip {len(pdf_stats.get('skipped', []))}")
 
 
 if __name__ == "__main__":

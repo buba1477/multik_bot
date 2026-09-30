@@ -41,7 +41,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import app.pravo_resolver as legacy  # noqa: E402  (резервный механизм)
 import app.publication_api as pub  # noqa: E402  (основной официальный API)
 from app.ingestion.html_to_pdf import convert_html_to_pdf  # noqa: E402
-from app.ingestion.html_to_markdown import batch_convert  # noqa: E402
 
 from nltk.stem import SnowballStemmer  # noqa: E402
 
@@ -578,7 +577,6 @@ def main() -> None:
         except ResolutionError as exc:
             print(f"  !! ОШИБКА: {exc}")
 
-    batch_convert()
 
 
 if __name__ == "__main__":

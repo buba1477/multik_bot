@@ -24,7 +24,6 @@ import tempfile
 from pathlib import Path
 from bs4 import BeautifulSoup
 
-from app.ingestion import pdf_ocr
 
 PANDOC = "/usr/bin/pandoc"
 H_HEADING_LEVEL = 2
@@ -194,24 +193,18 @@ def convert_from_text(text: str, doc_id: str, out_dir: Path | None = None) -> Pa
 def batch_convert(
     in_dir: Path | None = None,
     out_dir: Path | None = None,
-    raw_dir: Path | None = None,
 ) -> list[Path]:
     """Конвертировать все .html файлы из in_dir в Markdown в out_dir.
-
-    Если для PDF нет соответствующего HTML-файла, проверяет PDF
-    на наличие текстового слоя. Если PDF сканированный — запускает OCR.
 
     Args:
         in_dir: Директория с HTML-файлами (по умолчанию raw_html/).
         out_dir: Директория для Markdown (по умолчанию markdown/).
-        raw_dir: Директория с PDF-файлами (по умолчанию raw/).
 
     Returns:
         Список созданных .md файлов.
     """
     in_dir = in_dir or PROJECT_DIR / "raw_html"
     out_dir = out_dir or PROJECT_DIR / "markdown"
-    raw_dir = raw_dir or PROJECT_DIR / "raw"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     results = []
@@ -219,11 +212,9 @@ def batch_convert(
 
     # Шаг 1: HTML -> Markdown
     html_files = sorted(in_dir.glob("*.html"))
-    html_ids = set()
     for src in html_files:
         if src.name.startswith("__"):
             continue
-        html_ids.add(src.stem)
         tmp = None
         try:
             html_bytes = src.read_bytes()
@@ -257,59 +248,6 @@ def batch_convert(
         summary = f"HTML -> Markdown: {len(results)} uspeshno, {len(errors)} oshibok"
         print(summary)
 
-    # Шаг 2: OCR fallback для сканированных PDF + fallback для текстовых PDF с плохим HTML
-    # Для сканированных PDF используется OCR-текст, даже если HTML присутствует,
-    # т.к. HTML на pravo.gov.ru для таких документов — только интерфейс просмотра
-    # изображений, а не текст документа.
-    # Для текстовых PDF: если HTML дал непригодный Markdown (<= 500 символов),
-    # извлекаем текст напрямую из PDF через pdftotext.
-    pdf_files = sorted(raw_dir.glob("*.pdf"))
-    ocr_count = 0
-    for pdf_path in pdf_files:
-        doc_id = pdf_path.stem
-        try:
-            if not pdf_ocr.is_scanned_pdf(pdf_path):
-                if doc_id not in html_ids:
-                    print(f"SKIP: {pdf_path.name} (текстовый PDF, нет HTML)")
-                    continue
-
-                # Текстовый PDF с HTML — проверяем, что Markdown не пустой
-                md_path = out_dir / f"{doc_id}.md"
-                if md_path.exists():
-                    md_text = md_path.read_text(encoding="utf-8")
-                    if len(md_text.strip()) > 500:
-                        continue  # Markdown нормальный, оставляем HTML-версию
-
-                # HTML дал непригодный Markdown — используем текст из PDF
-                print(f"FALLBACK: {pdf_path.name} (текстовый PDF, HTML непригоден)...")
-                result = subprocess.run(
-                    ["pdftotext", str(pdf_path), "-"],
-                    capture_output=True, text=True, timeout=60,
-                )
-                if result.returncode == 0 and len(result.stdout.strip()) > 200:
-                    text = result.stdout
-                    out = convert_from_text(text, doc_id, out_dir=out_dir)
-                    results.append(out)
-                else:
-                    print(f"SKIP: {pdf_path.name} (pdftotext не дал текста)")
-                continue
-
-            print(f"OCR: {pdf_path.name} (сканированный PDF)...")
-            text = pdf_ocr.ocr_pdf(pdf_path)
-            out = convert_from_text(text, doc_id, out_dir=out_dir)
-            results.append(out)
-            ocr_count += 1
-        except Exception as exc:
-            errors.append(f"OCR {pdf_path.name}: {exc}")
-            print(f"FAIL OCR: {pdf_path.name}: {exc}")
-
-    if ocr_count:
-        print(f"OCR fallback: {ocr_count} dokumentov obrabotano")
-
-    if errors:
-        print("Ошибки:")
-        for e in errors:
-            print(f"  - {e}")
     return results
 
 if __name__ == "__main__":
