@@ -221,6 +221,7 @@ Modelfile.yagpt5_f16
 app_audit.log*
 
 # eval harness artifacts (generated locally, NOT committed)
+eval/*/eval_report.*
 eval/qrels.jsonl
 eval/qrels_review.jsonl
 eval/eval_report.json
