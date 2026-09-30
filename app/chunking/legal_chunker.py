@@ -777,28 +777,28 @@ def _make_chunk_id(seg: dict, doc_id: str, part_index: int, seg_type: str,
         return f"{doc_id}_st{safe_num}_p{part_index}"
     elif seg_type == "appendix":
         safe_num = str(seg.get("number") or seg.get("appendix") or "app").replace(".", "_")
-        return f"{doc_id}_app{safe_num}_p{part_index}"
+        return f"{doc_id}_app{safe_num}_s{seg_idx}_p{part_index}"
     elif seg_type == "section":
         raw_num = seg.get("number")
         if raw_num:
             safe_num = str(raw_num).replace(".", "_")
         else:
             safe_num = f"s{seg_idx}"
-        return f"{doc_id}_sec{safe_num}_p{part_index}"
+        return f"{doc_id}_sec{safe_num}_s{seg_idx}_p{part_index}"
     elif seg_type == "chapter":
         raw_num = seg.get("number")
         if raw_num:
             safe_num = str(raw_num).replace(".", "_")
         else:
             safe_num = f"ch{seg_idx}"
-        return f"{doc_id}_ch{safe_num}_p{part_index}"
+        return f"{doc_id}_ch{safe_num}_s{seg_idx}_p{part_index}"
     elif seg_type == "subsection":
         raw_num = seg.get("number")
         if raw_num:
             safe_num = str(raw_num).replace(".", "_")
         else:
             safe_num = f"sub{seg_idx}"
-        return f"{doc_id}_sub{safe_num}_p{part_index}"
+        return f"{doc_id}_sub{safe_num}_s{seg_idx}_p{part_index}"
     else:  # preamble или body
         return f"{doc_id}_pre_p{part_index}"
 

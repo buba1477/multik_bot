@@ -147,7 +147,6 @@ def parse_config_spec(spec: str) -> tuple[str, tuple[float, float] | None]:
 ALL_CONFIGS = ("dense", "dense_rerank", "bm25", "hybrid", "hybrid_rerank",
                "adaptive", "adaptive_rerank")
 RERANK_CONFIGS = frozenset({"dense_rerank", "hybrid_rerank", "adaptive_rerank"})
-_PART_SUFFIX_RE = re.compile(r"(?i)(_p\d+)(_[a-z]\d+)?$|(_part\d+|_c\d+|_ch\d+)$")
 
 
 def log(msg: str) -> None:
@@ -155,9 +154,9 @@ def log(msg: str) -> None:
 
 
 def _segment_of(chunk_id: str) -> str:
-    cid = chunk_id or ""
-    m = _PART_SUFFIX_RE.search(cid)
-    return cid[: m.start()] if m else cid
+    s = re.sub(r"_p\d+$", "", chunk_id or "")
+    s = re.sub(r"_s\d+$", "", s)
+    return s
 
 
 def _document_of(chunk_id: str) -> str:
@@ -606,9 +605,15 @@ def run_config(cfg: str, qrels: list[dict], corpus: list[dict],
             ranked = bm25_top_ids(bm25, q, corpus, top_k=BM25_TOP_K)
         elif cfg in ("hybrid", "adaptive"):
             ranked = rrf_rank(dense_ids, bm25_top_ids(bm25, q, corpus), query_weights)
-        elif cfg in ("hybrid_rerank", "adaptive_rerank"):
+        elif cfg == "hybrid_rerank":
             fused = rrf_rank(dense_ids, bm25_top_ids(bm25, q, corpus), query_weights)
             ranked = rerank_rank(q, fused, corpus_by_id, ce)
+        elif cfg == "adaptive_rerank":
+            fused = rrf_rank(dense_ids, bm25_top_ids(bm25, q, corpus), query_weights)
+            if _are_exact_weights(query_weights):
+                ranked = rerank_rank(q, fused, corpus_by_id, ce)
+            else:
+                ranked = fused
         else:
             raise ValueError(f"Неизвестная конфигурация: {cfg}")
         dt = (time.perf_counter() - t0) * 1000.0
