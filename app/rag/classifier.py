@@ -17,6 +17,9 @@ import time
 import urllib.request
 from typing import Tuple
 
+from dotenv import load_dotenv
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 # =========================================================
@@ -48,6 +51,7 @@ def _ollama_generate(prompt: str, max_tokens: int = 5, temperature: float = 0.0)
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
+        "keep_alive": -1,
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
@@ -60,7 +64,7 @@ def _ollama_generate(prompt: str, max_tokens: int = 5, temperature: float = 0.0)
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=60) as resp:
         return json.loads(resp.read().decode("utf-8")).get("response", "").strip()
 
 

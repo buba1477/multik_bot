@@ -173,7 +173,7 @@ chart_engine = DynamicChartEngine(ollama_url=OLLAMA_HOST)
 # class LlamaGigaChat(CustomLLM):
 #     context_window: int = 8096
 #     num_output: int = 512
-#     model_name: str = "GigaChat-2-Max"
+#     model_name: str = "GigaChat-3-Ultra"
 #     # 🔥 Жестко берем ключ из переменной окружения
 #     auth_data: str = API_KEY_GIGACHAT
 
@@ -652,7 +652,9 @@ class RerankedEngine:
         Запрос с точными реквизитами/конкретной величиной -> EXACT_VECTOR_WEIGHT/EXACT_BM25_WEIGHT;
         user-style формулировка -> VECTOR_WEIGHT/BM25_WEIGHT.
         """
-        return classify_query(norm_query)
+        weights = classify_query(norm_query)
+        logger.info(f"⚖️ _get_weights: {weights}")
+        return weights
 
     def _should_rerank(self, norm_query: str) -> bool:
         """Только exact-term запросы получают reranker (user-style — пропуск).
@@ -661,7 +663,9 @@ class RerankedEngine:
         но даёт +0.067 R@1 на точных реквизитах (0.400→0.467).
         Экономия ~11–15 с на запросе CPU для user-style.
         """
-        return is_exact(norm_query)
+        result = is_exact(norm_query)
+        logger.info(f"⚖️ _should_rerank: {result}")
+        return result
 
     def _reciprocal_rank_fusion(self, vector_nodes, bm25_scores, k=30, weights=None):
         vector_weight, bm25_weight = weights or (self.VECTOR_WEIGHT, self.BM25_WEIGHT)
@@ -757,9 +761,12 @@ class RerankedEngine:
         if self.bm25 and vector_nodes:
             bm25_scores = self.bm25.get_scores(self._tokenize(norm_query))
             weights = self._get_weights(norm_query)
+            should_rerank = self._should_rerank(norm_query)
+            logger.info(f"⚖️ Веса RRF: vector={weights[0]}, bm25={weights[1]} | rerank={'da' if should_rerank else 'net'}")
             combined_nodes = self._reciprocal_rank_fusion(vector_nodes, bm25_scores, weights=weights)
         else:
             combined_nodes = vector_nodes
+            should_rerank = False
 
         # ДЕБАГ HYBRID
         logger.info(f"\n{'=' * 20} HYBRID TOP-10 {'=' * 20}")
@@ -768,7 +775,7 @@ class RerankedEngine:
         logger.info("=" * 55 + "\n")
 
         # 4. RERANK (только для exact-term — user-style пропускает реранк)
-        if self.reranker and combined_nodes and self._should_rerank(norm_query):
+        if self.reranker and combined_nodes and should_rerank:
             reranked_nodes = self.reranker.postprocess_nodes(
                 combined_nodes[:10],
                 query_bundle=QueryBundle(query_text),
