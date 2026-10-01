@@ -58,14 +58,14 @@ def _load_tokenizer() -> Any:
     model_dir = MODEL_PATH
     if not model_dir.exists():
         print(f"❌ Model ne najdena: {model_dir}")
-        sys.exit(1)
+        raise RuntimeError(f"Model not found: {model_dir}")
     try:
         from transformers import AutoTokenizer
         tok = AutoTokenizer.from_pretrained(str(model_dir), local_files_only=True)
         return tok
     except Exception as e:
         print(f"❌ Oshibka zagruzki tokenizatora: {e}")
-        sys.exit(1)
+        raise RuntimeError(f"Tokenizer load failed: {e}") from e
 
 
 def count_tokens(text: str, tokenizer: Any) -> int:
@@ -125,14 +125,7 @@ class FRIDAEmbedding(BaseEmbedding):
 
 # ===================== MAIN =====================
 
-def main() -> None:
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["full", "skip"], default="full",
-                        help="full — recreate + index; skip — validate only")
-    args = parser.parse_args()
-    mode = args.mode
-
+def index_documents(mode: str = "full") -> int:
     sys.stdout.reconfigure(line_buffering=True)
     print("=" * 76)
     print("QDRANT CHUNKS INDEXER (LlamaIndex pipeline)")
@@ -146,7 +139,7 @@ def main() -> None:
 
     if not jsonl_files:
         print("❌ Net JSONL-fajlov v chunks/")
-        sys.exit(1)
+        return 1
 
     # --- 2. Validacija i chtenie
     print("=" * 76)
@@ -169,7 +162,7 @@ def main() -> None:
                     data = json.loads(stripped)
                 except json.JSONDecodeError as e:
                     print(f"❌ {fname}:{line_no} - JSON error: {e}")
-                    sys.exit(1)
+                    return 1
 
                 # Определяем формат: новый (расширенный) или старый (5 полей)
                 LEGACY_KEYS = {"id", "title", "text", "local_img", "url"}
@@ -186,13 +179,13 @@ def main() -> None:
                     missing = required - data_keys
                     if missing:
                         print(f"❌ {fname}:{line_no} - novyj format: otsutstvujut {missing}")
-                        sys.exit(1)
+                        return 1
                     if not isinstance(data.get("id"), str) or not data["id"].strip():
                         print(f"❌ {fname}:{line_no} - id pustoj ili ne stroka")
-                        sys.exit(1)
+                        return 1
                     if not isinstance(data.get("text"), str) or not data["text"].strip():
                         print(f"❌ {fname}:{line_no} - text pustoj ili ne stroka")
-                        sys.exit(1)
+                        return 1
                 else:
                     # Старый формат: строго 5 полей
                     if data_keys != LEGACY_KEYS:
@@ -205,17 +198,17 @@ def main() -> None:
                             msg_parts.append(f"lishnie: {extra}")
                         print(f"❌ {fname}:{line_no} - polja ne sovpadajut; {'; '.join(msg_parts)}")
                         print(f"   Poluchennye kljuchi: {sorted(data_keys)}")
-                        sys.exit(1)
+                        return 1
                     if not isinstance(data["id"], str) or not data["id"].strip():
                         print(f"❌ {fname}:{line_no} - id pustoj ili ne stroka")
-                        sys.exit(1)
+                        return 1
                     if not isinstance(data["text"], str) or not data["text"].strip():
                         print(f"❌ {fname}:{line_no} - text pustoj ili ne stroka")
-                        sys.exit(1)
+                        return 1
                     for key in ("title", "local_img", "url"):
                         if key not in data or not isinstance(data[key], str):
                             print(f"❌ {fname}:{line_no} - {key} otsutstvuet ili ne stroka")
-                            sys.exit(1)
+                            return 1
 
                 # ID dolzhen byt unikalnym
                 chunk_id = data["id"]
@@ -230,7 +223,7 @@ def main() -> None:
                     print(f"❌ {fname}:{line_no} - chunk {chunk_id} prevyshaet {MAX_TOKENS} tokenov")
                     print(f"   Tokenov: {tok_count}")
                     print("   Kollekcija NE udalena.")
-                    sys.exit(1)
+                    return 1
 
                 all_records.append({
                     "file": fname,
@@ -274,7 +267,7 @@ def main() -> None:
     if mode == "skip":
         print("\n  → mode=skip: validacija zavershena, zapis propushena")
         print(f"  Fajlov: {len(jsonl_files)}, chankov: {total_chunks}")
-        sys.exit(0)
+        return 0
 
     # --- 3. Embedding cherez LlamaIndex BaseEmbedding + VectorStoreIndex
     print(f"\n{'=' * 76}")
@@ -290,7 +283,7 @@ def main() -> None:
 
     if not MODEL_PATH.exists():
         print(f"❌ Model ne najdena: {MODEL_PATH}")
-        sys.exit(1)
+        return 1
 
     # Zagruzhaem FRIDA kak BaseEmbedding
     embed_model = FRIDAEmbedding(str(MODEL_PATH), device=device)
@@ -368,7 +361,7 @@ def main() -> None:
         print(f"  Dostupnye kollekcii: {[c.name for c in collections.collections]}")
     except Exception as e:
         print(f"❌ Oshibka podkljuchenija k Qdrant: {e}")
-        sys.exit(1)
+        return 1
 
     # Peresozdanie kollekcii s FAKTICHESKOJ razmernostju FRIDA
     if mode == "full":
@@ -386,7 +379,7 @@ def main() -> None:
         if count != 0:
             print(f"❌ Collection not empty after recreate: {count} points")
             q_client.close()
-            sys.exit(1)
+            return 1
         print(f"  Empty check: {count} points (OK)")
 
     # Sozdajom QdrantVectorStore (LlamaIndex) na uzhe gotovoj kollekcii
@@ -437,12 +430,12 @@ def main() -> None:
 
     if total_chunks != qdrant_points:
         print(f"❌ Kolichestvo tochek ne sovpadaet: {total_chunks} vs {qdrant_points}")
-        sys.exit(1)
+        return 1
 
     if collection_info.config.params.vectors.size != vec_dim:
         print(f"❌ Razmernost vektora ne sovpadaet: "
               f"ozhidalsja {vec_dim}, polucheno {collection_info.config.params.vectors.size}")
-        sys.exit(1)
+        return 1
 
     # Proverka sluchajnoj tochki (payload soderzhit vse polja)
     print(f"\n{'=' * 76}")
@@ -470,7 +463,7 @@ def main() -> None:
             print(f"  payload.id:      {payload.get('id', 'N/A')}")
             if not has_text:
                 print(f"\n❌ SPOT CHECK: payload.text otsutstvuet u tochki {sid}!")
-                sys.exit(1)
+                return 1
             # Pokazyvaem metadannye novogo formata, esli est
             if "document_id" in payload:
                 print(f"  payload.document_id: {payload.get('document_id', '')}")
@@ -542,7 +535,7 @@ def main() -> None:
     if match_errors > 0:
         print(f"\n❌ Verifikacija ne projdena: {match_errors} osibok")
         q_client.close()
-        sys.exit(1)
+        return 1
     else:
         print(f"\n✅ Verifikacija 10 tochek projdena uspeshno")
 
@@ -555,8 +548,6 @@ def main() -> None:
     from scripts import pipeline_manifest
 
     manifest = pipeline_manifest.load()
-    manifest["chunker_rev"] = pipeline_manifest.chunker_rev()
-    manifest["embedder_rev"] = pipeline_manifest.embedder_rev()
 
     doc_chunk_counts: dict[str, int] = {}
     for rec in all_records:
@@ -573,6 +564,25 @@ def main() -> None:
 
     pipeline_manifest.save(manifest)
     print(f"  Manifest obnovlen: {len(doc_chunk_counts)} dokumentov, {total_chunks} chankov")
+
+    return total_chunks
+
+
+def main() -> None:
+    """CLI entry point: parse args and run index_documents."""
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["full", "skip"], default="full",
+                        help="full — recreate + index; skip — validate only")
+    args = parser.parse_args()
+
+    try:
+        count = index_documents(mode=args.mode)
+    except RuntimeError as e:
+        print(f"❌ {e}")
+        sys.exit(1)
+
+    print(f"  Indexed: {count}")
 
 
 if __name__ == "__main__":

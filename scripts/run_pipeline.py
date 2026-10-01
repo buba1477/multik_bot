@@ -198,6 +198,17 @@ def update_manifest(manifest: dict, step: str, processed: int | None = None,
     pipeline_manifest.save(manifest)
 
 
+def step_index(force: bool = False, chunks_changed: bool = False) -> int:
+    """Индексация Qdrant. Если chunks_changed или force → full, иначе skip."""
+    from app.chunking.create_index_qdrant_chunks import index_documents
+    mode = "full" if (force or chunks_changed) else "skip"
+    try:
+        return index_documents(mode=mode)
+    except RuntimeError as e:
+        print(f"[index] ❌ {e}")
+        return 0
+
+
 def main() -> None:
     args = set(sys.argv[1:]) if len(sys.argv) > 1 else {"--all"}
     force = "--force" in args
@@ -207,6 +218,7 @@ def main() -> None:
     do_convert = "--convert" in args or do_all
     do_parse = "--parse" in args or do_all
     do_chunk = "--chunk" in args or do_all
+    do_index = "--no-index" not in args and (do_all or "--chunk" in args or "--index" in args)
     t_start = time.time()
 
     manifest = pipeline_manifest.load()
@@ -234,6 +246,11 @@ def main() -> None:
         chunk_results, chunk_processed, chunk_skipped = step_chunk(force=force)
         update_manifest(manifest, "chunk", chunk_processed, chunk_skipped)
 
+    indexed_count = 0
+    if do_index:
+        chunks_changed = chunk_processed > 0 if do_chunk else False
+        indexed_count = step_index(force=force, chunks_changed=chunks_changed)
+
     pairs = validate_pairs()
     elapsed = time.time() - t_start
 
@@ -245,6 +262,8 @@ def main() -> None:
     if do_chunk:
         print(f"  Chunk: {chunk_processed} obrabotano, {chunk_skipped} propusheno")
         print(f"  Chunks: {len(chunk_results)} faylov")
+    if do_index:
+        print(f"  Index: {indexed_count} points")
     print(f"PAJPLAJN ZAVERShYON za {elapsed:.1f} sec")
     print(f"  PDF: {pairs['pdf_count']}, HTML: {pairs['html_count']}, Par: {pairs['paired']}")
     if pdf_stats:
