@@ -33,7 +33,7 @@ from sentence_transformers import SentenceTransformer, models
 # LlamaIndex
 from llama_index.core import VectorStoreIndex, Settings, StorageContext
 from llama_index.core.embeddings import BaseEmbedding
-from llama_index.core.schema import TextNode
+from llama_index.core.schema import TextNode, NodeRelationship, RelatedNodeInfo
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
 
@@ -126,6 +126,13 @@ class FRIDAEmbedding(BaseEmbedding):
 # ===================== MAIN =====================
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["full", "skip"], default="full",
+                        help="full — recreate + index; skip — validate only")
+    args = parser.parse_args()
+    mode = args.mode
+
     sys.stdout.reconfigure(line_buffering=True)
     print("=" * 76)
     print("QDRANT CHUNKS INDEXER (LlamaIndex pipeline)")
@@ -264,6 +271,11 @@ def main() -> None:
             loc_str = "; ".join(f"{f}:{ln}" for f, ln in locations)
             print(f"   {cid:<40} ({len(locations)}x) - {loc_str}")
 
+    if mode == "skip":
+        print("\n  → mode=skip: validacija zavershena, zapis propushena")
+        print(f"  Fajlov: {len(jsonl_files)}, chankov: {total_chunks}")
+        sys.exit(0)
+
     # --- 3. Embedding cherez LlamaIndex BaseEmbedding + VectorStoreIndex
     print(f"\n{'=' * 76}")
     print("EMBEDDING + INDEX (LlamaIndex)")
@@ -298,65 +310,29 @@ def main() -> None:
             "local_img": data.get("local_img", ""),
             "source_url": data.get("url", ""),
             "text": data["text"],
+            "document_id": data.get("document_id", "unknown"),
         }
-        excluded = ["id", "source_url", "local_img", "text"]
 
-        # Определяем формат по наличию полей
+        # Формируем _em_input — embedding-маяк для FRIDA (из title)
+        _em_parts: list[str] = []
+        if title := data.get("title", ""):
+            _em_parts.append(f"Пункт: {title}")
+
+        meta = {**base_meta}
+        if _em_parts:
+            meta["_em_input"] = "\n".join(_em_parts)
+
+        excluded = [
+            "id", "title", "source_url", "local_img",
+            "document_id", "text",
+        ]
+
         if "document_id" in data:
-            # Новый формат
-            meta = {
-                **base_meta,
-                "document_id": data.get("document_id", ""),
-                "point": data.get("point", ""),
-                "subpoint": data.get("subpoint", ""),
-                "part": data.get("part", 1),
-                "total_parts": data.get("total_parts", 1),
-                "subjects": data.get("subjects", []),
-                "categories": data.get("categories", []),
-                "references": data.get("references", []),
-                "keywords": data.get("keywords", []),
-                "context_flat": data.get("context_flat", ""),
-            }
-
-            # Формируем _em_input — embedding-маяки для FRIDA.
-            # _em_input НЕ добавляется в excluded_embed_metadata_keys,
-            # поэтому он попадает в MetadataMode.EMBED.
-            _em_parts: list[str] = []
-            if title := data.get("title", ""):
-                _em_parts.append(f"Пункт: {title}")
-            if point := data.get("point", ""):
-                _em_parts.append(f"Пункт документа: {point}")
-            if cats := data.get("categories", []):
-                _em_parts.append(f"Категории: {', '.join(str(c) for c in cats)}")
-            if subs := data.get("subjects", []):
-                _em_parts.append(f"Субъекты: {', '.join(str(s) for s in subs)}")
-            # keywords — только если выглядят содержательными
-            if kws := data.get("keywords", []):
-                clean_kws = [str(k) for k in kws if isinstance(k, str) and len(k) > 2]
-                if clean_kws and len(clean_kws) >= 2:
-                    selected = clean_kws[:5]
-                    _em_parts.append(f"Ключевые слова: {', '.join(selected)}")
-
-            if _em_parts:
-                meta["_em_input"] = "\n".join(_em_parts)
-
-            excluded = [
-                "id", "title", "source_url", "local_img",
-                "document_id", "point", "subpoint",
-                "part", "total_parts",
-                "subjects", "categories",
-                "references", "keywords", "context_flat",
-                "text",
-            ]
-            # _em_input НЕ в excluded → попадёт в MetadataMode.EMBED
-
             node = TextNode(
                 text=data["text"],
                 metadata=meta,
                 excluded_embed_metadata_keys=excluded,
             )
-            # Настраиваем шаблоны для EMBED: просто значение _em_input без префикса "ключ: "
-            # и разделитель "Текст:" перед оригинальным content.
             node.metadata_template = "{value}"
             node.text_template = "{metadata_str}\n\nТекст:\n{content}"
         else:
@@ -368,7 +344,10 @@ def main() -> None:
                 metadata=meta,
                 excluded_embed_metadata_keys=excluded,
             )
-
+        # @fix LlamaIndex 0.12.x: node_to_metadata_dict() overwrites document_id
+        # with node.ref_doc_id or "None". Set ref_doc_id via SOURCE relationship.
+        doc_id_value = meta.get("document_id", "unknown")
+        node.relationships[NodeRelationship.SOURCE] = RelatedNodeInfo(node_id=doc_id_value)
         nodes.append(node)
 
     print(f"\nSozdano TextNode: {len(nodes)}")
@@ -392,15 +371,23 @@ def main() -> None:
         sys.exit(1)
 
     # Peresozdanie kollekcii s FAKTICHESKOJ razmernostju FRIDA
-    print(f"\nRecreating collection {COLLECTION_NAME}...")
-    q_client.recreate_collection(
-        collection_name=COLLECTION_NAME,
-        vectors_config=rest_models.VectorParams(
-            size=vec_dim,
-            distance=rest_models.Distance.COSINE,
-        ),
-    )
-    print(f"  Kollekcija sozdana: size={vec_dim}, distance=COSINE")
+    if mode == "full":
+        print(f"\nRecreating collection {COLLECTION_NAME}...")
+        q_client.recreate_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=rest_models.VectorParams(
+                size=vec_dim,
+                distance=rest_models.Distance.COSINE,
+            ),
+        )
+        print(f"  Kollekcija sozdana: size={vec_dim}, distance=COSINE")
+
+        count = q_client.count(collection_name=COLLECTION_NAME).count
+        if count != 0:
+            print(f"❌ Collection not empty after recreate: {count} points")
+            q_client.close()
+            sys.exit(1)
+        print(f"  Empty check: {count} points (OK)")
 
     # Sozdajom QdrantVectorStore (LlamaIndex) na uzhe gotovoj kollekcii
     vector_store = QdrantVectorStore(
@@ -563,6 +550,29 @@ def main() -> None:
     print("=" * 76)
     print("\u2705 Indeksacija zavershena uspeshno.")
     print("=" * 76)
+
+    # --- 7. Obnovlenie manifest
+    from scripts import pipeline_manifest
+
+    manifest = pipeline_manifest.load()
+    manifest["chunker_rev"] = pipeline_manifest.chunker_rev()
+    manifest["embedder_rev"] = pipeline_manifest.embedder_rev()
+
+    doc_chunk_counts: dict[str, int] = {}
+    for rec in all_records:
+        doc_id = rec["data"].get("document_id", "unknown")
+        doc_chunk_counts[doc_id] = doc_chunk_counts.get(doc_id, 0) + 1
+
+    manifest.setdefault("indexed", {})
+    for doc_id, chunk_count in doc_chunk_counts.items():
+        manifest["indexed"][doc_id] = {
+            "chunks": chunk_count,
+            "chunker_rev": manifest["chunker_rev"],
+            "indexed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+
+    pipeline_manifest.save(manifest)
+    print(f"  Manifest obnovlen: {len(doc_chunk_counts)} dokumentov, {total_chunks} chankov")
 
 
 if __name__ == "__main__":
