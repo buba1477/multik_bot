@@ -193,15 +193,18 @@ def convert_from_text(text: str, doc_id: str, out_dir: Path | None = None) -> Pa
 def batch_convert(
     in_dir: Path | None = None,
     out_dir: Path | None = None,
-) -> list[Path]:
+    force: bool = False,
+) -> tuple[list[Path], int, int]:
     """Конвертировать все .html файлы из in_dir в Markdown в out_dir.
+
+    Если .md файл существует и новее исходного .html — пропускает (mtime check).
 
     Args:
         in_dir: Директория с HTML-файлами (по умолчанию raw_html/).
         out_dir: Директория для Markdown (по умолчанию markdown/).
 
     Returns:
-        Список созданных .md файлов.
+        Кортеж (список путей к .md, сколько обработано, сколько пропущено).
     """
     in_dir = in_dir or PROJECT_DIR / "raw_html"
     out_dir = out_dir or PROJECT_DIR / "markdown"
@@ -209,12 +212,23 @@ def batch_convert(
 
     results = []
     errors = []
+    processed = 0
+    skipped = 0
 
     # Шаг 1: HTML -> Markdown
     html_files = sorted(in_dir.glob("*.html"))
     for src in html_files:
         if src.name.startswith("__"):
             continue
+
+        out = out_dir / (src.stem + ".md")
+        # mtime check: если .md новее .html — пропускаем
+        if not force and out.exists() and out.stat().st_mtime >= src.stat().st_mtime:
+            results.append(out)
+            skipped += 1
+            print(f"skip: {src.name} -> {out.relative_to(out_dir)} (md novshe html)")
+            continue
+
         tmp = None
         try:
             html_bytes = src.read_bytes()
@@ -227,7 +241,6 @@ def batch_convert(
             tmp = _make_temp_file(".clean.html")
             tmp.write_bytes(clean_html.encode("utf-8"))
 
-            out = out_dir / (src.stem + ".md")
             subprocess.run(
                 [PANDOC, "--from=html", "--to=gfm-raw_html", "--wrap=none", "-o", str(out), str(tmp)],
                 check=True,
@@ -236,6 +249,7 @@ def batch_convert(
             md = out.read_text(encoding="utf-8")
             out.write_text(clean_markdown(md), encoding="utf-8")
             results.append(out)
+            processed += 1
             print(f"done: {src.name} -> {out.relative_to(out_dir)}")
         except Exception as exc:
             errors.append(f"HTML {src.name}: {exc}")
@@ -245,10 +259,10 @@ def batch_convert(
                 _silent_unlink(tmp)
 
     if html_files:
-        summary = f"HTML -> Markdown: {len(results)} uspeshno, {len(errors)} oshibok"
+        summary = f"HTML -> Markdown: {processed} obrabotano, {skipped} propusheno, {len(errors)} oshibok"
         print(summary)
 
-    return results
+    return results, processed, skipped
 
 if __name__ == "__main__":
     convert(sys.argv[1] if len(sys.argv) > 1 else "79-FZ.html")

@@ -603,8 +603,11 @@ def parse_and_save(md_path: str | Path, output_path: str | Path | None = None,
 
 
 def batch_parse(markdown_dir: str | Path, structure_dir: str | Path | None = None,
-                registry: list[dict] | None = None) -> list[dict]:
+                registry: list[dict] | None = None,
+                force: bool = False) -> tuple[list[dict], int, int]:
     """Распарсить все .md файлы в markdown_dir.
+
+    Если .json файл существует и новее исходного .md — пропускает (mtime check).
 
     Args:
         markdown_dir: Директория с .md файлами.
@@ -612,7 +615,7 @@ def batch_parse(markdown_dir: str | Path, structure_dir: str | Path | None = Non
         registry: Список документов из documents.json (для doc_meta).
 
     Returns:
-        Список результатов парсинга.
+        Кортеж (список результатов парсинга, сколько обработано, сколько пропущено).
     """
     markdown_dir = Path(markdown_dir)
     structure_dir = Path(structure_dir) if structure_dir else Path("structure")
@@ -627,28 +630,44 @@ def batch_parse(markdown_dir: str | Path, structure_dir: str | Path | None = Non
     md_files = sorted(markdown_dir.glob("*.md"))
     if not md_files:
         print(f"Нет .md файлов в {markdown_dir}")
-        return []
+        return [], 0, 0
 
     results = []
     errors = []
+    processed = 0
+    skipped = 0
     for md_file in md_files:
         doc_id = md_file.stem
         doc_meta = registry_index.get(doc_id)
         out_path = structure_dir / f"{doc_id}.json"
+
+        # mtime check: если .json новее .md — пропускаем
+        if not force and out_path.exists() and out_path.stat().st_mtime >= md_file.stat().st_mtime:
+            # Всё равно загружаем результат в список (для совместимости с caller)
+            try:
+                result = json.loads(out_path.read_text(encoding="utf-8"))
+                results.append(result)
+            except Exception:
+                pass
+            skipped += 1
+            print(f"skip: {md_file.name} -> {out_path.relative_to(structure_dir)} (json novshe md)")
+            continue
+
         try:
             result = parse_and_save(md_file, out_path, doc_meta=doc_meta)
             results.append(result)
+            processed += 1
         except Exception as exc:
             errors.append(f"{md_file.name}: {exc}")
             print(f"FAIL: {md_file.name}: {exc}")
 
-    summary = f"Markdown parse: {len(results)} uspeshno, {len(errors)} oshibok"
+    summary = f"Markdown parse: {processed} obrabotano, {skipped} propusheno, {len(errors)} oshibok"
     print(summary)
     if errors:
         print("Ошибки:")
         for e in errors:
             print(f"  - {e}")
-    return results
+    return results, processed, skipped
 
 def main():
     if len(sys.argv) < 2:

@@ -9,6 +9,7 @@ from app.ingestion import html_to_markdown
 from app.ingestion import markdown_structure_parser
 from app.ingestion import pdf_ocr
 from app.chunking import legal_chunker
+from scripts import pipeline_manifest
 
 PROJECT = Path(__file__).resolve().parent.parent
 REGISTRY = PROJECT / "documents.json"
@@ -26,14 +27,14 @@ def step_download() -> None:
     download_main()
 
 
-def step_convert() -> list[Path]:
+def step_convert(force: bool = False) -> tuple[list[Path], int, int]:
     print("\n" + "=" * 60)
     print("SHAG 2: Konvertatsiya HTML -> Markdown")
     print("=" * 60)
-    return html_to_markdown.batch_convert()
+    return html_to_markdown.batch_convert(force=force)
 
 
-def step_parse() -> list[dict]:
+def step_parse(force: bool = False) -> tuple[list[dict], int, int]:
     print("\n" + "=" * 60)
     print("SHAG 3: Parsing Markdown -> struktura")
     print("=" * 60)
@@ -41,8 +42,9 @@ def step_parse() -> list[dict]:
     return markdown_structure_parser.batch_parse(
         MARKDOWN_DIR, STRUCTURE_DIR,
         registry=registry.get("documents", []),
+        force=force,
     )
-def step_pdf_fallback() -> dict:
+def step_pdf_fallback(force: bool = False) -> dict:
     """PDF fallback: OCR + pdftotext dlya PDF bez HTML ili s plohim Markdown.
 
     Zapuskaetsya POSLE step_convert(). Analiziruet rezultat convert
@@ -144,16 +146,17 @@ def validate_pairs() -> dict:
             "missing_pdf": sorted(missing_pdf)}
 
 
-def step_chunk() -> list[Path]:
+def step_chunk(force: bool = False) -> tuple[list[Path], int, int]:
     """Structure JSON -> chunks JSONL (legal_chunker)."""
     print("\n" + "=" * 60)
     print("SHAG 4: Chanking structure -> chunks")
     print("=" * 60)
-    results = legal_chunker.batch_convert()
-    print(f"\n  Sozdano .jsonl faylov: {len(results)}")
+    results, processed, skipped = legal_chunker.batch_convert(force=force)
+    print(f"\n  Obrabotano: {processed}, propusheno: {skipped}")
+    print(f"  Sozdano .jsonl faylov: {len(results)}")
     for p in results:
         print(f"  - {p}")
-    return results
+    return results, processed, skipped
 
 
 def report_parser_results(results: list[dict]) -> None:
@@ -185,8 +188,19 @@ def report_parser_results(results: list[dict]) -> None:
             print("    !!! VSE NODY UNKNOWN")
 
 
+def update_manifest(manifest: dict, step: str, processed: int | None = None,
+                    skipped: int | None = None) -> None:
+    """Obnovlyaet manifest i sohranyaet."""
+    if step == "chunk":
+        manifest["chunker_rev"] = pipeline_manifest.chunker_rev()
+    if step == "convert" or step == "chunk":
+        manifest["embedder_rev"] = pipeline_manifest.embedder_rev()
+    pipeline_manifest.save(manifest)
+
+
 def main() -> None:
     args = set(sys.argv[1:]) if len(sys.argv) > 1 else {"--all"}
+    force = "--force" in args
     do_all = "--all" in args or not any(a.startswith("--") for a in args)
     do_download = "--download" in args or do_all
     do_pdf_fallback = "--pdf-fallback" in args or do_all
@@ -195,28 +209,41 @@ def main() -> None:
     do_chunk = "--chunk" in args or do_all
     t_start = time.time()
 
+    manifest = pipeline_manifest.load()
+
     if do_download:
         step_download()
 
+    convert_processed = convert_skipped = 0
     if do_convert:
-        step_convert()
+        _conv_results, convert_processed, convert_skipped = step_convert(force=force)
 
     pdf_stats = {}
     if do_pdf_fallback:
-        pdf_stats = step_pdf_fallback()
+        pdf_stats = step_pdf_fallback(force=force)
 
+    parse_processed = parse_skipped = 0
+    parse_results: list[dict] = []
     if do_parse:
-        results = step_parse()
-        report_parser_results(results)
+        parse_results, parse_processed, parse_skipped = step_parse(force=force)
+        report_parser_results(parse_results)
 
+    chunk_processed = chunk_skipped = 0
+    chunk_results: list[Path] = []
     if do_chunk:
-        chunk_results = step_chunk()
+        chunk_results, chunk_processed, chunk_skipped = step_chunk(force=force)
+        update_manifest(manifest, "chunk", chunk_processed, chunk_skipped)
 
     pairs = validate_pairs()
     elapsed = time.time() - t_start
 
     print(f"\n{'=' * 60}")
-    if "chunk_results" in dir() and chunk_results:
+    if do_convert:
+        print(f"  Konvert: {convert_processed} obrabotano, {convert_skipped} propusheno")
+    if do_parse:
+        print(f"  Parse: {parse_processed} obrabotano, {parse_skipped} propusheno")
+    if do_chunk:
+        print(f"  Chunk: {chunk_processed} obrabotano, {chunk_skipped} propusheno")
         print(f"  Chunks: {len(chunk_results)} faylov")
     print(f"PAJPLAJN ZAVERShYON za {elapsed:.1f} sec")
     print(f"  PDF: {pairs['pdf_count']}, HTML: {pairs['html_count']}, Par: {pairs['paired']}")

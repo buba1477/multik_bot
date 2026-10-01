@@ -190,8 +190,10 @@ raw/
 raw_html/
 markdown/
 
-# === PROJECT DOCUMENT REGISTRY ===
+# === PROJECT DOCUMENTS AND STATE ===
 !documents.json
+pipeline_manifest.json
+app/resolved_documents.json
 
 # === TESTS ===
 !tests/test_*.py

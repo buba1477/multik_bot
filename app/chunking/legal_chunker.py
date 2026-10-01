@@ -731,6 +731,7 @@ def _build_chunks_for_segment(
             "text": _fit_full_text(chunk_prefix, part, max_tokens),
             "local_img": "",
             "url": source_url,
+            "document_id": doc_id,
         })
 
     return chunks
@@ -966,12 +967,15 @@ def batch_convert(
     markdown_dir: Path | None = None,
     structure_dir: Path | None = None,
     out_dir: Path | None = None,
-) -> list[Path]:
+    force: bool = False,
+) -> tuple[list[Path], int, int]:
     """Пакетная обработка всех Markdown-файлов.
 
     Для каждого .md файла находит соответствующий structure JSON,
     выполняет нарезку и сохраняет результат в chunks/.
     Идемпотентно: существующие JSONL полностью заменяются.
+
+    Если .jsonl существует и новее .md — пропускает (mtime check).
 
     Args:
         markdown_dir: Директория с .md файлами (по умолчанию MARKDOWN_DIR).
@@ -979,7 +983,7 @@ def batch_convert(
         out_dir: Директория для выходных JSONL (по умолчанию CHUNKS_DIR).
 
     Returns:
-        Список созданных .jsonl файлов.
+        Кортеж (список созданных .jsonl файлов, сколько обработано, сколько пропущено).
     """
     markdown_dir = markdown_dir or MARKDOWN_DIR
     structure_dir = structure_dir or STRUCTURE_DIR
@@ -989,17 +993,29 @@ def batch_convert(
     md_files = sorted(markdown_dir.rglob("*.md"))
     if not md_files:
         print(f"No markdown files found in {markdown_dir}")
-        return []
+        return [], 0, 0
 
     results: list[Path] = []
     errors: list[dict] = []
     all_stats: list[dict] = []
+    processed = 0
+    skipped = 0
 
     for md_path in md_files:
+        out_path = out_dir / (md_path.stem + ".jsonl")
+
+        # mtime check: если .jsonl новее .md — пропускаем
+        if not force and out_path.exists() and out_path.stat().st_mtime >= md_path.stat().st_mtime:
+            results.append(out_path)
+            skipped += 1
+            print(f"skip: {md_path.name} -> {out_path.relative_to(out_dir)} (jsonl novshe md)")
+            continue
+
         try:
             stats = process_markdown_file(md_path, structure_dir=structure_dir, out_dir=out_dir)
             all_stats.append(stats)
             results.append(stats["out_path"])
+            processed += 1
 
             print(f"\n=== {md_path.name} ===")
             print(f"Чанков: {stats['chunks']}")
@@ -1018,6 +1034,7 @@ def batch_convert(
     print(f"{'=' * 60}")
     print(f"Markdown найдено: {len(md_files)}")
     print(f"Успешно обработано: {len(results)}")
+    print(f"Пропущено: {skipped}")
     print(f"Ошибок: {len(errors)}")
 
     if errors:
@@ -1032,7 +1049,7 @@ def batch_convert(
         print(f"Максимальный chunk: {max_overall}")
         print(f">400: {over_400_total}")
 
-    return results
+    return results, processed, skipped
 
 
 def validate_jsonl(filepath: str | Path) -> tuple[list[str], int, list[int]]:
@@ -1041,7 +1058,7 @@ def validate_jsonl(filepath: str | Path) -> tuple[list[str], int, list[int]]:
     Returns:
         (errors, count, token_counts).
     """
-    required = {"id", "title", "text", "local_img", "url"}
+    required = {"id", "title", "text", "local_img", "url", "document_id"}
     errors: list[str] = []
     count = 0
     token_counts: list[int] = []
