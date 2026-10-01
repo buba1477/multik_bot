@@ -89,6 +89,7 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 # ========== ПУТИ (константы) ==========
 BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__))).parent.parent
 MODEL_PATH = BASE_DIR / "hf_cache" / "FRIDA"
+from app.rag.constants import FRIDA_REV
 PERSIST_DIR = BASE_DIR / "fns_rag_graph_final"
 IMG_FOLDER = BASE_DIR / "images_cache"
 EMPLOYEES_FILE = BASE_DIR / "employees.txt"
