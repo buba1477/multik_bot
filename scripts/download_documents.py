@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import app.pravo_resolver as legacy  # noqa: E402  (резервный механизм)
 import app.publication_api as pub  # noqa: E402  (основной официальный API)
+import app.actual_api as actual_api  # noqa: E402  (третий источник: actual.pravo.gov.ru)
 from app.ingestion.html_to_pdf import convert_html_to_pdf  # noqa: E402
 
 from nltk.stem import SnowballStemmer  # noqa: E402
@@ -312,8 +313,15 @@ def _revision_unchanged(entry: dict, current_rev: dict, out_pdf: Path) -> bool:
     # publication
     if not out_pdf.exists():
         return False
-    # Если нет nd, пытаемся заново (IPS lookup)
-    if not entry.get("detail", {}).get("nd"):
+    # actual_fallback: nd может быть пуст, но HTML уже получен через actual.pravo.gov.ru
+    if entry.get("detail", {}).get("actual_fallback"):
+        doc_id = out_pdf.stem
+        if not (RAW_HTML_DIR / f"{doc_id}.html").exists():
+            return False
+        return True
+    # Если нет nd или nd="N/A" (невалидный), пытаемся заново (IPS lookup)
+    nd_val = entry.get("detail", {}).get("nd")
+    if not nd_val or nd_val == "N/A":
         return False
     return True
 
@@ -415,6 +423,27 @@ def _download_to_tmp(doc: dict, entry: dict) -> tuple[Path | None, int, int, str
                     doc_id, "publication", None,
                     "N/A", 0, 0, False, "ND_NOT_FOUND"
                 )
+
+            # 3. actual.pravo.gov.ru fallback (если IPS не дал HTML)
+            if html_sha256 is None and eo:
+                raw_html_dest = RAW_HTML_DIR / f"{doc_id}.html"
+                try:
+                    size = actual_api.download_html_from_actual(eo, raw_html_dest)
+                    entry["detail"]["actual_fallback"] = True
+                    html_sha256 = hashlib.sha256(
+                        raw_html_dest.read_bytes()
+                    ).hexdigest()
+                    print(f"  actual.pravo.gov.ru HTML: {size} байт")
+                    _log_ips_lookup(
+                        doc_id, "publication", eo,
+                        200, size, 0, True, "ACTUAL_API"
+                    )
+                except Exception as exc:
+                    print(f"  ! actual.pravo.gov.ru: {exc}")
+                    _log_ips_lookup(
+                        doc_id, "publication", eo,
+                        0, 0, 0, False, f"ACTUAL_FAIL: {exc}"
+                    )
 
             if not original_pdf_ok and pdf_source is None:
                 raise ResolutionError(
