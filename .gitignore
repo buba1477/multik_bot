@@ -240,3 +240,5 @@ eval/reranker_base_check/
 eval/manual5/
 eval/rrf_1_0/
 eval/without_rerank_99/
+*.traineddata
+*.bak_*
