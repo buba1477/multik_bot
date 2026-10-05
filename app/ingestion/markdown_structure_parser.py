@@ -485,7 +485,8 @@ def extract_doc_info(lines: list[str]) -> dict:
         s = ln.strip()
         if not s:
             continue
-        m = re.search(r"№\s*([\dA-Za-zА-Яа-я\-]+)", s)
+        stripped = re.sub(r'\([^)]*\)', '', s)  # убрать содержимое скобок (№ внутри — citation, не номер документа)
+        m = re.search(r"№\s*([\dA-Za-zА-Яа-я\-]+)", stripped)
         if m and not number:
             number = m.group(1)
         if not title:

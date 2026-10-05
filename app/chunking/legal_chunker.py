@@ -7,7 +7,7 @@ structure/<document>.json (результат markdown_structure_parser).
 Модуль не знает ни о PDF, ни об HTML, ни о Docling, ни о Pandoc — он работает
 ТОЛЬКО поверх records-слоя structure JSON.
 
-Схема каждой строки JSONL (ровно 5 полей, без дополнительных):
+Схема каждой строки JSONL (ровно 7 полей, без дополнительных):
   id, title, text, local_img, url
 
 Логика нарезки:
@@ -493,6 +493,7 @@ def _group_segments(records: list[dict]) -> list[dict]:
                 "appendix": ctx.get("appendix"),
                 "chapter": ctx.get("chapter"),
                 "section": ctx.get("section"),
+                "subsection": ctx.get("subsection"),
                 "body": [],
             }
             # Для section/chapter/subsection триггер-запись — content-запись
@@ -507,7 +508,7 @@ def _group_segments(records: list[dict]) -> list[dict]:
                 "type": "preamble", "number": None,
                 "title": "Преамбула", "article": None,
                 "appendix": None, "chapter": None,
-                "section": None, "body": [],
+                "section": None, "subsection": None, "body": [],
             }
 
         current["body"].append(rec)
@@ -552,6 +553,37 @@ def _make_doc_display_name(safe_doc_id: str, doc_display: str) -> str:
         return f'{type_label} № {doc_display}'
     # Fallback — doc_display как есть
     return doc_display
+
+
+def _build_parent_heading(seg: dict, doc_title: str) -> str:
+    """Собрать parent_heading: doc_title → иерархия → seg_title.
+
+    Примеры:
+        'О государственной гражданской службе... → Глава 3 → Раздел 1 → Статья 12 3'
+        'Указ № 557 → Преамбула'
+        'О комиссиях... → Приложение 1 → УТВЕРЖДЕНО Указом...'
+
+    Args:
+        seg: Сегмент (dict с полями type, chapter, section, subsection, title).
+        doc_title: Полный заголовок документа (из documents.json).
+
+    Returns:
+        Строка parent_heading для встраивания в _em_input.
+    """
+    parts = [doc_title]
+    if chapter := seg.get("chapter"):
+        if seg["type"] != "chapter":
+            parts.append(f"Глава {chapter}")
+    if section := seg.get("section"):
+        if seg["type"] != "section":
+            parts.append(f"Раздел {section}")
+    if subsection := seg.get("subsection"):
+        if seg["type"] != "subsection":
+            parts.append(f"Подраздел {subsection}")
+    if seg_title := seg.get("title"):
+        if seg_title not in parts:  # избежать дубля
+            parts.append(seg_title)
+    return " → ".join(parts)
 
 
 def _safe_truncate(text: str, max_len: int = 120) -> str:
@@ -654,6 +686,7 @@ def _build_chunks_for_segment(
     target_tokens: int,
     min_tokens: int,
     seg_idx: int = 0,
+    doc_title: str = "",
 ) -> list[dict]:
     """Собрать чанки из одного сегмента (статьи/преамбулы/приложения)."""
     seg_type = seg["type"]
@@ -728,6 +761,7 @@ def _build_chunks_for_segment(
         chunks.append({
             "id": cid,
             "title": _safe_truncate(_make_semantic_title(part, doc_display_name, point_key)),
+            "parent_heading": _build_parent_heading(seg, doc_title),
             "text": _fit_full_text(chunk_prefix, part, max_tokens),
             "local_img": "",
             "url": source_url,
@@ -887,13 +921,25 @@ def convert(
         source_url = resolve_source_url(structure_fname, doc=doc)
 
     doc_display_name = _make_doc_display_name(safe_doc_id, doc_display)
+
+    # Загружаем полный заголовок документа из documents.json
+    REGISTRY_FILE = PROJECT_DIR / "documents.json"
+    if REGISTRY_FILE.exists():
+        reg_data = json.loads(REGISTRY_FILE.read_text(encoding="utf-8"))
+        registry = {d["id"]: d for d in reg_data.get("documents", [])}
+    else:
+        registry = {}
+    doc_meta = registry.get(doc.get("id"), {}) if registry else {}
+    full_doc_title = doc_meta.get("title", doc_display_name)
+
     segments = _group_segments(records)
     chunks: list[dict] = []
     for seg_idx, seg in enumerate(segments, 1):
         chunks.extend(_build_chunks_for_segment(
             seg, safe_doc_id, doc_display, doc_display_name, source_url,
             MAX_TOKENS, TARGET_TOKENS, MIN_CHUNK_TOKENS,
-            seg_idx=seg_idx))
+            seg_idx=seg_idx,
+            doc_title=full_doc_title))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / (src.stem + ".jsonl")
@@ -1058,7 +1104,7 @@ def validate_jsonl(filepath: str | Path) -> tuple[list[str], int, list[int]]:
     Returns:
         (errors, count, token_counts).
     """
-    required = {"id", "title", "text", "local_img", "url", "document_id"}
+    required = {"id", "title", "parent_heading", "text", "local_img", "url", "document_id"}
     errors: list[str] = []
     count = 0
     token_counts: list[int] = []
