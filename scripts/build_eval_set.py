@@ -130,7 +130,7 @@ def hybrid_candidates(encoder: FridaEncoder, client, collection: str,
 # ---------------------------------------------------------------------------
 # GigaChat (Sber API)
 # ---------------------------------------------------------------------------
-GIGACHAT_MODEL_DEFAULT = "GigaChat-2-Max"
+GIGACHAT_MODEL_DEFAULT = "GigaChat-3-Ultra"
 GIGACHAT_TIMEOUT = 60.0
 GIGACHAT_RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 GIGACHAT_RETRY_PAUSES = (1.0, 2.0, 4.0)  # 1 базовый вызов + 3 повтора
@@ -211,7 +211,7 @@ _QGEN_PROMPT = """Ты — методист, готовящий тестовые
 _JUDGE_PROMPT = """Вопрос пользователя: {question}
 
 Ниже пронумерованные фрагменты-кандидаты. Верни ВСЕ номера, которые относятся к вопросу,
-через запятую: 1, 3, 5. Если ни один фрагмент не подходит — верни 0. Максимум 10 номеров.
+через запятую: 1, 3, 5. Если ни один фрагмент не подходит — верни 0.
 В ответе только номера через запятую, без пояснений.
 
 {candidates}
@@ -385,7 +385,11 @@ def mode_from_questions(args) -> None:
                         model=args.model, auth_data=args.gigachat_key,
                         temperature=0.0, max_tokens=64, client=giga)
                     # Судья возвращает СПИСОК номеров: "1, 3, 5" (0 = ни один не подходит).
-                    nums = [int(n) for n in re.findall(r"\d+", judge_raw)]
+                    m = re.match(r"[\s\d,]+", judge_raw.strip())
+                    if m:
+                        nums = [int(n) for n in re.findall(r"\d+", m.group())]
+                    else:
+                        nums = [int(n) for n in re.findall(r"\d+", judge_raw)]
                     picked = [cands[n - 1] for n in nums if 1 <= n <= len(cands)]
                     picked = list(dict.fromkeys(picked))  # дедуп, сохраняя порядок
                     if picked:
