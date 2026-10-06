@@ -1,5 +1,5 @@
 import os
-from .classifier import classify_query, is_exact
+from .classifier import classify_query, is_exact, USER_BM25_WEIGHT, USER_VECTOR_WEIGHT
 from .sources import collect_sources
 import re
 import json
@@ -650,10 +650,15 @@ class RerankedEngine:
     def _get_weights(self, norm_query: str):
         """Веса RRF по типу запроса — делегировано LLM-классификатору.
 
-        Запрос с точными реквизитами/конкретной величиной -> EXACT_VECTOR_WEIGHT/EXACT_BM25_WEIGHT;
-        user-style формулировка -> VECTOR_WEIGHT/BM25_WEIGHT.
+        EXACT (точные реквизиты/конкретная величина) -> (0.5, 0.5);
+        USER -> (1.0, 0.0): чистый dense-порядок (Вариант B, анблинг 06.10.2026).
+
+        USER: hybrid@1.0/0.0 = dense R@1=0.486 vs hybrid@0.9/0.1 0.457 -> +0.029 R@1;
+        reranker на USER вредит (0.422), EXACT-ветка не меняется (0.5/0.5).
         """
         weights = classify_query(norm_query)
+        if weights == (USER_VECTOR_WEIGHT, USER_BM25_WEIGHT):
+            weights = (1.0, 0.0)
         logger.info(f"⚖️ _get_weights: {weights}")
         return weights
 
