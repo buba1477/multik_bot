@@ -10,9 +10,12 @@ from app.ingestion import markdown_structure_parser
 from app.ingestion import pdf_ocr
 from app.chunking import legal_chunker
 from scripts import pipeline_manifest
+from app.chunking import page_mapper
 
 PROJECT = Path(__file__).resolve().parent.parent
 REGISTRY = PROJECT / "documents.json"
+MAPPING_FILE = PROJECT / "mapping" / "chunk_to_page.json"
+CHUNKS_DIR = PROJECT / "chunks"
 MARKDOWN_DIR = PROJECT / "markdown"
 STRUCTURE_DIR = PROJECT / "structure"
 RAW_DIR = PROJECT / "raw"
@@ -121,6 +124,66 @@ def step_pdf_fallback(force: bool = False) -> dict:
 
 
 
+def step_page_mapping(force: bool = False) -> int:
+    """
+    SHAG 4b: Postroit / obnovit kartu sootvetstviya chankov i stranits PDF.
+    
+    Obrabatyvaet kazhdyy JSONL-fayl iz chunks/, dobavlyaet v mapping
+    novye dokumenty i zamenyaet sushestvuyushchie. Pri otsutstvii PDF
+    ili oshibke — sushchestvuyushchaya karta ne zatragivaetsya.
+    """
+    print("\n" + "=" * 60)
+    print("SHAG 4b: Kartirovanie stranits PDF")
+    print("=" * 60)
+    
+    if not MAPPING_FILE.parent.exists():
+        MAPPING_FILE.parent.mkdir(parents=True, exist_ok=True)
+    
+    existing = page_mapper.load_mapping(MAPPING_FILE)
+    print(f"  Zagruzheno {len(existing)} sushchestvuyushchikh zapisey")
+    
+    jsonl_files = sorted(CHUNKS_DIR.glob("*.jsonl"))
+    print(f"  Naydeno {len(jsonl_files)} JSONL-faylov")
+    
+    total_new = 0
+    total_errors = 0
+    
+    for jsonl_path in jsonl_files:
+        pdf_path = page_mapper.find_pdf_for_jsonl(jsonl_path, RAW_DIR)
+        if pdf_path is None:
+            print(f"  [!] PDF ne nayden dlya {jsonl_path.name} — propusk")
+            continue
+        
+        print(f"  [{jsonl_path.stem}] {pdf_path.name}...", end=" ", flush=True)
+        
+        new_entries = page_mapper.build_mapping_for_jsonl(jsonl_path, pdf_path)
+        if not new_entries:
+            print("oshibka / pusto — propusk")
+            total_errors += 1
+            continue
+        
+        updated = page_mapper.update_mapping_for_document(existing, jsonl_path, new_entries)
+        if updated is None:
+            print("ne izmeneno")
+            total_errors += 1
+            continue
+        
+        existing = updated
+        mapped = sum(1 for v in new_entries.values() if v is not None)
+        total_new += len(new_entries)
+        print(f"{len(new_entries)} chankov ({mapped} s page)")
+    
+    # Atomarnaya zapis
+    if total_new > 0 or (force and jsonl_files):
+        page_mapper.save_mapping(existing, MAPPING_FILE)
+        print(f"  Zapisano v {MAPPING_FILE}")
+    else:
+        print("  Izmeneniy net, zapis ne trebuetsya")
+    
+    print(f"  Itogo: {total_new} zapisey dobavleno, {total_errors} oshibok")
+    return total_new
+
+
 def validate_pairs() -> dict:
     print("\n" + "=" * 60)
     print("VALIDATsIYa: parnost' raw/ i raw_html/")
@@ -217,6 +280,7 @@ def main() -> None:
     do_pdf_fallback = "--pdf-fallback" in args or do_all
     do_convert = "--convert" in args or do_all
     do_parse = "--parse" in args or do_all
+    do_page_map = "--page-map" in args or do_all
     do_chunk = "--chunk" in args or do_all
     do_index = "--no-index" not in args and (do_all or "--chunk" in args or "--index" in args)
     t_start = time.time()
@@ -245,6 +309,9 @@ def main() -> None:
     if do_chunk:
         chunk_results, chunk_processed, chunk_skipped = step_chunk(force=force)
         update_manifest(manifest, "chunk", chunk_processed, chunk_skipped)
+    
+    if do_page_map:
+        step_page_mapping(force=force)
 
     indexed_count = 0
     if do_index:
@@ -259,6 +326,8 @@ def main() -> None:
         print(f"  Konvert: {convert_processed} obrabotano, {convert_skipped} propusheno")
     if do_parse:
         print(f"  Parse: {parse_processed} obrabotano, {parse_skipped} propusheno")
+    if do_page_map:
+        print(f"  Page map: OK")
     if do_chunk:
         print(f"  Chunk: {chunk_processed} obrabotano, {chunk_skipped} propusheno")
         print(f"  Chunks: {len(chunk_results)} faylov")

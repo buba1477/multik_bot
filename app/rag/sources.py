@@ -16,8 +16,12 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import re
-from collections.abc import Iterable
+import threading
+
+from pathlib import Path
 
 _STRUCT_KEYWORDS = (
     "Пункт", "Статья", "Раздел", "Глава", "Подпункт",
@@ -41,6 +45,74 @@ _PLURAL = {
 }
 
 _SINGULAR = {v: k for k, v in _PLURAL.items()}
+
+# --- Загрузка сопоставления чанк->страница PDF ---
+# _CHUNK_TO_PAGE — единственная точка правды. Hot-reload: при изменении
+# mapping/chunk_to_page.json на диске карта перечитывается в _current_mapping()
+# (mtime-кэш), поэтому добавленные НПА подхватываются без рестарта API.
+_MAPPING_FILE = Path(__file__).resolve().parent.parent.parent / "mapping" / "chunk_to_page.json"
+_CHUNK_TO_PAGE: dict[str, int | None] = {}
+_MAPPING_MTIME: int | None = None
+_MAPPING_LOCK = threading.Lock()
+
+_logger = logging.getLogger(__name__)
+
+
+def _load_mapping_unchecked() -> dict[str, int | None] | None:
+    """Прочитать карту с диска.
+
+    Возвращает dict при успехе или None при любой ошибке (файл недоступен,
+    битый JSON, не-словарь). При None вызывающий код обязан держать
+    последнюю известную карту (fallback: URL без #page).
+    """
+    try:
+        if _MAPPING_FILE.exists():
+            with open(_MAPPING_FILE, encoding="utf-8") as _fp:
+                data = json.load(_fp)
+            if isinstance(data, dict):
+                return data
+        return None
+    except Exception as _exc:
+        _logger.warning("chunk_to_page mapping: cannot load %s: %s", _MAPPING_FILE, _exc)
+        return None
+
+
+def _current_mapping() -> dict[str, int | None]:
+    """Вернуть актуальную карту чанк->страница (с hot-reload по mtime).
+
+    - mtime файла не изменился -> отдать кэш _CHUNK_TO_PAGE без чтения диска;
+    - mtime изменился           -> перечитать файл и атомарно заменить ссылку;
+    - файл пропал/битый         -> сохранить последнюю известную карту.
+    """
+    global _CHUNK_TO_PAGE, _MAPPING_MTIME
+    try:
+        mtime_ns = _MAPPING_FILE.stat().st_mtime_ns
+    except OSError:
+        return _CHUNK_TO_PAGE  # файла нет — держим текущую карту
+    if mtime_ns == _MAPPING_MTIME:
+        return _CHUNK_TO_PAGE
+    with _MAPPING_LOCK:
+        try:
+            mtime_now = _MAPPING_FILE.stat().st_mtime_ns
+        except OSError:
+            return _CHUNK_TO_PAGE
+        if mtime_now != _MAPPING_MTIME:
+            fresh = _load_mapping_unchecked()
+            _MAPPING_MTIME = mtime_now
+            if fresh is not None and fresh != _CHUNK_TO_PAGE:
+                _CHUNK_TO_PAGE = fresh
+    return _CHUNK_TO_PAGE
+
+
+# Первичная загрузка при импорте модуля
+_initial_mapping = _load_mapping_unchecked()
+if _initial_mapping is not None:
+    _CHUNK_TO_PAGE = _initial_mapping
+try:
+    _MAPPING_MTIME = _MAPPING_FILE.stat().st_mtime_ns
+except OSError:
+    _MAPPING_MTIME = None
+
 
 
 # ---------------------------------------------------------------------------
@@ -197,15 +269,17 @@ class _SourceGroup:
     структурные части: (prefix, kind) → list[numbers].
     """
 
-    __slots__ = ("url", "doc", "_subs", "max_score")
+    __slots__ = ("url", "doc", "_subs", "max_score", "_page_node_id", "_page_score")
 
     def __init__(self, url: str, doc: str):
         self.url = url
         self.doc = doc
         self._subs: dict[tuple[str, str], list[str]] = {}
         self.max_score = None
+        self._page_node_id: str = ""
+        self._page_score: float = 0.0
 
-    def add(self, struct, score) -> None:
+    def add(self, struct, score, node_id="") -> None:
         if struct:
             prefix, kind, num = _last_struct_part(struct)
             if kind and num is not None:
@@ -222,6 +296,14 @@ class _SourceGroup:
             val = float(score)
             if self.max_score is None or val > self.max_score:
                 self.max_score = val
+        # Отслеживаем node_id с наивысшим score, у которого есть страница
+        if node_id:
+            _page_val = _CHUNK_TO_PAGE.get(node_id)
+            if _page_val is not None:
+                _node_score = float(score) if score is not None else float("-inf")
+                if not self._page_node_id or _node_score > self._page_score:
+                    self._page_node_id = node_id
+                    self._page_score = _node_score
 
     @staticmethod
     def _dedup_nums(nums: list[str]) -> list[str]:
@@ -337,6 +419,7 @@ def collect_sources(nodes, max_sources: int = 3) -> list[dict]:
     Несколько чанков одного структурного элемента объединяются
     в один источник с max_score; разные элементы одного PDF — нет.
     """
+    _current_mapping()  # hot-reload mapping/chunk_to_page.json (без рестарта API)
     groups: dict[tuple, _SourceGroup] = {}
     for title, url, score, point, node_id in _iter_nodes(nodes):
         if not url:
@@ -346,7 +429,7 @@ def collect_sources(nodes, max_sources: int = 3) -> list[dict]:
         g = groups.setdefault(key, _SourceGroup(url, ""))
         if doc and not g.doc:
             g.doc = doc
-        g.add(struct, score)
+        g.add(struct, score, node_id=node_id)
 
     scored = sorted(
         groups.values(),
@@ -359,8 +442,13 @@ def collect_sources(nodes, max_sources: int = 3) -> list[dict]:
         title = g.doc
         if struct_str:
             title = f"{g.doc} \u2014 {struct_str}"
+        url_out = g.url
+        if g._page_node_id:
+            _page = _CHUNK_TO_PAGE.get(g._page_node_id)
+            if _page is not None:
+                url_out = f"{g.url}#page={_page}"
         result.append({
-            "url": g.url,
+            "url": url_out,
             "title": (title or g.url)[:120],
             "score": g.max_score,
         })

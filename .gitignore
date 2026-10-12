@@ -245,3 +245,9 @@ eval/without_rerank_99/
 GraphRAG/**/fns_rag_graph_*
 GraphRAG/**/*.gexf
 GraphRAG/**/cross_chunk_graph.json
+
+# Un-ignore deep-link mapping data
+!mapping/chunk_to_page.json
+!mapping/ambiguous.json
+mapping/*.pre_auto
+mapping/*.run_alloffset.bak

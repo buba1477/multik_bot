@@ -7,8 +7,13 @@
 
 from __future__ import annotations
 
-import sys
+import json
 import os
+import sys
+import tempfile
+
+from pathlib import Path
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.rag.sources import collect_sources, _make_structural_key, _iter_nodes
@@ -394,9 +399,11 @@ class TestRerankedTop5Contract:
         assert len(sources) == 3, f"Expected 3 sources, got {len(sources)}: {sources}"
         # ТОП-3 строго по reranker score
         assert [s["score"] for s in sources] == [0.8141, 0.7048, 0.6998]
-        # Разные статьи 79-ФЗ (ст46, ст71) НЕ схлопнуты
-        assert sources[0]["url"] == URL79 and "статья 46" in sources[0]["title"].lower()
-        assert sources[2]["url"] == URL79 and "статья 71" in sources[2]["title"].lower()
+        # Разные статьи 79-ФЗ (ст46, ст71) НЕ схлопнуты;
+        # page-ссылки добавляются для чанков с однозначной страницей
+        assert sources[0]["url"] == f"{URL79}#page=61" and "статья 46" in sources[0]["title"].lower()
+        assert sources[1]["url"] == URL1532  # ukaz-1532_app1_p1 page=None, без #page
+        assert sources[2]["url"] == f"{URL79}#page=103" and "статья 71" in sources[2]["title"].lower()
         # преамбула (max 0.6652) — 4-я по score, вне TOP-3
         assert all(s["score"] != 0.6652 for s in sources)
 
@@ -410,9 +417,10 @@ class TestRerankedTop5Contract:
         ]
         sources = collect_sources(nodes, max_sources=3)
         assert len(sources) == 2  # st46 объединён в один
-        st46 = [s for s in sources if s["url"] == URL]
+        st46 = [s for s in sources if s["url"].startswith(URL)]
         assert len(st46) == 1
         assert st46[0]["score"] == 0.8141  # max из пары
+        assert st46[0]["url"] == f"{URL}#page=61"  # лучший чанк (st46_p1) указывает стр.61
 
     def test_distinct_norms_not_merged(self):
         """st46 и st71 одного PDF остаются двумя источниками."""
@@ -445,3 +453,337 @@ class TestStripPart:
         from app.rag.sources import _strip_part
         assert _strip_part("79-fz_st46_p1") == _strip_part("79-fz_st46_p2")
         assert _strip_part("79-fz_st46_p1") != _strip_part("79-fz_st71_p2")
+
+
+# =========================================================================
+# Тесты: ссылки на страницы PDF (#page=N)
+# =========================================================================
+
+class TestPageLinking:
+    """
+    Проверяют, что для чанков с однозначной страницей URL дополняется #page=N.
+    """
+
+    # ------------------------------------------------------------------
+    # Вспомогательный: чистим модульный кэш _CHUNK_TO_PAGE для изоляции
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _reload_mapping(mapping_override: dict | None):
+        import app.rag.sources as src
+        if mapping_override is not None:
+            src._CHUNK_TO_PAGE = mapping_override
+        else:
+            # reload from file
+            from pathlib import Path
+            import json
+            _f = Path(__file__).resolve().parent.parent / "mapping" / "chunk_to_page.json"
+            if _f.exists():
+                with open(_f, encoding="utf-8") as _fp:
+                    src._CHUNK_TO_PAGE = json.load(_fp)
+
+    # ------------------------------------------------------------------
+    # 1. Известная страница → URL содержит #page=N
+    # ------------------------------------------------------------------
+
+    def test_known_page_appended(self):
+        """Чанк 79-fz_st59_p1 → page=82 → URL raw/79-FZ.pdf#page=82"""
+        # Сохраняем оригинал
+        import app.rag.sources as src
+        saved = dict(src._CHUNK_TO_PAGE)
+        try:
+            self._reload_mapping({"79-fz_st59_p1": 82})
+            nodes = [
+                make_node("79-ФЗ — Статья 59", "raw/79-FZ.pdf", 0.9, node_id="79-fz_st59_p1"),
+            ]
+            sources = collect_sources(nodes, max_sources=3)
+            assert len(sources) == 1
+            assert sources[0]["url"] == "raw/79-FZ.pdf#page=82"
+            # title и score не изменились
+            assert "статья 59" in sources[0]["title"].lower()
+            assert sources[0]["score"] == 0.9
+        finally:
+            src._CHUNK_TO_PAGE = saved
+
+    # ------------------------------------------------------------------
+    # 2. null в mapping → URL без #page
+    # ------------------------------------------------------------------
+
+    def test_null_page_no_suffix(self):
+        """Чанк с null в mapping → URL остаётся исходным."""
+        import app.rag.sources as src
+        saved = dict(src._CHUNK_TO_PAGE)
+        try:
+            self._reload_mapping({"117-fz_st143_p2": None})
+            nodes = [
+                make_node("НК РФ — Статья 143", "raw/117-FZ.pdf", 0.7, node_id="117-fz_st143_p2"),
+            ]
+            sources = collect_sources(nodes, max_sources=3)
+            assert len(sources) == 1
+            assert sources[0]["url"] == "raw/117-FZ.pdf"
+        finally:
+            src._CHUNK_TO_PAGE = saved
+
+    # ------------------------------------------------------------------
+    # 3. Отсутствующий ID в mapping → URL без #page
+    # ------------------------------------------------------------------
+
+    def test_missing_id_no_suffix(self):
+        """node_id отсутствует в mapping → URL остаётся исходным."""
+        import app.rag.sources as src
+        saved = dict(src._CHUNK_TO_PAGE)
+        try:
+            self._reload_mapping({"some-other-id": 1})
+            nodes = [
+                make_node("Указ № 999", "raw/ukaz-999.pdf", 0.6, node_id="ukaz-999_unknown_p1"),
+            ]
+            sources = collect_sources(nodes, max_sources=3)
+            assert len(sources) == 1
+            assert sources[0]["url"] == "raw/ukaz-999.pdf"
+        finally:
+            src._CHUNK_TO_PAGE = saved
+
+    # ------------------------------------------------------------------
+    # 4. Несколько чанков в группе: первый с null, второй с известной
+    # ------------------------------------------------------------------
+
+    def test_multiple_chunks_in_group_pick_best_with_page(self):
+        """Из двух чанков одной группы: первый (score=0.7) page=null, второй
+        (score=0.8) page=42 → URL получает #page=42 как более релевантный."""
+        import app.rag.sources as src
+        saved = dict(src._CHUNK_TO_PAGE)
+        try:
+            self._reload_mapping({
+                "79-fz_st46_p1": None,   # null
+                "79-fz_st46_p2": 42,      # has page
+            })
+            nodes = [
+                make_node("79-ФЗ — Статья 46", "raw/79-FZ.pdf", 0.7, node_id="79-fz_st46_p1"),
+                make_node("79-ФЗ — Статья 46. Продолжительность", "raw/79-FZ.pdf", 0.8, node_id="79-fz_st46_p2"),
+            ]
+            sources = collect_sources(nodes, max_sources=3)
+            assert len(sources) == 1
+            # Выбираем страницу по наиболее релевантному чанку с определённой страницей
+            assert sources[0]["url"] == "raw/79-FZ.pdf#page=42", f"Got: {sources[0]['url']}"
+        finally:
+            src._CHUNK_TO_PAGE = saved
+
+    # ------------------------------------------------------------------
+    # 5. Несколько чанков: один с page, но ниже score → выбирается page
+    #    того, у кого page есть и score выше
+    # ------------------------------------------------------------------
+
+    def test_multiple_chunks_best_score_among_paged(self):
+        """Три чанка группы: scores 0.5 (no page), 0.7 (page=10), 0.9 (page=20).
+        URL получает page=20 (самый релевантный с page)."""
+        import app.rag.sources as src
+        saved = dict(src._CHUNK_TO_PAGE)
+        try:
+            self._reload_mapping({
+                "st46_p0": None,
+                "st46_p1": 10,
+                "st46_p2": 20,
+            })
+            nodes = [
+                make_node("79-ФЗ — Ст 46", "raw/79-FZ.pdf", 0.5, node_id="st46_p0"),
+                make_node("79-ФЗ — Ст 46.1", "raw/79-FZ.pdf", 0.7, node_id="st46_p1"),
+                make_node("79-ФЗ — Ст 46.2", "raw/79-FZ.pdf", 0.9, node_id="st46_p2"),
+            ]
+            sources = collect_sources(nodes, max_sources=3)
+            assert len(sources) == 1
+            assert sources[0]["url"] == "raw/79-FZ.pdf#page=20", f"Got: {sources[0]['url']}"
+        finally:
+            src._CHUNK_TO_PAGE = saved
+
+    # ------------------------------------------------------------------
+    # 6. mapping недоступен (пустой словарь) → ссылки без #page
+    # ------------------------------------------------------------------
+
+    def test_mapping_unavailable_fallback(self):
+        """Если _CHUNK_TO_PAGE = {} (имитация ошибки загрузки), URL без #page."""
+        import app.rag.sources as src
+        saved = dict(src._CHUNK_TO_PAGE)
+        try:
+            self._reload_mapping({})  # пустой mapping
+            nodes = [
+                make_node("79-ФЗ — Статья 59", "raw/79-FZ.pdf", 0.9, node_id="79-fz_st59_p1"),
+            ]
+            sources = collect_sources(nodes, max_sources=3)
+            assert len(sources) == 1
+            assert sources[0]["url"] == "raw/79-FZ.pdf"
+        finally:
+            src._CHUNK_TO_PAGE = saved
+
+    # ------------------------------------------------------------------
+    # 7. Регрессия: заголовки, группировка, число источников не меняется
+    # ------------------------------------------------------------------
+
+    def test_grouping_and_count_preserved(self):
+        """С добавлением #page группировка и число источников остаются прежними."""
+        import app.rag.sources as src
+        saved = dict(src._CHUNK_TO_PAGE)
+        try:
+            self._reload_mapping({
+                "79-fz_st46_p1": 61,
+                "79-fz_st71_p2": 103,
+                "ukaz-1532_app1_p1": None,
+            })
+            URL79 = "raw/79-FZ.pdf"
+            URL1532 = "raw/ukaz-1532.pdf"
+            nodes = [
+                make_node("79-ФЗ: Статья 46", URL79, 0.81, node_id="79-fz_st46_p1"),
+                make_node("79-ФЗ: Статья 71", URL79, 0.70, node_id="79-fz_st71_p2"),
+                make_node("Указ № 1532", URL1532, 0.65, node_id="ukaz-1532_app1_p1"),
+            ]
+            sources = collect_sources(nodes, max_sources=3)
+            assert len(sources) == 3  # 3 разных документа/нормы → 3 источника
+            # Статья 46 + #page
+            assert sources[0]["url"] == f"{URL79}#page=61"
+            assert "статья 46" in sources[0]["title"].lower()
+            # Статья 71 + #page
+            assert sources[1]["url"] == f"{URL79}#page=103"
+            assert "статья 71" in sources[1]["title"].lower()
+            # Указ без #page
+            assert sources[2]["url"] == URL1532
+            assert sources[2]["score"] == 0.65
+        finally:
+            src._CHUNK_TO_PAGE = saved
+
+# =========================================================================
+# Hot-reload mapping/chunk_to_page.json
+# =========================================================================
+
+
+class TestMappingHotReload:
+    # Перечитывание mapping/chunk_to_page.json по mtime (без рестарта API).
+    # Все тесты работают с временным файлом-копией и восстанавливают
+    # _MAPPING_FILE / _MAPPING_MTIME / _CHUNK_TO_PAGE в finally.
+
+    # -------------------------------------------------------------
+    # Вспомогательные (детерминированный mtime + temp-копия)
+    # -------------------------------------------------------------
+
+    @staticmethod
+    def _tmp_mapping(data: dict) -> Path:
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False, encoding="utf-8")
+        json.dump(data, tmp, ensure_ascii=False)
+        tmp.flush()
+        tmp.close()
+        return Path(tmp.name)
+
+    @staticmethod
+    def _set_mtime(p: Path, ns: int) -> None:
+        # Выставить mtime файла в фиксированное значение (наносекунды).
+        os.utime(p, ns=(ns, ns))
+
+    def _setup(self, src, mapping: dict, mtime_ns: int = 1_000_000_000):
+        p = self._tmp_mapping(mapping)
+        saved = (src._MAPPING_FILE, src._MAPPING_MTIME, src._CHUNK_TO_PAGE)
+        src._MAPPING_FILE = p
+        src._MAPPING_MTIME = None  # форсируем первое чтение на следующем вызове
+        self._set_mtime(p, mtime_ns)
+        return p, saved
+
+    def _teardown(self, src, p, saved) -> None:
+        src._MAPPING_FILE, src._MAPPING_MTIME, src._CHUNK_TO_PAGE = saved
+        p.unlink(missing_ok=True)
+
+    # -------------------------------------------------------------
+    # 1. Смена mtime -> карта перечитана
+    # -------------------------------------------------------------
+
+    def test_reload_on_mtime_change(self):
+        # После пересборки карты (новое содержимое + новый mtime)
+        # возвращается новая страница.
+        import app.rag.sources as src
+
+        p, saved = self._setup(src, {"117-fz_st286_p1": 5})
+        try:
+            assert src._current_mapping() == {"117-fz_st286_p1": 5}
+            # «пересборка»: меняем содержимое и сдвигаем mtime вперёд
+            p.write_text(json.dumps({"117-fz_st286_p1": 9}), encoding="utf-8")
+            self._set_mtime(p, 2_000_000_000)
+            assert src._current_mapping() == {"117-fz_st286_p1": 9}
+        finally:
+            self._teardown(src, p, saved)
+
+    # -------------------------------------------------------------
+    # 2. Тот же mtime -> кэш не перечитывается
+    # -------------------------------------------------------------
+
+    def test_no_reload_same_mtime(self):
+        # Без изменения mtime файл не перечитывается: возвращается
+        # тот же объект-кэш (identity-проверка).
+        import app.rag.sources as src
+
+        p, saved = self._setup(src, {"117-fz_st286_p1": 5})
+        try:
+            m1 = src._current_mapping()
+            assert m1 == {"117-fz_st286_p1": 5}
+            m2 = src._current_mapping()
+            assert m2 is m1  # reload не происходил
+            assert src._MAPPING_MTIME == 1_000_000_000
+        finally:
+            self._teardown(src, p, saved)
+
+    # -------------------------------------------------------------
+    # 3. Файл удалён -> держим последнюю известную карту
+    # -------------------------------------------------------------
+
+    def test_file_deleted_keeps_old_map(self):
+        # Удаление карты на диске не обнуляет кэш: страницы продолжают работать.
+        import app.rag.sources as src
+
+        p, saved = self._setup(src, {"117-fz_st286_p1": 5})
+        try:
+            assert src._current_mapping() == {"117-fz_st286_p1": 5}
+            p.unlink()
+            assert src._current_mapping() == {"117-fz_st286_p1": 5}
+        finally:
+            self._teardown(src, p, saved)
+
+    # -------------------------------------------------------------
+    # 4. Битый JSON -> держим последнюю известную карту (fallback)
+    # -------------------------------------------------------------
+
+    def test_corrupt_json_keeps_old_map(self):
+        # При битом JSON перечитывание не уничтожает рабочую карту в памяти.
+        import app.rag.sources as src
+
+        p, saved = self._setup(src, {"117-fz_st286_p1": 5})
+        try:
+            assert src._current_mapping() == {"117-fz_st286_p1": 5}
+            p.write_text("{broken json", encoding="utf-8")
+            self._set_mtime(p, 2_000_000_000)
+            assert src._current_mapping() == {"117-fz_st286_p1": 5}
+            # mtime зафиксирован: битый файл не перечитывается на каждый вызов
+            assert src._MAPPING_MTIME == 2_000_000_000
+        finally:
+            self._teardown(src, p, saved)
+
+    # -------------------------------------------------------------
+    # 5. e2e: обновлённая карта -> collect_sources отдаёт новый #page
+    # -------------------------------------------------------------
+
+    def test_e2e_collect_sources_page_update(self):
+        # Смена page в файле -> следующий вызов collect_sources отдаёт #page=N
+        # без рестарта (полный путь горячей перезагрузки).
+        import app.rag.sources as src
+
+        p, saved = self._setup(src, {"117-fz_st286_p1": 5})
+        nodes = [
+            make_node("117-ФЗ — Статья 286", "raw/117-FZ.pdf", 0.9, node_id="117-fz_st286_p1"),
+        ]
+        try:
+            s0 = collect_sources(nodes, max_sources=1)
+            assert s0[0]["url"] == "raw/117-FZ.pdf#page=5"
+
+            # Новая страница для НПА: перезаписываем копию карты + mtime вперёд
+            p.write_text(json.dumps({"117-fz_st286_p1": 12345}), encoding="utf-8")
+            self._set_mtime(p, 2_000_000_000)
+
+            s1 = collect_sources(nodes, max_sources=1)
+            assert s1[0]["url"] == "raw/117-FZ.pdf#page=12345"
+        finally:
+            self._teardown(src, p, saved)
+
