@@ -251,3 +251,9 @@ GraphRAG/**/cross_chunk_graph.json
 !mapping/ambiguous.json
 mapping/*.pre_auto
 mapping/*.run_alloffset.bak
+
+# Un-ignore deep-link mapping data
+!mapping/chunk_to_page.json
+!mapping/ambiguous.json
+mapping/*.pre_auto
+mapping/*.run_alloffset.bak
