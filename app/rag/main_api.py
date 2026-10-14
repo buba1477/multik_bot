@@ -294,25 +294,23 @@ def is_malicious_query(query: str) -> bool:
 @app.post("/api/v1/predict/stream")
 async def ask_stream(request: ChatRequest):
     user_query = request.query
-    
-    # Проверка на вредоносность
-    if is_malicious_query(user_query):
-        request_id = get_request_id()
-        # КРИТИЧНО ДЛЯ АУДИТА: Фиксируем атаку в защищенный лог
-        logger.warning(f"🛑 [WAF БЛОКИРОВКА] Запрос признан опасным и заблокирован | request_id={request_id}")
-        
-        async def blocked_gen():
-            yield json.dumps({"type": "text", "content": "БАЗА_ПУСТА: Я эксперт по вопросам ФНС России."}, ensure_ascii=False) + "\n"
-            
-        return StreamingResponse(blocked_gen(), media_type="text/event-stream")
+    if not user_query or not user_query.strip():
+        return StreamingResponse(iter([json.dumps({"type": "text", "content": ""})]), media_type="text/event-stream")
 
-    
     normalized_query = user_query.strip()
     query_lower = normalized_query.lower()
-    
-    # Если запрос на график — идём в RAG (там уже есть chart-режим в engine_rag)
-    if chart_engine.is_chart_request(query_lower):
-        pass  # просто не заходим в мультик-ветку, уходим в RAG ниже
+
+    # 🔥 FAST-TRACK ДЛЯ ГРАФИКОВ: Если это запрос на визуализацию ECharts,
+    # пропускаем его мимо WAF-фильтра напрямую в RAG, чтобы избежать ложных комбо-банов.
+    is_chart = chart_engine.is_chart_request(query_lower)
+
+    # Проверка на вредоносность (WAF) — запускается только если это НЕ запрос на график
+    if not is_chart and is_malicious_query(user_query):
+        request_id = get_request_id()
+        logger.warning(f"🛑 [WAF БЛОКИРОВКА] Запрос заблокирован WAF-фильтром | request_id={request_id}")
+        async def blocked_gen():
+            yield json.dumps({"type": "text", "content": "БАЗА_ПУСТА: Я эксперт по вопросам ФНС России."}, ensure_ascii=False) + "\n"
+        return StreamingResponse(blocked_gen(), media_type="text/event-stream")
     
     # 👇 МАРШРУТИЗАЦИЯ
     has_fns_keyword = any(kw in query_lower for kw in ['ндс', 'фнс', 'налог', '79-фз', 'регламент', 'инструкция', 'документ', 'наложик'])
