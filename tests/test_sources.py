@@ -787,3 +787,60 @@ class TestMappingHotReload:
         finally:
             self._teardown(src, p, saved)
 
+
+
+# =========================================================================
+# РЕГРЕССИЯ fast-track: node_id = UUID из Qdrant, chunk_id в metadata['id']
+# =========================================================================
+
+class TestRegression_DeepLinkFromMetaId:
+    """Ретривер (dense fast-track) возвращает node.node_id = UUID (point id),
+    а исходный chunk_id лежит только в metadata['id'] (payload.id).
+    collect_sources обязан восстанавливать диплинк #page=N и объединять
+    чанки одного структурного сегмента, читая chunk_id из метаданных.
+    """
+
+    UUID_1 = "0003c68e-952d-484a-af6c-eb5e1cab3a17"
+    UUID_2 = "001f7b79-09bc-4649-a696-1331068a3df7"
+    URL = "https://example.com/117-fz.pdf"
+
+    @staticmethod
+    def _page(chunk_id: str):
+        import app.rag.sources as src
+
+        return src._current_mapping().get(chunk_id)
+
+    def test_deep_link_page_restored_via_meta_id(self):
+        # UUID в node_id, chunk_id в metadata['id'] -> диплинк #page работает
+        page = self._page("117-fz_st143_p1")
+        assert page == 7, f"ожидали page=7 для 117-fz_st143_p1, получили {page}"
+        n = make_node(
+            "117-ФЗ — Статья 143", self.URL, 0.9,
+            node_id=self.UUID_1, id="117-fz_st143_p1",
+        )
+        sources = collect_sources([n], max_sources=3)
+        assert sources[0]["url"] == f"{self.URL}#page={page}", sources
+
+    def test_uuid_without_meta_id_no_page(self):
+        # Только UUID (нет metadata['id']) -> диплинк не ломается, page отсутствует
+        n = make_node(
+            "117-ФЗ — Статья 143", self.URL, 0.9,
+            node_id=self.UUID_1,
+        )
+        sources = collect_sources([n], max_sources=3)
+        assert sources[0]["url"] == self.URL, sources
+
+    def test_parts_of_same_article_merged_into_one_source(self):
+        # Два чанка одной статьи (UUID node_id) -> ОДИН источник, #page по лучшему чанку
+        page = self._page("117-fz_st143_p1")
+        nodes = [
+            make_node("117-ФЗ — Статья 143", self.URL, 0.82,
+                      node_id=self.UUID_1, id="117-fz_st143_p1"),
+            make_node("117-ФЗ — Статья 143", self.URL, 0.74,
+                      node_id=self.UUID_2, id="117-fz_st143_p2"),
+        ]
+        sources = collect_sources(nodes, max_sources=3)
+        assert len(sources) == 1, f"должен быть 1 источник, получено {len(sources)}: {sources}"
+        assert sources[0]["url"] == f"{self.URL}#page={page}", sources
+        assert sources[0]["score"] == 0.82
+        assert "статья 143" in sources[0]["title"].lower()

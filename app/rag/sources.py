@@ -346,7 +346,9 @@ def _iter_nodes(nodes):
         if hasattr(n, "node"):
             meta = getattr(n.node, "metadata", {}) or {}
             score = getattr(n, "score", None)
-            node_id = getattr(n.node, "node_id", "")
+            # Фикс диплинков: если node_id является UUID из Qdrant,
+            # вытаскиваем оригинальный chunk_id из метаданных payload
+            node_id = meta.get("id") or getattr(n.node, "node_id", "")
             yield meta.get("title", ""), meta.get("source_url", ""), score, meta.get("point", ""), node_id
         elif isinstance(n, dict):
             meta = n.get("metadata", n)
