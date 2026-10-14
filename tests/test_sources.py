@@ -844,3 +844,27 @@ class TestRegression_DeepLinkFromMetaId:
         assert sources[0]["url"] == f"{self.URL}#page={page}", sources
         assert sources[0]["score"] == 0.82
         assert "статья 143" in sources[0]["title"].lower()
+
+    def test_uppercase_doc_prefix_falls_back_to_lowercase(self):
+        # Qdrant может отдать payload.id с UPPERCASE префиксом (79-FZ_...),
+        # маппинг же ключуется lowercase (79-fz_...) -> lookup падает на .lower()
+        page = self._page("117-fz_st143_p1")
+        n = make_node(
+            "117-ФЗ — Статья 143", self.URL, 0.9,
+            node_id=self.UUID_1, id="117-FZ_st143_p1",
+        )
+        sources = collect_sources([n], max_sources=3)
+        assert sources[0]["url"] == f"{self.URL}#page={page}", sources
+
+    def test_roman_uppercase_keys_not_broken(self):
+        # Ключи 146-ФЗ / postanovlenie-1000 с roman uppercase (secIII) резолвятся
+        # по ТОЧНОМУ совпадению: lowercase-близнецов в карте нет, и naive
+        # node_id.lower() сломал бы эти диплинки.
+        page = self._page("146-fz_secIII_s63_p1")
+        assert page == 136, f"ожидали 136, получили {page}"
+        n = make_node(
+            "146-ФЗ — Раздел III", self.URL, 0.9,
+            node_id=self.UUID_2, id="146-fz_secIII_s63_p1",
+        )
+        sources = collect_sources([n], max_sources=3)
+        assert sources[0]["url"] == f"{self.URL}#page=136", sources

@@ -114,6 +114,26 @@ except OSError:
     _MAPPING_MTIME = None
 
 
+def _page_for_node_id(node_id: str) -> int | None:
+    """Номер страницы PDF для chunk_id (регистронезависимый lookup).
+
+    Ключи chunk_to_page.json пишутся в нижнем регистре, но:
+      * сегменты 146-ФЗ / postanovlenie-1000 используют roman uppercase
+        (secI..secIX) - их ключи в карте хранятся в точном регистре;
+      * payload.id из Qdrant для части НПА может прилетать с UPPERCASE
+        префиксом (например, "79-FZ_..."), тогда как в карте - "79-fz_...".
+
+    Поэтому первым делом ищем ТОЧНОЕ совпадение (roman-ключи), и только
+    при промахе пробуем lowercase-вариант (покрывает uppercase doc-prefix).
+    """
+    if not node_id:
+        return None
+    page = _CHUNK_TO_PAGE.get(node_id)
+    if page is None:
+        page = _CHUNK_TO_PAGE.get(node_id.lower())
+    return page
+
+
 
 # ---------------------------------------------------------------------------
 # Парсинг title
@@ -298,7 +318,7 @@ class _SourceGroup:
                 self.max_score = val
         # Отслеживаем node_id с наивысшим score, у которого есть страница
         if node_id:
-            _page_val = _CHUNK_TO_PAGE.get(node_id)
+            _page_val = _page_for_node_id(node_id)
             if _page_val is not None:
                 _node_score = float(score) if score is not None else float("-inf")
                 if not self._page_node_id or _node_score > self._page_score:
@@ -446,7 +466,7 @@ def collect_sources(nodes, max_sources: int = 3) -> list[dict]:
             title = f"{g.doc} \u2014 {struct_str}"
         url_out = g.url
         if g._page_node_id:
-            _page = _CHUNK_TO_PAGE.get(g._page_node_id)
+            _page = _page_for_node_id(g._page_node_id)
             if _page is not None:
                 url_out = f"{g.url}#page={_page}"
         result.append({
