@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Офлайн-eval retrieval/rerank для RAG ФНС: recall@k, MAP@k, MRR, nDCG@k + ablation.
+"""Офлайн-eval retrieval/rerank для RAG ФНС: recall@k, hit@k, MAP@k, MRR, nDCG@k + ablation.
 
 Метрики (gold может содержать НЕСКОЛЬКО правильных чанков на вопрос):
   * recall@k   — (число найденных релевантных в топ-k) / (всего релевантных), НЕ бинарно;
+  * hit@k      — бинарно: 1.0, если ХОТЯ БЫ ОДИН релевантный попал в топ-k, иначе 0.0;
   * map@k      — Mean Average Precision (для каждого k; в таблице — MAP@max_k);
   * mrr@k      — 1/ранг ПЕРВОГО релевантного (по определению учитывает одно попадание);
   * ndcg@k     — бинарный DCG@k / IDCG@k, где IDCG@k = sum 1/log2(i+1) по min(n_rel, k).
@@ -547,6 +548,8 @@ def query_metrics(ranked_ids: list[str], rel_keys: set[str], level: str, ks: lis
         found = sum(1 for r in ranks if r <= k)
         out[f"recall@{k}"] = (found / n_rel) if n_rel else 0.0
         out[f"map@{k}"] = average_precision(ranks, k, n_rel)
+        # hit@k: бинарный факт попадания ХОТЯ БЫ ОДНОГО релевантного в топ-k
+        out[f"hit@{k}"] = 1.0 if any(r <= k for r in ranks) else 0.0
     out[f"mrr@{max_k}"] = (1.0 / ranks[0]) if ranks else 0.0
     out[f"ndcg@{max_k}"] = ndcg_at_k(ranks, max_k, n_rel)
     out["n_relevant"] = float(n_rel)
@@ -576,7 +579,8 @@ def run_config(cfg: str, qrels: list[dict], corpus: list[dict],
 
     max_k = max(ks)
     limit = max(INITIAL_TOP_K, max_k)
-    metric_names = ([f"recall@{k}" for k in ks] + [f"map@{k}" for k in ks]
+    metric_names = ([f"recall@{k}" for k in ks] + [f"hit@{k}" for k in ks]
+                    + [f"map@{k}" for k in ks]
                     + [f"mrr@{max_k}", f"ndcg@{max_k}"])
     acc: dict[str, list[float]] = {m: [] for m in metric_names}
     latencies: list[float] = []
@@ -692,6 +696,7 @@ def log_gold_stats(qrels: list[dict]) -> None:
 def print_table(results: list[dict], ks: list[int], baseline: str = "dense") -> None:
     max_k = max(ks)
     header = (["config", "weights"] + [f"R@{k}" for k in ks]
+              + [f"Hit@{k}" for k in ks]
               + [f"MAP@{max_k}", f"MRR@{max_k}", f"nDCG@{max_k}", "lat_mean", "lat_p95"])
     log("  " + " | ".join(f"{h:>9}" for h in header))
     log("  " + "-" * (11 * len(header)))
@@ -703,6 +708,7 @@ def print_table(results: list[dict], ks: list[int], baseline: str = "dense") -> 
         m = r["metrics"]
         cells = [f"{r['config']:>9}", f"{r.get('weights', 'default'):>9}"]
         cells += [f"{m[f'recall@{k}']:>9.3f}" for k in ks]
+        cells += [f"{m[f'hit@{k}']:>9.3f}" for k in ks]
         cells.append(f"{m[f'map@{max_k}']:>9.3f}")
         cells.append(f"{m[f'mrr@{max_k}']:>9.3f}")
         cells.append(f"{m[f'ndcg@{max_k}']:>9.3f}")
@@ -733,16 +739,18 @@ def save_reports(out_dir: Path, results: list[dict], meta: dict, ks: list[int]) 
         f"top_k={meta['params']['initial_top_k']}, bm25_top_k={meta['params']['bm25_top_k']}",
         f"- RAGAS: {meta['ragas']['status']} — {meta['ragas']['reason']}", "",
         "| config | weights | " + " | ".join(f"R@{k}" for k in ks) +
+        " | " + " | ".join(f"Hit@{k}" for k in ks) +
         f" | MAP@{max_k} | MRR@{max_k} | nDCG@{max_k} | lat_mean_ms | lat_p95_ms |",
-        "|" + "---|" * (len(ks) + 7),
+        "|" + "---|" * (2 * len(ks) + 7),
     ]
     for r in results:
         if "metrics" not in r:
-            lines.append(f"| {r['config']} | — | skipped | " + " | " * (len(ks) + 4))
+            lines.append(f"| {r['config']} | — | skipped | " + " | " * (2 * len(ks) + 4))
             continue
         m = r["metrics"]
         row = [r["config"], str(r.get("weights", "default"))]
         row += [f"{m[f'recall@{k}']:.3f}" for k in ks]
+        row += [f"{m[f'hit@{k}']:.3f}" for k in ks]
         row += [f"{m[f'map@{max_k}']:.3f}", f"{m[f'mrr@{max_k}']:.3f}", f"{m[f'ndcg@{max_k}']:.3f}"]
         row += [f"{r['latency_ms']['mean']:.1f}", f"{r['latency_ms']['p95']:.1f}"]
         if "adaptive_exact_queries" in r:

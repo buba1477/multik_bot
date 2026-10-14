@@ -1,5 +1,5 @@
 import os
-from .classifier import classify_query, is_exact, USER_BM25_WEIGHT, USER_VECTOR_WEIGHT
+from .classifier import classify_mode, is_exact, get_weights
 from .sources import collect_sources
 import re
 import json
@@ -97,7 +97,7 @@ EMPLOYEES_FILE = BASE_DIR / "employees.txt"
 if not MODEL_PATH.exists():
     logger.warning(f"⚠️ Папка модели не найдена: {MODEL_PATH}")
 else:
-    logger.info(f"🚀 Использую RoSBERTa из {MODEL_PATH}")
+    logger.info(f"🚀 Использую FRIDA из {MODEL_PATH}")
 
 _QA_PROMPT_STR = """Отвечай ТОЛЬКО на основании предоставленного КОНТЕКСТА.
 
@@ -329,13 +329,6 @@ class RerankedEngine:
     # =========================================================
     # CONFIG
     # =========================================================
-    VECTOR_WEIGHT = 0.9
-    BM25_WEIGHT = 0.1
-
-    # Запросы с точными реквизитами (номер акта/статьи/пункта/приложения) — больше BM25
-    # (эмпирика scripts/eval_retrieval.py: R@1 на qrels_exact 0.20 -> 0.40 при 0.5/0.5).
-    EXACT_VECTOR_WEIGHT = 0.5
-    EXACT_BM25_WEIGHT = 0.5
     BM25_TOP_K = 30
     RERANK_TOP_K = 10
 
@@ -384,7 +377,9 @@ class RerankedEngine:
         "ё": "е",
         "ндфл": "налог на доход физических лиц",
         "усн": "упрощенная система налогообложения",
-        "ндс": "налог на добавленную стоимость"
+        "ндс": "налог на добавленную стоимость",
+        "машину": "транспортное средство (движимое имущество)",
+        "машина": "транспортное средство (движимое имущество)",
     }
 
     BASE_ENTITIES = [
@@ -648,33 +643,29 @@ class RerankedEngine:
     # RRF
     # =========================================================
     def _get_weights(self, norm_query: str):
-        """Веса RRF по типу запроса — делегировано LLM-классификатору.
+        """Веса RRF по режиму запроса. Маппинг — classifier.WEIGHTS.
 
-        EXACT (точные реквизиты/конкретная величина) -> (0.5, 0.5);
-        USER -> (1.0, 0.0): чистый dense-порядок (Вариант B, анблинг 06.10.2026).
-
-        USER: hybrid@1.0/0.0 = dense R@1=0.486 vs hybrid@0.9/0.1 0.457 -> +0.029 R@1;
-        reranker на USER вредит (0.422), EXACT-ветка не меняется (0.5/0.5).
+        EXACT (точные реквизиты) -> (0.5, 0.5); USER -> (1.0, 0.0): чистый dense.
         """
-        weights = classify_query(norm_query)
-        if weights == (USER_VECTOR_WEIGHT, USER_BM25_WEIGHT):
-            weights = (1.0, 0.0)
-        logger.info(f"⚖️ _get_weights: {weights}")
+        mode = classify_mode(norm_query)
+        weights = get_weights(mode)
+        logger.info(f"⚖️ _get_weights: mode={mode}, weights={weights}")
         return weights
 
     def _should_rerank(self, norm_query: str) -> bool:
-        """Только exact-term запросы получают reranker (user-style — пропуск).
+        """Только exact-term получает reranker.
 
-        На честном gold реранк не улучшает R@1 на user-запросах (0.489→0.449),
-        но даёт +0.067 R@1 на точных реквизитах (0.400→0.467).
-        Экономия ~11–15 с на запросе CPU для user-style.
+        classify_mode кэширует режим по norm_query — второй LLM-вызов не делается
+        (первый был в _get_weights).
         """
         result = is_exact(norm_query)
         logger.info(f"⚖️ _should_rerank: {result}")
         return result
 
     def _reciprocal_rank_fusion(self, vector_nodes, bm25_scores, k=30, weights=None):
-        vector_weight, bm25_weight = weights or (self.VECTOR_WEIGHT, self.BM25_WEIGHT)
+        if weights is None:
+            weights = get_weights("user")
+        vector_weight, bm25_weight = weights
         scores = {}
 
         for rank, node in enumerate(vector_nodes):

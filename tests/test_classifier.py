@@ -6,12 +6,7 @@ Integration-тесты требуют Ollama/GigaChat (запускать вру
 """
 from unittest.mock import patch
 
-from app.rag.classifier import is_exact, classify_query, _weights_cache
-
-
-def clear_cache():
-    """Очистить кэш перед каждым тестом."""
-    _weights_cache.clear()
+from app.rag.classifier import is_exact, classify_query, clear_cache
 
 
 # =========================================================
@@ -30,7 +25,7 @@ def test_offline_empty():
     clear_cache()
     assert is_exact("") is False
     w = classify_query("")
-    assert w == (0.9, 0.1)
+    assert w == (1.0, 0.0)
 
 
 def test_offline_cache():
@@ -71,10 +66,10 @@ def test_mock_classify_exact_weights(mock_generate):
 
 @patch("app.rag.classifier._generate", return_value="USER")
 def test_mock_classify_user_weights(mock_generate):
-    """Mock: USER → weights (0.9, 0.1)."""
+    """Mock: USER → weights (1.0, 0.0)."""
     clear_cache()
     w = classify_query("Как уволиться?")
-    assert w == (0.9, 0.1)
+    assert w == (1.0, 0.0)
 
 
 @patch("app.rag.classifier._generate", return_value="SOMETHING_ELSE")
@@ -82,7 +77,7 @@ def test_mock_unexpected_answer(mock_generate):
     """Неожиданный ответ LLM → fallback USER."""
     clear_cache()
     w = classify_query("тест")
-    assert w == (0.9, 0.1)
+    assert w == (1.0, 0.0)
 
 
 @patch("app.rag.classifier._generate", side_effect=Exception("Ollama timeout"))
@@ -90,7 +85,7 @@ def test_mock_exception(mock_generate):
     """Ошибка LLM → fallback USER."""
     clear_cache()
     w = classify_query("тест")
-    assert w == (0.9, 0.1)
+    assert w == (1.0, 0.0)
 
 
 @patch("app.rag.classifier._generate", return_value="EXACT")

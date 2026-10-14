@@ -257,3 +257,4 @@ mapping/*.run_alloffset.bak
 !mapping/ambiguous.json
 mapping/*.pre_auto
 mapping/*.run_alloffset.bak
+.guard_backup/

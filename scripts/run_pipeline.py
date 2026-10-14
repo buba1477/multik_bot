@@ -1,6 +1,10 @@
 import json
+import logging
+import os
+import shutil
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -20,6 +24,54 @@ MARKDOWN_DIR = PROJECT / "markdown"
 STRUCTURE_DIR = PROJECT / "structure"
 RAW_DIR = PROJECT / "raw"
 RAW_HTML_DIR = PROJECT / "raw_html"
+GUARD_BACKUP_DIR = PROJECT / ".guard_backup"
+
+LOG_FILE = PROJECT / f"pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+logging.basicConfig(
+    filename=str(LOG_FILE),
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+
+def safe_overwrite(new_path, old_path):
+    """Guard: ne daem zamenit staryi fail slishkom malenkim novym (<50% razmera)."""
+    if os.path.exists(old_path):
+        old_size = os.path.getsize(old_path)
+        new_size = os.path.getsize(new_path)
+        if new_size < old_size / 2:
+            logging.warning(f"SKIP {new_path}: {new_size}B < {old_size}B/2")
+            return False
+    return True
+
+
+def _backup_dir(directory: Path) -> dict[Path, Path]:
+    """Skopirovat tekushchie faily kataloga v .guard_backup/ -> {path: backup}.
+    copy2 sohranyaet mtime — vazhno, chtoby mtime-skip nizhe schital fail starym."""
+    backups: dict[Path, Path] = {}
+    if not directory.exists():
+        return backups
+    for f in sorted(directory.glob("*")):
+        if f.is_file():
+            back = GUARD_BACKUP_DIR / directory.name / f.name
+            back.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, back)
+            backups[f] = back
+    return backups
+
+
+def _verify_and_restore(directory: Path, backups: dict[Path, Path], label: str) -> int:
+    """Posle shaga: esli novyi fail < starogo/2 — otkatit k bekapu (warning)."""
+    restored = 0
+    for out_path, back in backups.items():
+        try:
+            if out_path.exists() and not safe_overwrite(out_path, back):
+                shutil.copy2(back, out_path)
+                logging.warning(f"RESTORED {out_path.relative_to(directory)} ({label})")
+                restored += 1
+        finally:
+            back.unlink(missing_ok=True)
+    return restored
 
 
 def step_download() -> None:
@@ -34,7 +86,10 @@ def step_convert(force: bool = False) -> tuple[list[Path], int, int]:
     print("\n" + "=" * 60)
     print("SHAG 2: Konvertatsiya HTML -> Markdown")
     print("=" * 60)
-    return html_to_markdown.batch_convert(force=force)
+    backups = _backup_dir(MARKDOWN_DIR)
+    results, processed, skipped = html_to_markdown.batch_convert(force=force)
+    _verify_and_restore(MARKDOWN_DIR, backups, "html->md")
+    return results, processed, skipped
 
 
 def step_parse(force: bool = False) -> tuple[list[dict], int, int]:
@@ -42,11 +97,14 @@ def step_parse(force: bool = False) -> tuple[list[dict], int, int]:
     print("SHAG 3: Parsing Markdown -> struktura")
     print("=" * 60)
     registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
-    return markdown_structure_parser.batch_parse(
+    backups = _backup_dir(STRUCTURE_DIR)
+    results, processed, skipped = markdown_structure_parser.batch_parse(
         MARKDOWN_DIR, STRUCTURE_DIR,
         registry=registry.get("documents", []),
         force=force,
     )
+    _verify_and_restore(STRUCTURE_DIR, backups, "md->json")
+    return results, processed, skipped
 def step_pdf_fallback(force: bool = False) -> dict:
     """PDF fallback: OCR + pdftotext dlya PDF bez HTML ili s plohim Markdown.
 
@@ -214,7 +272,9 @@ def step_chunk(force: bool = False) -> tuple[list[Path], int, int]:
     print("\n" + "=" * 60)
     print("SHAG 4: Chanking structure -> chunks")
     print("=" * 60)
+    backups = _backup_dir(CHUNKS_DIR)
     results, processed, skipped = legal_chunker.batch_convert(force=force)
+    _verify_and_restore(CHUNKS_DIR, backups, "json->jsonl")
     print(f"\n  Obrabotano: {processed}, propusheno: {skipped}")
     print(f"  Sozdano .jsonl faylov: {len(results)}")
     for p in results:
