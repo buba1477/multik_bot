@@ -1,5 +1,5 @@
 import os
-from .classifier import classify_mode, is_exact, get_weights
+from .classifier import classify_mode, get_weights
 from .sources import collect_sources
 import re
 import json
@@ -642,30 +642,16 @@ class RerankedEngine:
     # =========================================================
     # RRF
     # =========================================================
-    def _get_weights(self, norm_query: str):
-        """Веса RRF по режиму запроса. Маппинг — classifier.WEIGHTS.
-
-        EXACT (точные реквизиты) -> (0.5, 0.5); USER -> (1.0, 0.0): чистый dense.
-        """
-        mode = classify_mode(norm_query)
-        weights = get_weights(mode)
-        logger.info(f"⚖️ _get_weights: mode={mode}, weights={weights}")
-        return weights
-
-    def _should_rerank(self, norm_query: str) -> bool:
-        """Только exact-term получает reranker.
-
-        classify_mode кэширует режим по norm_query — второй LLM-вызов не делается
-        (первый был в _get_weights).
-        """
-        result = is_exact(norm_query)
-        logger.info(f"⚖️ _should_rerank: {result}")
-        return result
-
     def _reciprocal_rank_fusion(self, vector_nodes, bm25_scores, k=30, weights=None):
         if weights is None:
             weights = get_weights("user")
         vector_weight, bm25_weight = weights
+
+        # Fast-Track guard: при нулевом весе BM25 (режим USER — чистый DENSE)
+        # RRF не нужен — результат идентичен исходному ранжированию vector_nodes.
+        if bm25_weight == 0.0:
+            return vector_nodes
+
         scores = {}
 
         for rank, node in enumerate(vector_nodes):
@@ -754,16 +740,20 @@ class RerankedEngine:
         # 1. VECTOR SEARCH
         vector_nodes = self.retriever.retrieve(norm_query)
 
-        # 2. BM25 + HYBRID
-        if self.bm25 and vector_nodes:
-            bm25_scores = self.bm25.get_scores(self._tokenize(norm_query))
-            weights = self._get_weights(norm_query)
-            should_rerank = self._should_rerank(norm_query)
-            logger.info(f"⚖️ Веса RRF: vector={weights[0]}, bm25={weights[1]} | rerank={'da' if should_rerank else 'net'}")
-            combined_nodes = self._reciprocal_rank_fusion(vector_nodes, bm25_scores, weights=weights)
-        else:
+        # 2. Режим запроса — ОДИН вызов классификатора (кэш в classifier._mode_cache).
+        weights = get_weights(classify_mode(norm_query))
+
+        # FAST-TRACK: USER (1.0, 0.0) -> чистый DENSE, минуем rank_bm25 и RRF целиком.
+        if weights[1] == 0.0 or not self.bm25 or not vector_nodes:
             combined_nodes = vector_nodes
             should_rerank = False
+            logger.info(f"⚡ FAST-TRACK USER: чистый DENSE (веса {weights}), BM25/RRF пропущены")
+        else:
+            # HYBRID EXACT (0.5, 0.5): BM25 + RRF + reranker.
+            bm25_scores = self.bm25.get_scores(self._tokenize(norm_query))
+            combined_nodes = self._reciprocal_rank_fusion(vector_nodes, bm25_scores, weights=weights)
+            should_rerank = True
+            logger.info(f"⚖️ ГИБРИД EXACT: BM25+RRF, веса {weights}, rerank=da")
 
         # ДЕБАГ HYBRID
         logger.info(f"\n{'=' * 20} HYBRID TOP-10 {'=' * 20}")
