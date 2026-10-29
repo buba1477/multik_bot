@@ -10,7 +10,7 @@ BaseEmbedding + VectorStoreIndex, пересоздаёт коллекцию fns_
   1. Прочитать и провалидировать все JSONL
   2. Проверить дубликаты ID
   3. Проверить лимит токенов
-  4. Загрузить FRIDA Embedding (BaseEmbedding)
+  4. Загрузить E5 Embedding (BaseEmbedding)
   5. Создать TextNode-ы и построить VectorStoreIndex через QdrantVectorStore
   6. Проверить количество точек
 """
@@ -54,7 +54,7 @@ MAX_TOKENS = 650  # tryom chankam nuzhno >512 (model obrezhet do 512 avto)
 
 
 def _load_tokenizer() -> Any:
-    """Zagruzit E5-tokenizator (offline, kesh.)."""
+    """Загрузить E5-токенизатор (offline, кэш)."""
     model_dir = MODEL_PATH
     if not model_dir.exists():
         print(f"❌ Model ne najdena: {model_dir}")
@@ -69,13 +69,13 @@ def _load_tokenizer() -> Any:
 
 
 def count_tokens(text: str, tokenizer: Any) -> int:
-    """Chislo tokenov E5 dlja teksta."""
+    """Число токенов E5 для текста."""
     if not text:
         return 0
     return len(tokenizer.encode(text, add_special_tokens=False))
 
 
-# Klass embedding (FRIDA, BaseEmbedding LlamaIndex)
+# Класс embedding (E5, BaseEmbedding LlamaIndex)
 
 class E5Embedding(BaseEmbedding):
     """multilingual-e5-large cherez SentenceTransformer.
@@ -210,7 +210,7 @@ def index_documents(mode: str = "full") -> int:
                 else:
                     all_ids[chunk_id] = [(fname, line_no)]
 
-                # Proverka tokenov
+                # Проверка токенов
                 tok_count = count_tokens(data["text"], tokenizer)
                 if tok_count > MAX_TOKENS:
                     print(f"❌ {fname}:{line_no} - chunk {chunk_id} prevyshaet {MAX_TOKENS} tokenov")
@@ -235,7 +235,7 @@ def index_documents(mode: str = "full") -> int:
     avg_tokens = sum(token_counts) / len(token_counts) if token_counts else 0
     over_400 = sum(1 for t in token_counts if t > MAX_TOKENS)
 
-    # Vyvod statistiki po fajlam
+    # Вывод статистики по файлам
     print(f"\n{'Fajl':<35} {'Chunks':>8}")
     print("-" * 45)
     for fpath in jsonl_files:
@@ -276,7 +276,7 @@ def index_documents(mode: str = "full") -> int:
         print(f"❌ Model ne najdena: {MODEL_PATH}")
         return 1
 
-    # Zagruzhaem FRIDA kak BaseEmbedding
+    # Загружаем E5 как BaseEmbedding
     embed_model = E5Embedding(str(MODEL_PATH), device="cuda")
     vec_dim = embed_model.vector_dimension
     print(f"Vector dimension: {vec_dim}")
@@ -297,7 +297,7 @@ def index_documents(mode: str = "full") -> int:
             "document_id": data.get("document_id", "unknown"),
         }
 
-        # Формируем _em_input — embedding-маяк для FRIDA (из title)
+        # Формируем _em_input — embedding-маяк для E5 (из title)
         _em_parts: list[str] = []
         if title := data.get("title", ""):
             _em_parts.append(f"Пункт: {title}")
@@ -346,7 +346,7 @@ def index_documents(mode: str = "full") -> int:
 
     q_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
-    # Proverka dostupnosti
+    # Проверка доступности
     try:
         collections = q_client.get_collections()
         print(f"  Dostupnye kollekcii: {[c.name for c in collections.collections]}")
@@ -402,7 +402,7 @@ def index_documents(mode: str = "full") -> int:
     avg_rate = len(nodes) / index_time
     print(f"\n  Index postroen: {len(nodes)} chunks in {index_time:.1f}s ({avg_rate:.1f} ch/s)")
 
-    # --- 5. Proverka
+    # --- 5. Проверка
     print(f"\n{'=' * 76}")
     print("RESULT")
     print("=" * 76)
@@ -428,7 +428,7 @@ def index_documents(mode: str = "full") -> int:
               f"ozhidalsja {vec_dim}, polucheno {collection_info.config.params.vectors.size}")
         return 1
 
-    # Proverka sluchajnoj tochki (payload soderzhit vse polja)
+    # Проверка случайной точки (payload содержит все поля)
     print(f"\n{'=' * 76}")
     print("SPOT CHECK")
     print("=" * 76)

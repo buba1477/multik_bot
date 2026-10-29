@@ -61,7 +61,7 @@ def _backup_dir(directory: Path) -> dict[Path, Path]:
 
 
 def _verify_and_restore(directory: Path, backups: dict[Path, Path], label: str) -> int:
-    """Posle shaga: esli novyi fail < starogo/2 — otkatit k bekapu (warning)."""
+    """После шага: если новый файл < старого/2 — откатить к бэкапу (warning)."""
     restored = 0
     for out_path, back in backups.items():
         try:
