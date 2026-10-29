@@ -26,7 +26,7 @@ FRIDA-токенизация (TARGET=450, MAX=512, MIN=40), редакционн
 **index** — FRIDA-эмбеддинг (RoBERTa, 1536-dim, CLS-pooling), загрузка в Qdrant
 (fns_collection, Cosine).
 
-Подробно: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+Подробно: [docs/architecture_for_gnivc.md](docs/architecture_for_gnivc.md)
 
 ## Быстрый старт
 
@@ -52,16 +52,20 @@ venv/bin/python scripts/run_pipeline.py --all
 
 Флаги: `--force` (перезапустить все шаги), `--no-index` (без Qdrant),
 `--chunk --no-index` (только чанкинг).
-Подробно: [docs/OPERATIONS.md](docs/OPERATIONS.md)
+Подробно флаги и режимы: [docs/DOCUMENT_PIPELINE.md](docs/DOCUMENT_PIPELINE.md) (Приложение)
 
 ### Проверка
 
 ```bash
-# Eval retrieval — dense baseline
+# Eval retrieval — dense / hybrid / hybrid_rerank
 venv/bin/python scripts/eval_retrieval.py \
-    --qrels eval/qrels.jsonl \
-    --configs dense \
-    --top-k 5
+    --qrels eval/manual/qrels_user_clean.jsonl \
+    --configs dense,hybrid,hybrid_rerank \
+    --top-k 10
+venv/bin/python scripts/eval_retrieval.py \
+    --qrels eval/manual/qrels_exact_clean.jsonl \
+    --configs dense,hybrid,hybrid_rerank \
+    --top-k 10
 ```
 
 ## Структура проекта
@@ -81,21 +85,37 @@ app/
 scripts/
 ├── run_pipeline.py         # единый оркестратор
 ├── download_documents.py   # загрузчик НПА
-├── eval_retrieval.py       # метрики retrieval
+├── eval_retrieval.py       # метрики retrieval (FRIDA baseline)
+├── eval_e5.py              # метрики retrieval (multilingual-e5-large)
+├── create_index_qdrant_e5.py  # индексация E5 в Qdrant
 ├── build_eval_set.py       # построение gold-датасета
 ├── pipeline_manifest.py    # работа с pipeline_manifest.json
+├── sanitize_qrels.py       # чистка qrels
+├── audit_qrels.py          # аудит qrels
+├── export_qrels_with_text.py
+├── extract_failed_queries.py
 └── ...                     # утилиты
 
 docs/
-├── ARCHITECTURE.md         # схема, pipeline, Qdrant, chunker, eval, classifier
-├── OPERATIONS.md           # идемпотентность, manifest, флаги, troubleshooting
+├── METRICS.md              # метрики — краткая выжимка
 ├── DOCUMENT_PIPELINE.md    # download-часть (Publication API, legacy)
-└── FRONTEND_IMPROVEMENTS.md
+├── FRONTEND_IMPROVEMENTS.md
+└── architecture_for_gnivc.md
 
-eval/                       # gold-запросы, qrels, отчёты
-├── qrels.jsonl             # 138 запросов (segment match)
-├── qrels_exact.jsonl       # exact match
-└── eval_report.md
+eval/                       # золотые наборы, qrels, отчёты о прогонах
+├── METRICS_SUMMARY.md      # полная таблица по 5 этапам исследований
+├── manual/                 # qrels_user_clean (76), qrels_exact_clean (145),
+│                           # ROOT_CAUSE_TABLE.md, failed_retrieval_analysis.md
+├── user_new/               # eval_report.* (USER FRIDA dense)
+├── exact_new/              # eval_report.* (EXACT FRIDA hybrid_rerank)
+├── e5_user/                # eval_report.* (E5 USER dense/hybrid)
+├── e5_exact/               # eval_report.* (E5 EXACT dense/hybrid)
+└── eval_rerank_out/        # отчёты о лёгких реранкерах (8 вариантов)
+
+_archive/                   # временные/устаревшие файлы
+├── backups/                # bench_one_query.py, qrels.bak*, pipeline.log
+├── scripts/                # rebuild_visual_audit.py, regenerate_audit.py
+└── docs/                   # RAG_EVAL_SUMMARY_2026.md (история чистки sig-match)
 
 chunks/                     # результаты чанкинга (.jsonl)
 raw/                        # PDF-файлы
@@ -120,19 +140,28 @@ pipeline_manifest.json      # состояние пайплайна
 
 Полный шаблон — [`.env.example`](.env.example).
 
-## Метрики (eval/qrels.jsonl, 138 запросов, match=segment)
+## Метрики (29.10.2026, eval/manual)
+Адаптивный классификатор (`app/rag/classifier.py`) направляет **USER**-запросы в чистый DENSE (FRIDA),
+а **EXACT** (точные реквизиты) — в HYBRID 0.5/0.5 + Reranker BAAI/bge-m3.
 
-| Конфиг | R@5 | MAP@5 | MRR@5 | nDCG@5 | Latency (ms) |
-|---|---|---|---|---|---|
-| dense (baseline) | 0.818 | 0.719 | 0.917 | 0.796 | 272 |
+| Датасет | Конфиг | R@1 | R@3 | Hit@5 | MRR@10 | Latency |
+|---|---|---|---|---|---|---|
+| **USER** (76 запросов) | DENSE (FRIDA) | 0.468 | 0.670 | **88.1 %** | 0.808 | ~50 мс |
+| **EXACT** (145 запросов) | HYBRID 0.5/0.5 + bge-m3 | 0.448 | 0.702 | **86.2 %** | 0.689 | ~20 с |
 
-- **35 документов** в индексе, **5081 чанков** в Qdrant fns_collection
-- Размерность эмбеддингов: 1536 (FRIDA / RoBERTa CLS-pooling)
+> Полные таблицы по всем 5 этапам (включая сравнение с multilingual-e5-large и лёгкими реранкерами):
+> [`eval/METRICS_SUMMARY.md`](eval/METRICS_SUMMARY.md).  
+> Краткая выжимка: [`docs/METRICS.md`](docs/METRICS.md).  
+> Архитектура решения: [`docs/architecture_for_gnivc.md`](docs/architecture_for_gnivc.md).  
+> Документ для ГНИВЦ (DOCX): [`architecture_for_gnivc.docx`](architecture_for_gnivc.docx).
+
 
 ## Документация
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — полная архитектура (pipeline, Qdrant, chunker, eval, classifier)
-- [docs/OPERATIONS.md](docs/OPERATIONS.md) — идемпотентность, manifest, режимы, флаги, troubleshooting
-- [docs/DOCUMENT_PIPELINE.md](docs/DOCUMENT_PIPELINE.md) — детали download-этапа (Publication API, legacy-резерв)
-- [CHANGELOG.md](CHANGELOG.md) — история изменений
-- [INTERVIEW_PREP.md](INTERVIEW_PREP.md) — подготовка к интервью (внутреннее)
+- [`eval/METRICS_SUMMARY.md`](eval/METRICS_SUMMARY.md) — полные результаты retrieval по 5 этапам (FRIDA, лёгкие реранкеры, E5-large)  
+- [`docs/METRICS.md`](docs/METRICS.md) — метрики — краткая выжимка  
+- [`docs/architecture_for_gnivc.md`](docs/architecture_for_gnivc.md) — полная архитектура (pipeline, Qdrant, chunker, eval, classifier)  
+- [`docs/DOCUMENT_PIPELINE.md`](docs/DOCUMENT_PIPELINE.md) — детали download-этапа (Publication API, legacy-резерв)  
+- [`docs/FRONTEND_IMPROVEMENTS.md`](docs/FRONTEND_IMPROVEMENTS.md) — фронтенд (тёмная тема, история чатов)  
+- [`architecture_for_gnivc.docx`](architecture_for_gnivc.docx) — документ для ГНИВЦ (DOCX, отправлен)
+
