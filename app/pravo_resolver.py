@@ -397,8 +397,8 @@ def cached_resolve(
 
 
 # ============================================================================
-# Novye funkcii: poisk nd po rekvizitam + poluchenie IPS-teksta
-# Ispolzuyutsya dlya publication-dokumentov, u kotoryh net sohranyonnogo nd.
+    # Новые функции: поиск nd по реквизитам + получение IPS-текста
+    # Используются для publication-документов, у которых нет сохранённого nd.
 # ============================================================================
 
 

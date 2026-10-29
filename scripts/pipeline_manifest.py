@@ -1,7 +1,7 @@
-"""Manifest dlya idempotentnosti pajplajna.
+"""Манифест для идемпотентности пайплайна.
 
-Hranit versii komponentov (chunker, embedder) i per-doc sostoyanie dlya Qdrant.
-Sohranyaetsya posle kazhdogo shaga pajplajna.
+Хранит версии компонентов (chunker, embedder) и per-doc состояние для Qdrant.
+Сохраняется после каждого шага пайплайна.
 """
 
 import json
@@ -27,7 +27,7 @@ def save(manifest: dict) -> None:
 
 
 def chunker_rev() -> str:
-    """Vozvrashaet git-reviziyu legal_chunker.py ili 'dirty'."""
+    """Возвращает git-ревизию legal_chunker.py или 'dirty'."""
     diff = subprocess.run(
         ["git", "diff", "--quiet", "HEAD", "--", "app/chunking/legal_chunker.py"],
         capture_output=True,

@@ -35,7 +35,7 @@ logging.basicConfig(
 
 
 def safe_overwrite(new_path, old_path):
-    """Guard: ne daem zamenit staryi fail slishkom malenkim novym (<50% razmera)."""
+    """Guard: не даём заменить старый файл слишком маленьким новым (<50% размера)."""
     if os.path.exists(old_path):
         old_size = os.path.getsize(old_path)
         new_size = os.path.getsize(new_path)
@@ -46,8 +46,8 @@ def safe_overwrite(new_path, old_path):
 
 
 def _backup_dir(directory: Path) -> dict[Path, Path]:
-    """Skopirovat tekushchie faily kataloga v .guard_backup/ -> {path: backup}.
-    copy2 sohranyaet mtime — vazhno, chtoby mtime-skip nizhe schital fail starym."""
+    """Скопировать текущие файлы каталога в .guard_backup/ -> {path: backup}.
+    copy2 сохраняет mtime — важно, чтобы mtime-skip ниже считал файл старым."""
     backups: dict[Path, Path] = {}
     if not directory.exists():
         return backups
@@ -106,11 +106,11 @@ def step_parse(force: bool = False) -> tuple[list[dict], int, int]:
     _verify_and_restore(STRUCTURE_DIR, backups, "md->json")
     return results, processed, skipped
 def step_pdf_fallback(force: bool = False) -> dict:
-    """PDF fallback: OCR + pdftotext dlya PDF bez HTML ili s plohim Markdown.
+    """PDF fallback: OCR + pdftotext для PDF без HTML или с плохим Markdown.
 
-    Zapuskaetsya POSLE step_convert(). Analiziruet rezultat convert
-    i dorabatyvaet: skanirovannye PDF (OCR), tekstovye PDF (pdftotext),
-    esli HTML otsutstvuet ili Markdown poluchilsya hilym (<=500 simvolov).
+    Запускается ПОСЛЕ step_convert(). Анализирует результат convert
+    и дорабатывает: сканированные PDF (OCR), текстовые PDF (pdftotext),
+    если HTML отсутствует или Markdown получился хилый (<=500 символов).
     """
     print("\n" + "=" * 60)
     print("SHAG 2b: PDF fallback (OCR / pdftotext)")
@@ -184,11 +184,11 @@ def step_pdf_fallback(force: bool = False) -> dict:
 
 def step_page_mapping(force: bool = False) -> int:
     """
-    SHAG 4b: Postroit / obnovit kartu sootvetstviya chankov i stranits PDF.
+    ШАГ 4b: Построить / обновить карту соответствия чанков и страниц PDF.
     
-    Obrabatyvaet kazhdyy JSONL-fayl iz chunks/, dobavlyaet v mapping
-    novye dokumenty i zamenyaet sushestvuyushchie. Pri otsutstvii PDF
-    ili oshibke — sushchestvuyushchaya karta ne zatragivaetsya.
+    Обрабатывает каждый JSONL-файл из chunks/, добавляет в mapping
+    новые документы и заменяет существующие. При отсутствии PDF
+    или ошибке — существующая карта не затрагивается.
     """
     print("\n" + "=" * 60)
     print("SHAG 4b: Kartirovanie stranits PDF")
@@ -231,7 +231,7 @@ def step_page_mapping(force: bool = False) -> int:
         total_new += len(new_entries)
         print(f"{len(new_entries)} chankov ({mapped} s page)")
     
-    # Atomarnaya zapis
+    # Атомарная запись
     if total_new > 0 or (force and jsonl_files):
         page_mapper.save_mapping(existing, MAPPING_FILE)
         print(f"  Zapisano v {MAPPING_FILE}")
@@ -313,7 +313,7 @@ def report_parser_results(results: list[dict]) -> None:
 
 def update_manifest(manifest: dict, step: str, processed: int | None = None,
                     skipped: int | None = None) -> None:
-    """Obnovlyaet manifest i sohranyaet."""
+    """Обновляет manifest и сохраняет."""
     if step == "chunk":
         manifest["chunker_rev"] = pipeline_manifest.chunker_rev()
     if step == "convert" or step == "chunk":

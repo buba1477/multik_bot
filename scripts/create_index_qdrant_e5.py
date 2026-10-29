@@ -37,20 +37,20 @@ from llama_index.core.schema import TextNode, NodeRelationship, RelatedNodeInfo
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
 
-# Strogij offline
+# Строгий offline
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-# Puti
+# Пути
 BASE_DIR = Path(__file__).resolve().parent.parent
 CHUNKS_DIR = BASE_DIR / "chunks"
 MODEL_PATH = BASE_DIR / "hf_cache" / "multilingual-e5-large"
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
 COLLECTION_NAME = "fns_collection_e5"
-MAX_TOKENS = 650  # tryom chankam nuzhno >512 (model obrezhet do 512 avto)
+MAX_TOKENS = 650  # трём чанкам нужно >512 (модель обрежет до 512 авто)
 
-# Vspomogatelnye funkcii
+# Вспомогательные функции
 
 
 def _load_tokenizer() -> Any:
@@ -78,10 +78,10 @@ def count_tokens(text: str, tokenizer: Any) -> int:
 # Класс embedding (E5, BaseEmbedding LlamaIndex)
 
 class E5Embedding(BaseEmbedding):
-    """multilingual-e5-large cherez SentenceTransformer.
+    """multilingual-e5-large через SentenceTransformer.
 
-    Polnocennyj naslednik LlamaIndex BaseEmbedding.
-    Prefiks passage: dlja indeksacii, query: dlja poiska.
+    Полноценный наследник LlamaIndex BaseEmbedding.
+    Префикс passage: для индексации, query: для поиска.
     """
 
     _model: Any = PrivateAttr()
@@ -124,7 +124,7 @@ def index_documents(mode: str = "full") -> int:
     print("QDRANT CHUNKS INDEXER (LlamaIndex pipeline)")
     print("=" * 76)
 
-    # --- 1. Sbor i sortirovka JSONL
+    # --- 1. Сбор и сортировка JSONL
     jsonl_files = sorted(CHUNKS_DIR.glob("*.jsonl"))
     print(f"\nChunks directory: {CHUNKS_DIR}")
     print(f"JSONL files: {len(jsonl_files)}")
@@ -134,7 +134,7 @@ def index_documents(mode: str = "full") -> int:
         print("❌ Net JSONL-fajlov v chunks/")
         return 1
 
-    # --- 2. Validacija i chtenie
+    # --- 2. Валидация и чтение
     print("=" * 76)
     print("INPUT VALIDATION")
     print("=" * 76)
@@ -262,7 +262,7 @@ def index_documents(mode: str = "full") -> int:
         print(f"  Fajlov: {len(jsonl_files)}, chankov: {total_chunks}")
         return 0
 
-    # --- 3. Embedding cherez LlamaIndex BaseEmbedding + VectorStoreIndex
+    # --- 3. Embedding через LlamaIndex BaseEmbedding + VectorStoreIndex
     print(f"\n{'=' * 76}")
     print("EMBEDDING + INDEX (LlamaIndex)")
     print("=" * 76)
@@ -281,10 +281,10 @@ def index_documents(mode: str = "full") -> int:
     vec_dim = embed_model.vector_dimension
     print(f"Vector dimension: {vec_dim}")
 
-    # Sozdajom LlamaIndex TextNode-y iz validirovannyh zapisej
-    # payload-polja: id, title, text, local_img, source_url (+ novye polja dlja novogo formata)
-    # V embedding metadata uchastvuet TOLKO title;
-    # id, source_url, local_img iskljucheny iz embedding.
+    # Создаём LlamaIndex TextNode-ы из валидированных записей
+    # payload-поля: id, title, text, local_img, source_url (+ новые поля для нового формата)
+    # В embedding metadata участвует ТОЛЬКО title;
+    # id, source_url, local_img исключены из embedding.
     nodes: list[TextNode] = []
     for rec in all_records:
         data = rec["data"]
@@ -354,7 +354,7 @@ def index_documents(mode: str = "full") -> int:
         print(f"❌ Oshibka podkljuchenija k Qdrant: {e}")
         return 1
 
-    # Peresozdanie kollekcii s razmernostju E5
+    # Пересоздание коллекции с размерностью E5
     if mode == "full":
         print(f"\nRecreating collection {COLLECTION_NAME}...")
         q_client.recreate_collection(
@@ -373,7 +373,7 @@ def index_documents(mode: str = "full") -> int:
             return 1
         print(f"  Empty check: {count} points (OK)")
 
-    # Sozdajom QdrantVectorStore (LlamaIndex) na uzhe gotovoj kollekcii
+    # Создаём QdrantVectorStore (LlamaIndex) на уже готовой коллекции
     vector_store = QdrantVectorStore(
         client=q_client,
         collection_name=COLLECTION_NAME,
@@ -382,9 +382,9 @@ def index_documents(mode: str = "full") -> int:
 
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
-    # Stavim embed_model v globalnyj Settings + ukazyvaem javno
+    # Ставим embed_model в глобальный Settings + указываем явно
     Settings.embed_model = embed_model
-    # Malen'kij batch, chtoby ne vyletet' po OOM na 6GB GPU
+    # Маленький batch, чтобы не вылететь по OOM на 6GB GPU
     Settings.embed_batch_size = 32
 
     print(f"\nBuilding VectorStoreIndex from {len(nodes)} nodes...")
@@ -455,7 +455,7 @@ def index_documents(mode: str = "full") -> int:
             if not has_text:
                 print(f"\n❌ SPOT CHECK: payload.text otsutstvuet u tochki {sid}!")
                 return 1
-            # Pokazyvaem metadannye novogo formata, esli est
+            # Показываем метаданные нового формата, если есть
             if "document_id" in payload:
                 print(f"  payload.document_id: {payload.get('document_id', '')}")
                 print(f"  payload.point:       {payload.get('point', '')}")
@@ -463,7 +463,7 @@ def index_documents(mode: str = "full") -> int:
                 print(f"  payload.subjects:    {payload.get('subjects', [])}")
                 print(f"  payload.categories:  {payload.get('categories', [])}")
                 print(f"  payload.keywords:    {payload.get('keywords', [])}")
-            # Struktura payload (kljuchi)
+            # Структура payload (ключи)
             print(f"  payload keys:     {sorted(payload.keys())}")
         else:
             print("  ⚠️ Kollekcija pusta")
@@ -475,7 +475,7 @@ def index_documents(mode: str = "full") -> int:
     print("VERIFY 10 POINTS")
     print("=" * 76)
 
-    # Stroit mapping payload.id -> payload.text cherez scroll s paginaciej
+    # Строим mapping payload.id -> payload.text через scroll с пагинацией
     id_to_text: dict[str, str] = {}
     scroll_offset: int | None = None
     scroll_limit = 100
@@ -501,7 +501,7 @@ def index_documents(mode: str = "full") -> int:
 
     print(f"  Vsego prochitano tochek: {len(id_to_text)}")
 
-    # Sravnivaem pervye 10 ishodnyh chunks
+    # Сравниваем первые 10 исходных чанков
     verify_records = all_records[:10]
     match_errors = 0
 

@@ -37,11 +37,11 @@ from llama_index.core.schema import TextNode, NodeRelationship, RelatedNodeInfo
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
 
-# Strogij offline
+# Строгий offline
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-# Puti
+# Пути
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 CHUNKS_DIR = BASE_DIR / "chunks"
 MODEL_PATH = BASE_DIR / "hf_cache" / "FRIDA"
@@ -50,11 +50,11 @@ QDRANT_PORT = 6333
 COLLECTION_NAME = "fns_collection"
 MAX_TOKENS = 600
 
-# Vspomogatelnye funkcii
+# Вспомогательные функции
 
 
 def _load_tokenizer() -> Any:
-    """Zagruzit FRIDA-tokenizator (offline, kesh.)."""
+    """Загрузить FRIDA-токенизатор (offline, кэш)."""
     model_dir = MODEL_PATH
     if not model_dir.exists():
         print(f"❌ Model ne najdena: {model_dir}")
@@ -69,19 +69,19 @@ def _load_tokenizer() -> Any:
 
 
 def count_tokens(text: str, tokenizer: Any) -> int:
-    """Chislo tokenov FRIDA dlja teksta."""
+    """Число токенов FRIDA для текста."""
     if not text:
         return 0
     return len(tokenizer.encode(text, add_special_tokens=False))
 
 
-# Klass embedding (FRIDA, BaseEmbedding LlamaIndex)
+# Класс embedding (FRIDA, BaseEmbedding LlamaIndex)
 
 class FRIDAEmbedding(BaseEmbedding):
-    """FRIDA embedding - Sber RoSBERTa cherez SentenceTransformer.
+    """FRIDA embedding — Sber RoSBERTa через SentenceTransformer.
 
-    Polnocennyj naslednik LlamaIndex BaseEmbedding.
-    Prefiks search_document: dlja indeksacii, search_query: dlja poiska.
+    Полноценный наследник LlamaIndex BaseEmbedding.
+    Префикс search_document: для индексации, search_query: для поиска.
     """
 
     _model: Any = PrivateAttr()
@@ -107,7 +107,7 @@ class FRIDAEmbedding(BaseEmbedding):
 
     @property
     def vector_dimension(self) -> int:
-        """Fakticheskaja razmernost vyhodnogo vektora FRIDA."""
+        """Фактическая размерность выходного вектора FRIDA."""
         return self._model.get_sentence_embedding_dimension()
 
     def _get_query_embedding(self, query: str) -> List[float]:
@@ -131,7 +131,7 @@ def index_documents(mode: str = "full") -> int:
     print("QDRANT CHUNKS INDEXER (LlamaIndex pipeline)")
     print("=" * 76)
 
-    # --- 1. Sbor i sortirovka JSONL
+# --- 1. Сбор и сортировка JSONL
     jsonl_files = sorted(CHUNKS_DIR.glob("*.jsonl"))
     print(f"\nChunks directory: {CHUNKS_DIR}")
     print(f"JSONL files: {len(jsonl_files)}")
@@ -141,7 +141,7 @@ def index_documents(mode: str = "full") -> int:
         print("❌ Net JSONL-fajlov v chunks/")
         return 1
 
-    # --- 2. Validacija i chtenie
+# --- 2. Валидация и чтение
     print("=" * 76)
     print("INPUT VALIDATION")
     print("=" * 76)
@@ -210,14 +210,14 @@ def index_documents(mode: str = "full") -> int:
                             print(f"❌ {fname}:{line_no} - {key} otsutstvuet ili ne stroka")
                             return 1
 
-                # ID dolzhen byt unikalnym
+# ID должен быть уникальным
                 chunk_id = data["id"]
                 if chunk_id in all_ids:
                     all_ids[chunk_id].append((fname, line_no))
                 else:
                     all_ids[chunk_id] = [(fname, line_no)]
 
-                # Proverka tokenov
+# Проверка токенов
                 tok_count = count_tokens(data["text"], tokenizer)
                 if tok_count > MAX_TOKENS:
                     print(f"❌ {fname}:{line_no} - chunk {chunk_id} prevyshaet {MAX_TOKENS} tokenov")
@@ -242,7 +242,7 @@ def index_documents(mode: str = "full") -> int:
     avg_tokens = sum(token_counts) / len(token_counts) if token_counts else 0
     over_400 = sum(1 for t in token_counts if t > MAX_TOKENS)
 
-    # Vyvod statistiki po fajlam
+# Вывод статистики по файлам
     print(f"\n{'Fajl':<35} {'Chunks':>8}")
     print("-" * 45)
     for fpath in jsonl_files:
@@ -269,7 +269,7 @@ def index_documents(mode: str = "full") -> int:
         print(f"  Fajlov: {len(jsonl_files)}, chankov: {total_chunks}")
         return 0
 
-    # --- 3. Embedding cherez LlamaIndex BaseEmbedding + VectorStoreIndex
+# --- 3. Embedding через LlamaIndex BaseEmbedding + VectorStoreIndex
     print(f"\n{'=' * 76}")
     print("EMBEDDING + INDEX (LlamaIndex)")
     print("=" * 76)
@@ -285,15 +285,15 @@ def index_documents(mode: str = "full") -> int:
         print(f"❌ Model ne najdena: {MODEL_PATH}")
         return 1
 
-    # Zagruzhaem FRIDA kak BaseEmbedding
+# Загружаем FRIDA как BaseEmbedding
     embed_model = FRIDAEmbedding(str(MODEL_PATH), device=device)
     vec_dim = embed_model.vector_dimension
     print(f"Vector dimension: {vec_dim}")
 
-    # Sozdajom LlamaIndex TextNode-y iz validirovannyh zapisej
-    # payload-polja: id, title, text, local_img, source_url (+ novye polja dlja novogo formata)
-    # V embedding metadata uchastvuet TOLKO title;
-    # id, source_url, local_img iskljucheny iz embedding.
+# Создаём LlamaIndex TextNode-ы из валидированных записей
+# payload-поля: id, title, text, local_img, source_url (+ новые поля для нового формата)
+# В embedding metadata участвует ТОЛЬКО title;
+# id, source_url, local_img исключены из embedding.
     nodes: list[TextNode] = []
     for rec in all_records:
         data = rec["data"]
@@ -355,7 +355,7 @@ def index_documents(mode: str = "full") -> int:
 
     q_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
-    # Proverka dostupnosti
+# Проверка доступности
     try:
         collections = q_client.get_collections()
         print(f"  Dostupnye kollekcii: {[c.name for c in collections.collections]}")
@@ -363,7 +363,7 @@ def index_documents(mode: str = "full") -> int:
         print(f"❌ Oshibka podkljuchenija k Qdrant: {e}")
         return 1
 
-    # Peresozdanie kollekcii s FAKTICHESKOJ razmernostju FRIDA
+# Пересоздание коллекции с ФАКТИЧЕСКОЙ размерностью FRIDA
     if mode == "full":
         print(f"\nRecreating collection {COLLECTION_NAME}...")
         q_client.recreate_collection(
@@ -382,7 +382,7 @@ def index_documents(mode: str = "full") -> int:
             return 1
         print(f"  Empty check: {count} points (OK)")
 
-    # Sozdajom QdrantVectorStore (LlamaIndex) na uzhe gotovoj kollekcii
+# Создаём QdrantVectorStore (LlamaIndex) на уже готовой коллекции
     vector_store = QdrantVectorStore(
         client=q_client,
         collection_name=COLLECTION_NAME,
@@ -391,9 +391,9 @@ def index_documents(mode: str = "full") -> int:
 
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
-    # Stavim embed_model v globalnyj Settings + ukazyvaem javno
+# Ставим embed_model в глобальный Settings + указываем явно
     Settings.embed_model = embed_model
-    # Malen'kij batch, chtoby ne vyletet' po OOM na 6GB GPU
+# Маленький batch, чтобы не вылететь по OOM на 6GB GPU
     Settings.embed_batch_size = 16
 
     print(f"\nBuilding VectorStoreIndex from {len(nodes)} nodes...")
@@ -411,7 +411,7 @@ def index_documents(mode: str = "full") -> int:
     avg_rate = len(nodes) / index_time
     print(f"\n  Index postroen: {len(nodes)} chunks in {index_time:.1f}s ({avg_rate:.1f} ch/s)")
 
-    # --- 5. Proverka
+# --- 5. Проверка
     print(f"\n{'=' * 76}")
     print("RESULT")
     print("=" * 76)
@@ -437,7 +437,7 @@ def index_documents(mode: str = "full") -> int:
               f"ozhidalsja {vec_dim}, polucheno {collection_info.config.params.vectors.size}")
         return 1
 
-    # Proverka sluchajnoj tochki (payload soderzhit vse polja)
+# Проверка случайной точки (payload содержит все поля)
     print(f"\n{'=' * 76}")
     print("SPOT CHECK")
     print("=" * 76)
@@ -464,7 +464,7 @@ def index_documents(mode: str = "full") -> int:
             if not has_text:
                 print(f"\n❌ SPOT CHECK: payload.text otsutstvuet u tochki {sid}!")
                 return 1
-            # Pokazyvaem metadannye novogo formata, esli est
+# Показываем метаданные нового формата, если есть
             if "document_id" in payload:
                 print(f"  payload.document_id: {payload.get('document_id', '')}")
                 print(f"  payload.point:       {payload.get('point', '')}")
@@ -472,19 +472,19 @@ def index_documents(mode: str = "full") -> int:
                 print(f"  payload.subjects:    {payload.get('subjects', [])}")
                 print(f"  payload.categories:  {payload.get('categories', [])}")
                 print(f"  payload.keywords:    {payload.get('keywords', [])}")
-            # Struktura payload (kljuchi)
+# Структура payload (ключи)
             print(f"  payload keys:     {sorted(payload.keys())}")
         else:
             print("  ⚠️ Kollekcija pusta")
     except Exception as e:
         print(f"  ⚠️ Oshibka proverki tochki: {e}")
 
-    # --- 6. Verifikacija 10 tochek: sravnenie payload.text s ishodnym ---
+# --- 6. Верификация 10 точек: сравнение payload.text с исходным ---
     print(f"\n{'=' * 76}")
     print("VERIFY 10 POINTS")
     print("=" * 76)
 
-    # Stroit mapping payload.id -> payload.text cherez scroll s paginaciej
+# Строим mapping payload.id -> payload.text через scroll с пагинацией
     id_to_text: dict[str, str] = {}
     scroll_offset: int | None = None
     scroll_limit = 100
@@ -510,7 +510,7 @@ def index_documents(mode: str = "full") -> int:
 
     print(f"  Vsego prochitano tochek: {len(id_to_text)}")
 
-    # Sravnivaem pervye 10 ishodnyh chunks
+# Сравниваем первые 10 исходных чанков
     verify_records = all_records[:10]
     match_errors = 0
 
@@ -544,7 +544,7 @@ def index_documents(mode: str = "full") -> int:
     print("\u2705 Indeksacija zavershena uspeshno.")
     print("=" * 76)
 
-    # --- 7. Obnovlenie manifest
+# --- 7. Обновление manifest
     from scripts import pipeline_manifest
 
     manifest = pipeline_manifest.load()
