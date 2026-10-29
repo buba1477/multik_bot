@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  eval_api:
+    build:
+      context: .
+      dockerfile: Dockerfile.eval
+    image: multik-eval:latest
+    container_name: eval_api
+    command: sleep infinity
+    env_file: [.env]
+    volumes:
+      - ./:/app
+      - ./hf_cache:/root/.cache/huggingface
+      - ./hf_cache:/app/hf_cache
+      - ./static:/app/static
+      - ./images_cache:/app/images_cache
+    environment:
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - CLASSIFIER_BACKEND=gigachat
+      - OLLAMA_HOST=http://ollama_container:11434
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - REDIS_HOST=redis
+      - RERANKER_DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+networks:
+  default:
+    external: true
+    name: multik_bot_default

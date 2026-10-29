@@ -109,6 +109,12 @@ _QA_PROMPT_STR = """Отвечай ТОЛЬКО на основании пред
 
 Не путай норму гражданин (впервые поступающий на государсвенную гражданскую службу) и граджанский служащий (уже на службе)
 
+Не путай норму дисциплинарное взыскание и коррупционное взыскание.
+
+Не используй общие знания, НЕ делай выводов из общих норм.
+
+Не добавляй условия, которых нет в КОНТЕКСТЕ.
+
 ФОРМАТ ОТВЕТА:
 Ответ ВСЕГДА должен начинаться строго с фразы:
 **Ответ:** [короткий ответ норма контекста]
@@ -171,64 +177,64 @@ API_KEY_GIGACHAT = os.getenv("API_KEY_GIGACHAT", "")
 chart_engine = DynamicChartEngine(ollama_url=OLLAMA_HOST)
 
 # API GigaChat
-# class LlamaGigaChat(CustomLLM):
-#     context_window: int = 8096
-#     num_output: int = 512
-#     model_name: str = "GigaChat-3-Ultra"
-#     # 🔥 Жестко берем ключ из переменной окружения
-#     auth_data: str = API_KEY_GIGACHAT
+class LlamaGigaChat(CustomLLM):
+    context_window: int = 8096
+    num_output: int = 512
+    model_name: str = "GigaChat-3-Ultra"
+    # 🔥 Жестко берем ключ из переменной окружения
+    auth_data: str = API_KEY_GIGACHAT
 
-#     @property
-#     def metadata(self) -> LLMMetadata:
-#         return LLMMetadata(
-#             context_window=self.context_window,
-#             num_output=self.num_output,
-#             is_chat_model=True,
-#             model_name=self.model_name,
-#         )
+    @property
+    def metadata(self) -> LLMMetadata:
+        return LLMMetadata(
+            context_window=self.context_window,
+            num_output=self.num_output,
+            is_chat_model=True,
+            model_name=self.model_name,
+        )
 
-#     @llm_completion_callback()
-#     def complete(self, prompt: str, **kwargs: Any) -> CompletionResponse:
-#         if not self.auth_data:
-#             raise ValueError("❌ Ошибка: Переменная GIGACHAT_AUTH_KEY не задана!")
+    @llm_completion_callback()
+    def complete(self, prompt: str, **kwargs: Any) -> CompletionResponse:
+        if not self.auth_data:
+            raise ValueError("❌ Ошибка: Переменная GIGACHAT_AUTH_KEY не задана!")
             
-#         payload = {
-#             "model": self.model_name,
-#             "messages": [{"role": "user", "content": prompt}],
-#             "temperature": 0.0,
-#             "stream": False # Здесь обычный запрос
-#         }
+        payload = {
+            "model": self.model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "stream": False # Здесь обычный запрос
+        }
 
-#         with GigaChatSDK(credentials=self.auth_data, verify_ssl_certs=False) as giga:
-#             response = giga.chat(payload)
-#             text = response.choices[0].message.content
+        with GigaChatSDK(credentials=self.auth_data, verify_ssl_certs=False) as giga:
+            response = giga.chat(payload)
+            text = response.choices[0].message.content
             
-#         return CompletionResponse(text=text)
+        return CompletionResponse(text=text)
 
-#     @llm_completion_callback()
-#     def stream_complete(self, prompt: str, **kwargs: Any) -> CompletionResponseGen:
-#         """🔥 НАСТОЯЩИЙ СТРИМИНГ ДЛЯ СБЕРА: отдаем буквы по очереди во фронтенд"""
-#         if not self.auth_data:
-#             raise ValueError("❌ Ошибка: Переменная GIGACHAT_AUTH_KEY не задана!")
+    @llm_completion_callback()
+    def stream_complete(self, prompt: str, **kwargs: Any) -> CompletionResponseGen:
+        """🔥 НАСТОЯЩИЙ СТРИМИНГ ДЛЯ СБЕРА: отдаем буквы по очереди во фронтенд"""
+        if not self.auth_data:
+            raise ValueError("❌ Ошибка: Переменная GIGACHAT_AUTH_KEY не задана!")
 
-#         payload = {
-#             "model": self.model_name,
-#             "messages": [{"role": "user", "content": prompt}],
-#             "temperature": 0.0,
-#             "stream": True # 🔥 ПРИКАЗЫВАЕМ СБЕРУ СТРИМИТЬ ОТВЕТ
-#         }
+        payload = {
+            "model": self.model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "stream": True # 🔥 ПРИКАЗЫВАЕМ СБЕРУ СТРИМИТЬ ОТВЕТ
+        }
 
-#         def gen():
-#             with GigaChatSDK(credentials=self.auth_data, verify_ssl_certs=False) as giga:
-#                 # Используем метод обсчета потока от Сбера
-#                 for chunk in giga.stream(payload):
-#                     content = chunk.choices[0].delta.content
-#                     if content:
-#                         # Отдаем каждый кусочек текста в LlamaIndex по мере прилета из облака
-#                         yield CompletionResponse(text=content, delta=content)
-#         return gen()
+        def gen():
+            with GigaChatSDK(credentials=self.auth_data, verify_ssl_certs=False) as giga:
+                # Используем метод обсчета потока от Сбера
+                for chunk in giga.stream(payload):
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        # Отдаем каждый кусочек текста в LlamaIndex по мере прилета из облака
+                        yield CompletionResponse(text=content, delta=content)
+        return gen()
 
-# Settings.llm = LlamaGigaChat()
+Settings.llm = LlamaGigaChat()
 
 
 # ===== FIX: отключаем reasoning (think=False) на верхнем уровне /api/chat =====
@@ -238,27 +244,27 @@ chart_engine = DynamicChartEngine(ollama_url=OLLAMA_HOST)
 # Минимальный подкласс: только для фактического streaming-метода добавляем
 # top-level think=False, делегируя остальное в родителя (все options сохраняются).
 
-class NoThinkOllama(Ollama):
-    def stream_chat(self, messages, **kwargs):
-        # В 0.1.3 payload = {...; "options": self._model_kwargs; "stream": True; **kwargs},
-        # поэтому think=False через kwargs уходит НА ВЕРХНИЙ уровень, а не в options.
-        kwargs["think"] = False
-        return super().stream_chat(messages, **kwargs)
+# class NoThinkOllama(Ollama):
+#     def stream_chat(self, messages, **kwargs):
+#         # В 0.1.3 payload = {...; "options": self._model_kwargs; "stream": True; **kwargs},
+#         # поэтому think=False через kwargs уходит НА ВЕРХНИЙ уровень, а не в options.
+#         kwargs["think"] = False
+#         return super().stream_chat(messages, **kwargs)
 
-Settings.llm = NoThinkOllama(
-    model="yagpt5_fns:latest",
-    base_url=OLLAMA_HOST,
-    request_timeout=300.0,
-    temperature=0.0,
-    context_window=8144,
-    additional_kwargs={
-        "keep_alive": -1,
-        "num_predict": 512,
-        "seed": 42,
-        "num_ctx": 8144,
-        "repeat_penalty": 1.05,
-    },
-)
+# Settings.llm = NoThinkOllama(
+#     model="yagpt5_fns:latest",
+#     base_url=OLLAMA_HOST,
+#     request_timeout=300.0,
+#     temperature=0.0,
+#     context_window=8144,
+#     additional_kwargs={
+#         "keep_alive": -1,
+#         "num_predict": 512,
+#         "seed": 42,
+#         "num_ctx": 8144,
+#         "repeat_penalty": 1.05,
+#     },
+# )
 
 
 # ========== СОТРУДНИКИ (загружаем один раз при старте) ==========
@@ -378,8 +384,8 @@ class RerankedEngine:
         "ндфл": "налог на доход физических лиц",
         "усн": "упрощенная система налогообложения",
         "ндс": "налог на добавленную стоимость",
-        "машину": "транспортное средство (движимое имущество)",
-        "машина": "транспортное средство (движимое имущество)",
+        "машину": "автомобиль транспортное средство",
+        "машина": "автомобиль транспортное средство",
     }
 
     BASE_ENTITIES = [
@@ -446,11 +452,13 @@ class RerankedEngine:
         try:
             reranker_path = Path("/app/reranker")
             if reranker_path.exists():
+                reranker_device = os.getenv("RERANKER_DEVICE", None)  # None → CPU (прод), "cuda" → GPU (eval)
                 self.reranker = SentenceTransformerRerank(
                     model=str(reranker_path),
                     top_n=self.RERANK_TOP_K,
+                    device=reranker_device,
                 )
-                logger.info("✅ Reranker READY")
+                logger.info(f"✅ Reranker READY (device={reranker_device})")
         except Exception as e:
             logger.error(f"⚠️ Reranker error: {e}")
 
@@ -650,6 +658,7 @@ class RerankedEngine:
         # Fast-Track guard: при нулевом весе BM25 (режим USER — чистый DENSE)
         # RRF не нужен — результат идентичен исходному ранжированию vector_nodes.
         if bm25_weight == 0.0:
+            logger.info(f'ТОП-30 чанков после вектор: {vector_nodes}')
             return vector_nodes
 
         scores = {}
@@ -660,15 +669,7 @@ class RerankedEngine:
 
         bm25_indices = np.argsort(bm25_scores)[::-1][: self.BM25_TOP_K]
 
-        # logger.info("=" * 20 + " BM25 TOP-30 " + "=" * 20)
-        # for rank, idx in enumerate(bm25_indices):
-        #     nid = self.all_nodes[idx].node_id
-        #     score = bm25_scores[idx]
-        #     logger.info(f"BM25 Rank {rank + 1}: [{score:.4f}] ID: {nid}")
-        # logger.info("=" * 55)
-
-        # logger.info(f'ТОП-30 чанков после вектор: {scores}')
-
+        
         for rank, idx in enumerate(bm25_indices):
             if bm25_scores[idx] <= 0:
                 continue
@@ -740,14 +741,55 @@ class RerankedEngine:
         # 1. VECTOR SEARCH
         vector_nodes = self.retriever.retrieve(norm_query)
 
+        # ===== DENSE TOP-30 (печатается ВСЕГДА) =====
+        logger.info("=" * 20 + " DENSE TOP-30 " + "=" * 20)
+        for rank, nws in enumerate(vector_nodes[:30]):
+            nid = nws.node.metadata.get("id") or nws.node.node_id
+            score = nws.score if nws.score is not None else 0.0
+            logger.info(f"DENSE Rank {rank + 1}: [{score:.4f}] ID: {nid}")
+        logger.info("=" * 55)
+        # ============================================
+
         # 2. Режим запроса — ОДИН вызов классификатора (кэш в classifier._mode_cache).
         weights = get_weights(classify_mode(norm_query))
 
+        # ===== BM25 TOP-30 (печатается ВСЕГДА) =====
+        bm25_scores = None
+        if self.bm25:
+            bm25_scores = self.bm25.get_scores(self._tokenize(norm_query))
+            bm25_indices = np.argsort(bm25_scores)[::-1][: self.BM25_TOP_K]
+            logger.info("=" * 20 + " BM25 TOP-30 " + "=" * 20)
+            for rank, idx in enumerate(bm25_indices):
+                nid = self.all_nodes[idx].node_id
+                score = bm25_scores[idx]
+                logger.info(f"BM25 Rank {rank + 1}: [{score:.4f}] ID: {nid}")
+            logger.info("=" * 55)
+        else:
+            logger.warning("⚠️ BM25 недоступен (self.bm25 is None) — BM25 TOP-30 пропущен")
+        # ============================================
+
         # FAST-TRACK: USER (1.0, 0.0) -> чистый DENSE, минуем rank_bm25 и RRF целиком.
+        # Восстанавливаем оригинальные строковые chunk_id (79-fz_st59_p1) через
+        # self.node_map — как это делал RRF до рефакторинга: сырые UUID из Qdrant
+        # ломают контекст LLM и диагностику.
         if weights[1] == 0.0 or not self.bm25 or not vector_nodes:
-            combined_nodes = vector_nodes
+            fast_track_nodes = []
+            for nws in vector_nodes:
+                # Вытаскиваем chunk_id из метаданных payload
+                nid = nws.node.metadata.get("id") or nws.node.node_id
+                if nid in self.node_map:
+                    # Подставляем готовую ноду из node_map с правильным chunk_id
+                    fast_track_nodes.append(
+                        NodeWithScore(node=self.node_map[nid], score=nws.score)
+                    )
+                else:
+                    fast_track_nodes.append(nws)
+            combined_nodes = fast_track_nodes
             should_rerank = False
-            logger.info(f"⚡ FAST-TRACK USER: чистый DENSE (веса {weights}), BM25/RRF пропущены")
+            logger.info(
+                f"⚡ FAST-TRACK USER: чистый DENSE (веса {weights}), BM25/RRF пропущены, "
+                f"chunk_id восстановлены из node_map"
+            )
         else:
             # HYBRID EXACT (0.5, 0.5): BM25 + RRF + reranker.
             bm25_scores = self.bm25.get_scores(self._tokenize(norm_query))
@@ -1069,16 +1111,27 @@ async def get_ai_streaming_response(query_text: str):
                         ensure_ascii=False,
                     ) + "\n"
 
+                logger.info(f"📊 [CHART] Raw model response (first 500 chars): {raw_json_text[:500]}")
                 tokens = list(raw_json_text)
-                parsed_chart_node = chart_engine.validate_and_parse(raw_json_text)
+                parsed_chart_node = chart_engine.validate_and_parse(raw_json_text, rag_context=rag_context, user_query=query_text)
 
                 if parsed_chart_node["type"] == "chart_error":
                     logger.warning(
                         f"⚠️ [CHART] Валидация не прошла: {parsed_chart_node['message']}. "
-                        "Отправляю ошибку на фронт."
+                        "Переключаюсь на текстовый ответ."
                     )
-                    yield json.dumps(parsed_chart_node, ensure_ascii=False) + "\n"
-                    full_response_text = ""
+                    # Fallback: стримим текстовый ответ из RAG-контекста
+                    tokens = []
+                    for token in response.response_gen:
+                        tokens.append(token)
+                        t = str(token)
+                        yield json.dumps({"type": "text", "content": t}, ensure_ascii=False) + "\n"
+                    full_response_text = "".join(tokens)
+                    is_chart_mode = False
+                    yield json.dumps(
+                        {"type": "metadata", "note": "График не построен, показан текстовый ответ"},
+                        ensure_ascii=False,
+                    ) + "\n"
                 else:
                     yield json.dumps(parsed_chart_node, ensure_ascii=False) + "\n"
                     logger.info("📊 График успешно отвалидирован и отправлен на фронт.")

@@ -258,3 +258,13 @@ mapping/*.run_alloffset.bak
 mapping/*.pre_auto
 mapping/*.run_alloffset.bak
 .guard_backup/
+
+# Модели реранкеров (большие веса, не коммитим)
+reranker_bge_base/
+reranker_minilm_l12/
+reranker_msmarco_minilm/
+reranker_russian/
+
+# Временные файлы
+*.bak
+*.log

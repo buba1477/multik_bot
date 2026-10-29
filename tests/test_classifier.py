@@ -1,28 +1,122 @@
 """Тесты модуля app.rag.classifier — LLM-классификатор запросов.
 
-Offline-тесты проверяют fallback (USER при недоступности LLM).
-Mock-тесты проверяют логику классификации (EXACT/USER).
+Offline-тесты проверяют strong_exact и guard-fallback (когда LLM недоступна).
+Mock-тесты проверяют LLM-first логику классификации (EXACT/USER).
 Integration-тесты требуют Ollama/GigaChat (запускать вручную).
 """
 from unittest.mock import patch
 
-from app.rag.classifier import is_exact, classify_query, clear_cache
+import pytest
+
+from app.rag.classifier import (
+    _guard_fallback,
+    classify_mode,
+    classify_query,
+    clear_cache,
+    is_exact,
+)
+
+
+@pytest.fixture(autouse=True)
+def _clear():
+    """Независимость тестов: чистый кэш до и после каждого теста."""
+    clear_cache()
+    yield
+    clear_cache()
 
 
 # =========================================================
-# Offline-тесты (без LLM — тестируем fallback)
+# LLM-first классификация (приемочные сценарии из ТЗ)
+# =========================================================
+
+@pytest.mark.parametrize("query,expected", [
+    (
+        "В каких случаях служащему ФНС может быть выплачена единовременная "
+        "выплата на приобретение жилого помещения?",
+        "exact",
+    ),
+    (
+        "Вправе ли инспектор ФНС принять ценный подарок от делегации "
+        "дружественного государства?",
+        "exact",
+    ),
+    (
+        "Что делать, если инспектору ФНС в социальной сети поступают угрозы?",
+        "exact",
+    ),
+    ("статья 122 НК РФ", "exact"),
+    ("Расскажи про увольнение за утрату доверия", "user"),
+])
+def test_classify_mode(query: str, expected: str):
+    """Нормативные вопросы без реквизитов классифицирует LLM.
+
+    «статья 122 НК РФ» уходит в strong_exact (без вызова LLM),
+    остальные запросы решает мок-LLM (_generate).
+    """
+    with patch("app.rag.classifier._generate", return_value=expected.upper()):
+        assert classify_mode(query) == expected
+
+
+# =========================================================
+# guard-fallback: раздельные сценарии exact/user
+# =========================================================
+
+def test_guard_fallback_exact_cases():
+    """«В каких случаях…» есть в guard-маркерах → fallback вернёт exact."""
+    q = "В каких случаях служащему ФНС положена выплата?"
+    assert _guard_fallback(q) == "exact"
+
+
+def test_guard_fallback_user_for_what_to_do():
+    """«Что делать…» НЕ входит в guard-маркеры → fallback вернёт user."""
+    q = "Что делать, если инспектору ФНС в социальной сети поступают угрозы?"
+    assert _guard_fallback(q) == "user"
+
+
+@patch("app.rag.classifier._generate", return_value="EXACT")
+def test_llm_exact_for_what_to_do(mock_generate):
+    """«Что делать…» → exact достигается ТОЛЬКО через LLM (не через fallback)."""
+    q = "Что делать, если инспектору ФНС в социальной сети поступают угрозы?"
+    assert classify_mode(q) == "exact"
+    mock_generate.assert_called_once()
+
+
+# =========================================================
+# strong_exact и кэш экономят вызовы LLM
+# =========================================================
+
+@patch(
+    "app.rag.classifier._generate",
+    side_effect=AssertionError("LLM не должен вызываться для strong_exact"),
+)
+def test_strong_exact_skips_llm(mock_generate):
+    """«статья 122 НК РФ» → exact через strong_exact, _generate вызывается 0 раз."""
+    assert classify_mode("статья 122 НК РФ") == "exact"
+    assert mock_generate.call_count == 0
+
+
+@patch("app.rag.classifier._generate", return_value="USER")
+def test_cache_skips_llm(mock_generate):
+    """Повторный вызов с тем же запросом берётся из кэша без повторного вызова LLM."""
+    q = "Расскажи про увольнение за утрату доверия"
+    assert classify_mode(q) == "user"   # 1-й вызов → LLM (мок вернул USER)
+    assert mock_generate.call_count == 1
+    assert classify_mode(q) == "user"   # 2-й вызов → кэш, LLM не вызывается
+    assert mock_generate.call_count == 1
+
+
+# =========================================================
+# Offline-тесты (без LLM — strong_exact и guard fallback)
 # =========================================================
 
 def test_offline_fallback():
-    """Без LLM все запросы → USER (fallback)."""
-    clear_cache()
-    assert is_exact("117-ФЗ статья 217") is False
+    """Без LLM: реквизитный запрос → EXACT (strong_exact), смысловой → USER (guard fallback)."""
+    assert is_exact("117-ФЗ статья 217") is True
     assert is_exact("Что такое НДФЛ?") is False
 
 
 def test_offline_empty():
     """Пустой запрос → USER."""
-    clear_cache()
     assert is_exact("") is False
     w = classify_query("")
     assert w == (1.0, 0.0)
@@ -30,28 +124,35 @@ def test_offline_empty():
 
 def test_offline_cache():
     """Повторный запрос не вызывает LLM, но берётся из кэша."""
-    clear_cache()
     w1 = classify_query("любой запрос")
     w2 = classify_query("любой запрос")
     assert w1 == w2
 
 
 # =========================================================
-# Mock-тесты (логика классификации)
+# Mock-тесты (LLM-first логика)
 # =========================================================
+
+_EXACT_LLM_QUERY = (
+    "Какие ограничения установлены для гражданских служащих "
+    "при получении подарков?"
+)
+
 
 @patch("app.rag.classifier._generate", return_value="EXACT")
 def test_mock_exact(mock_generate):
-    """Mock: LLM вернул EXACT → is_exact=True."""
-    clear_cache()
-    assert is_exact("117-ФЗ статья 217") is True
+    """LLM вернул EXACT → is_exact=True.
+
+    Запрос не содержит сильных реквизитов и guard-маркеров — точность
+    берётся именно из LLM (_generate вызван ровно один раз).
+    """
+    assert is_exact(_EXACT_LLM_QUERY) is True
     mock_generate.assert_called_once()
 
 
 @patch("app.rag.classifier._generate", return_value="USER")
 def test_mock_user(mock_generate):
     """Mock: LLM вернул USER → is_exact=False."""
-    clear_cache()
     assert is_exact("Как уволиться?") is False
     mock_generate.assert_called_once()
 
@@ -59,49 +160,30 @@ def test_mock_user(mock_generate):
 @patch("app.rag.classifier._generate", return_value="EXACT")
 def test_mock_classify_exact_weights(mock_generate):
     """Mock: EXACT → weights (0.5, 0.5)."""
-    clear_cache()
-    w = classify_query("надбавка за выслугу 15 лет")
-    assert w == (0.5, 0.5)
+    assert classify_query(_EXACT_LLM_QUERY) == (0.5, 0.5)
+    mock_generate.assert_called_once()
 
 
 @patch("app.rag.classifier._generate", return_value="USER")
 def test_mock_classify_user_weights(mock_generate):
     """Mock: USER → weights (1.0, 0.0)."""
-    clear_cache()
-    w = classify_query("Как уволиться?")
-    assert w == (1.0, 0.0)
+    assert classify_query("Как уволиться?") == (1.0, 0.0)
 
 
 @patch("app.rag.classifier._generate", return_value="SOMETHING_ELSE")
 def test_mock_unexpected_answer(mock_generate):
-    """Неожиданный ответ LLM → fallback USER."""
-    clear_cache()
-    w = classify_query("тест")
-    assert w == (1.0, 0.0)
+    """Неожиданный ответ LLM → guard_fallback (эвристика)."""
+    assert classify_query("тест") == (1.0, 0.0)
 
 
 @patch("app.rag.classifier._generate", side_effect=Exception("Ollama timeout"))
 def test_mock_exception(mock_generate):
-    """Ошибка LLM → fallback USER."""
-    clear_cache()
-    w = classify_query("тест")
-    assert w == (1.0, 0.0)
-
-
-@patch("app.rag.classifier._generate", return_value="EXACT")
-def test_mock_cache(mock_generate):
-    """Повторный запрос из кэша → _generate вызывается единожды."""
-    clear_cache()
-    w1 = classify_query("повтор")
-    w2 = classify_query("повтор")
-    assert w1 == w2
-    mock_generate.assert_called_once()
+    """Ошибка LLM → guard_fallback (эвристика)."""
+    assert classify_query("тест") == (1.0, 0.0)
 
 
 # =========================================================
 # Integration-тесты (требуют Ollama/GigaChat)
-# Запуск: ollama: pytest tests/test_classifier.py -v -k "integration"
-#         gigachat: CLASSIFIER_BACKEND=gigachat pytest ... -k "integration"
 # =========================================================
 
 def test_integration_exact():
@@ -110,7 +192,6 @@ def test_integration_exact():
     import pytest
     if not os.environ.get("CLASSIFIER_BACKEND"):
         pytest.skip("SKIP: CLASSIFIER_BACKEND не задан")
-    clear_cache()
     assert is_exact("117-ФЗ статья 217") is True
 
 
@@ -120,7 +201,6 @@ def test_integration_target():
     import pytest
     if not os.environ.get("CLASSIFIER_BACKEND"):
         pytest.skip("SKIP: CLASSIFIER_BACKEND не задан")
-    clear_cache()
     q = (
         "Размер ежемесячной надбавки к должностному окладу за выслугу лет "
         "на государственной гражданской службе при стаже свыше 15 лет составляет?"
@@ -134,6 +214,5 @@ def test_integration_user():
     import pytest
     if not os.environ.get("CLASSIFIER_BACKEND"):
         pytest.skip("SKIP: CLASSIFIER_BACKEND не задан")
-    clear_cache()
     assert is_exact("Что такое НДФЛ?") is False
     assert is_exact("Как уволиться с госслужбы?") is False

@@ -244,6 +244,29 @@ function clearInput() {
     chartInstances = [];
 }
 
+// Единый вывод единицы измерения: из d.unit, series_name, title или y_axis_label
+function inferUnitFromData(d) {
+    let unit = d.unit || '';
+    if (!unit && d.series_name) {
+        const lower = d.series_name.toLowerCase();
+        if (lower.includes('%') || lower.includes('процент')) unit = '%';
+        else if (lower.includes('руб')) unit = 'руб.';
+        else if (lower.includes('дн') || lower.includes('дней') || lower.includes('день')) unit = 'дн.';
+        else if (lower.includes('кал')) unit = 'кал. дн.';
+    }
+    if (!unit && d.title) {
+        const lower = d.title.toLowerCase();
+        if (lower.includes('%') || lower.includes('процент')) unit = '%';
+        else if (lower.includes('руб')) unit = 'руб.';
+    }
+    if (!unit && d.y_axis_label) {
+        const lower = d.y_axis_label.toLowerCase();
+        if (lower.includes('%') || lower.includes('процент')) unit = '%';
+        else if (lower.includes('руб')) unit = 'руб.';
+    }
+    return unit;
+}
+
 // ============================================
 // 🔥 ЕДИНАЯ ФУНКЦИЯ РЕНДЕРА ГРАФИКОВ
 // ============================================
@@ -359,7 +382,7 @@ function initChart(chartId, chartConfig, container, isDarkMode = null) {
                 text: chartConfig.title?.text || 'Аналитика',
                 left: 'center',
                 top: 10,
-                textStyle: { color: titleColor, fontWeight: 700, fontSize: 16, fontFamily: "'Inter', sans-serif" }
+                textStyle: { color: titleColor, fontWeight: 700, fontSize: 14, fontFamily: "'Inter', sans-serif", overflow: 'break', width: 600 }
             },
             tooltip: {
                 trigger: isPie ? 'item' : 'axis',
@@ -583,6 +606,15 @@ function initChart(chartId, chartConfig, container, isDarkMode = null) {
         }
 
         const mergedOption = Object.assign({}, baseOption, chartConfig);
+        // Глубокое слияние title: Object.assign затирал textStyle (overflow/width/fontSize)
+        if (baseOption.title && chartConfig.title) {
+            mergedOption.title = Object.assign(
+                {},
+                baseOption.title,
+                chartConfig.title,
+                { textStyle: Object.assign({}, baseOption.title.textStyle, chartConfig.title.textStyle) }
+            );
+        }
         myChart.setOption(mergedOption, true);
         myChart.setOption({ animationDuration: 1000, animationEasing: 'elasticOut' });
 
@@ -755,7 +787,9 @@ async function sendMessage() {
             parsedHtml = parsedHtml.replace(/<code>([\s\S]*?)<\/code>/gi, '$1');
         }
 
-        currentBotMsgDiv.innerHTML = "<b>База знаний ФНС:</b> 📌 <br>" + parsedHtml;
+        if (!currentBotMsgDiv.querySelector('.chart-wrapper')) {
+            currentBotMsgDiv.innerHTML = "<b>База знаний ФНС:</b> 📌 <br>" + parsedHtml;
+        }
         scrollToBottom();
     };
     
@@ -861,12 +895,15 @@ async function sendMessage() {
                             }
                         }
 
+                        // Единица измерения — из d.unit, series_name, title или y_axis_label
+                        const inferredUnit = inferUnitFromData(d);
+
                         const chartConfig = {
                             title: d.title || 'График',
                             xAxis: d.chart_type === 'pie' ? undefined : { data: d.x_axis || [] },
                             yAxis: d.chart_type === 'pie' ? undefined : {},
                             series: seriesArray,
-                            unit: d.unit || '',
+                            unit: inferredUnit,
                             y_axis_label: d.y_axis_label || ''
                         };
 
@@ -1177,7 +1214,7 @@ function loadChat(chatId) {
                 xAxis: d.chart_type === 'pie' ? undefined : { data: d.x_axis || [] },
                 yAxis: d.chart_type === 'pie' ? undefined : {},
                 series: seriesArray,
-                unit: d.unit || '',
+                unit: inferUnitFromData(d),
                 y_axis_label: d.y_axis_label || ''
             };
 

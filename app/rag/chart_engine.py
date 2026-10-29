@@ -68,6 +68,20 @@ class DynamicChartEngine:
             "unit": "Единица измерения"
             }
 
+            ПРИМЕР (реальные данные из Базы знаний ФНС):
+            Контекст: "Гражданским служащим предоставляется ежегодный основной оплачиваемый отпуск продолжительностью 30 календарных дней... дополнительный отпуск за выслугу лет: от 1 до 5 лет — 1 календарный день, от 5 до 10 лет — 5 календарных дней, от 10 до 15 лет — 7 календарных дней, 15 лет и более — 10 календарных дней."
+
+            Правильный ответ для этого контекста:
+            {
+            "title": "Продолжительность дополнительного отпуска за выслугу лет",
+            "chart_type": "bar",
+            "x_axis": ["1-5 лет", "5-10 лет", "10-15 лет", "15+ лет"],
+            "series_name": "Дополнительный отпуск, кал. дней",
+            "series_data": [1, 5, 7, 10],
+            "y_axis_label": "Продолжительность, кал. дней",
+            "unit": "кал. дней"
+            }
+
             СТРОГИЕ ПРАВИЛА:
             1. series_data и series_data_2 — это ТОЛЬКО плоский массив чисел, например [7150, 8120].
                ЗАПРЕЩЕНО использовать вложенные списки: [[2023, 7150], [2024, 8120]] — это ОШИБКА.
@@ -224,6 +238,215 @@ class DynamicChartEngine:
         except json.JSONDecodeError:
             return content
 
+    def _detect_chart_type(self, user_query: str) -> str:
+        """Определяет тип графика из запроса пользователя."""
+        q = (user_query or "").lower()
+        if any(w in q for w in ["круг", "pie", "доля", "сектор"]):
+            return "pie"
+        if any(w in q for w in ["линия", "line", "динамик", "тренд"]):
+            return "line"
+        return "bar"
+
+    def _make_title(self, key: str, user_query: str = "") -> str:
+        """Формирует заголовок графика: из запроса или из ключа JSON."""
+        if key == "data" and user_query:
+            t = user_query
+            for prefix in ["Нарисуй", "Сделай", "Построй", "Покажи"]:
+                t = t.replace(prefix, "")
+            t = t.strip().strip(".,!?:;")
+            if t:
+                # Обрезаем только при реальной необходимости и по границе слова,
+                # иначе заголовок рвётся на полуслове ("...на гражданск").
+                if len(t) > 150:
+                    t = t[:150].rsplit(" ", 1)[0].rstrip(" ,;:-")
+                return t.capitalize()
+        title = str(key).replace("_", " ").strip().capitalize() or "Данные"
+        return title
+
+    def _extract_from_raw_json(self, raw_json: str, user_query: str = "") -> Optional[dict]:
+        """
+        Универсальный парсер: извлекает данные из произвольного JSON модели.
+        Поддерживает два формата:
+          A) вложенные пары "категория": "значение"
+             {"график_отпуска": {"1-5 лет": "1 день", "5-10 лет": "5 дней"}}
+          B) массив записей (таблица)
+             {"data": [{"Стаж": "до 5 лет", "Отпуск": "1 день"}, ...]}
+        Возвращает dict для EChartsConfig или None, если данные не извлечены.
+        """
+        chart_type = self._detect_chart_type(user_query)
+
+        try:
+            obj = json.loads(raw_json)
+        except json.JSONDecodeError:
+            return None
+
+        # ---- ФОРМАТ A: вложенный объект с парами "категория": "значение" ----
+        for key, value in obj.items():
+            if isinstance(value, dict) and len(value) >= 2:
+                x_axis = []
+                series_data = []
+                for cat, val in value.items():
+                    x_axis.append(str(cat))
+                    # Извлекаем первое число из строки (например, "1 календарный день" → 1)
+                    match = re.search(r'\d+', str(val))
+                    if match:
+                        series_data.append(float(match.group()))
+                    else:
+                        series_data.append(0.0)
+                if len(series_data) >= 2:
+                    title = self._make_title(key, user_query)
+                    # Защита от мусорных ключей (labels/values и т.п.)
+                    garbage_keys = {"labels", "values", "key", "value", "data", "item", "category"}
+                    if all(str(x).strip().lower() in garbage_keys for x in x_axis):
+                        logger.warning(f"⚠️ [CHART] Мусорные данные от модели (x_axis={x_axis}), отмена графика.")
+                        return None
+                    return {
+                        "title": title,
+                        "chart_type": chart_type,
+                        "x_axis": x_axis,
+                        "series_name": "Значение",
+                        "series_data": series_data,
+                        "unit": None,
+                    }
+
+        # ---- ФОРМАТ B: массив записей (таблица) ----
+        for key, value in obj.items():
+            if (
+                isinstance(value, list)
+                and len(value) >= 2
+                and all(isinstance(item, dict) for item in value)
+            ):
+                records = value
+                col_names = list(records[0].keys())
+                if len(col_names) < 2:
+                    continue
+
+                # Определяем колонки: категориальная и числовая
+                col_values = {
+                    col: [str(r.get(col, "")) for r in records] for col in col_names
+                }
+                cat_col = None
+                val_col = None
+                for col in col_names:
+                    vals = col_values[col]
+                    has_units = any(
+                        re.search(r'(дн|дней|кал|руб|%|шт|тыс)', v, re.I) for v in vals
+                    )
+                    pure_numbers = [
+                        v for v in vals if re.fullmatch(r'\d+(\.\d+)?', v.strip())
+                    ]
+                    has_ranges = any(
+                        re.search(r'(от|до|—|–|\d+\s*[-–]\s*\d+)', v, re.I)
+                        for v in vals
+                    )
+                    if has_units or (pure_numbers and not has_ranges):
+                        val_col = col
+                    elif not pure_numbers or has_ranges:
+                        cat_col = col
+
+                if cat_col is None:
+                    cat_col = col_names[0]
+                if val_col is None:
+                    val_col = col_names[1] if len(col_names) > 1 else col_names[0]
+
+                x_axis = []
+                series_data = []
+                for i, rec in enumerate(records):
+                    x_axis.append(str(rec.get(cat_col, f"Категория {i+1}")))
+                    match = re.search(r'\d+', str(rec.get(val_col, "")))
+                    series_data.append(float(match.group()) if match else 0.0)
+
+                if len(series_data) >= 2:
+                    title = self._make_title(key, user_query)
+                    # Защита от мусорных ключей (labels/values и т.п.)
+                    garbage_keys = {"labels", "values", "key", "value", "data", "item", "category"}
+                    if all(str(x).strip().lower() in garbage_keys for x in x_axis):
+                        logger.warning(f"⚠️ [CHART] Мусорные данные от модели (x_axis={x_axis}), отмена графика.")
+                        return None
+                    return {
+                        "title": title,
+                        "chart_type": chart_type,
+                        "x_axis": x_axis,
+                        "series_name": str(val_col),
+                        "series_data": series_data,
+                        "unit": None,
+                    }
+
+        return None
+
+    def _detect_unit_from_context(self, text: str) -> Optional[str]:
+        """Определяет единицу измерения по тексту контекста/метаданных."""
+        if not text:
+            return None
+        if re.search(r"%|процент", text, re.I):
+            return "%"
+        if re.search(r"руб", text, re.I):
+            return "руб."
+        if re.search(r"дн|дней|календарн", text, re.I):
+            return "дн."
+        return None
+
+    def _extract_table_from_context(self, rag_context: str, user_query: str = "") -> Optional[dict]:
+        """
+        Извлекает табличные данные из текста RAG-контекста (регулярками).
+        Ищет паттерны вида: "категория | число" или "категория — число".
+        Возвращает dict для EChartsConfig или None, если таблица не найдена.
+        """
+        if not rag_context or not rag_context.strip():
+            return None
+
+        chart_type = self._detect_chart_type(user_query)
+
+        # Паттерн: категория | число  или  категория —/–/-/: число
+        pattern = r"([^\n|—–:;]+?)\s*(?:\||—|–|-|:)\s*(\d+(?:[.,]\d+)?)"
+        matches = re.findall(pattern, rag_context)
+
+        if len(matches) < 2:
+            # Попробуем табуляцию или двоеточие: категория: число
+            # Категория не должна содержать точек (иначе цепляется "5. Гражданским...")
+            pattern2 = r"([^.\n:]{3,60}?)\s*\\?\s*:\s*(\d+(?:[.,]\d+)?)"
+            matches = re.findall(pattern2, rag_context)
+            if len(matches) < 2:
+                return None
+
+        x_axis = []
+        series_data = []
+        for cat, val in matches:
+            cat_clean = cat.strip().strip(" ,;")
+            # Убираем нумерацию списка ("1) ", "1. ", "2) " и т.д.) в начале строки
+            cat_clean = re.sub(r'^[\d\s]*[\.\)]\s*', '', cat_clean)
+            cat_clean = cat_clean.strip()
+            # Отсекаем мусор: слишком длинные строки, предложения с точками, нумерацию списков
+            if len(cat_clean) < 5 or len(cat_clean) > 60:
+                continue
+            if re.search(r'(предоставляется|устанавливается|соответствии|федеральн|закон|отпуск|продолжительност|дополнительн|оплачиваем)', cat_clean, re.I):
+                continue
+            if '.' in cat_clean or ';' in cat_clean:  # Отсекаем нумерованные пункты ("5. Гражданским...")
+                continue
+            try:
+                num = float(val.replace(",", "."))
+            except ValueError:
+                continue
+            x_axis.append(cat_clean)
+            series_data.append(num)
+
+        if len(series_data) < 2:
+            return None
+
+        # Определяем единицу измерения из контекста
+        unit = self._detect_unit_from_context(rag_context)
+
+        title = self._make_title("data", user_query) or "Данные из контекста"
+        logger.info(f"✅ [CHART] Таблица извлечена из RAG-контекста: x_axis={x_axis}, series_data={series_data}")
+
+        return {
+            "title": title,
+            "chart_type": chart_type,
+            "x_axis": x_axis,
+            "series_name": "Значение",
+            "series_data": series_data,
+            "unit": unit,
+        }
 
     def _validate_data_integrity(self, obj: dict) -> tuple[bool, str]:
         """
@@ -263,7 +486,7 @@ class DynamicChartEngine:
         
         return True, ""
     
-    def validate_and_parse(self, raw_content: str, rag_context: str = "") -> dict:
+    def validate_and_parse(self, raw_content: str, rag_context: str = "", user_query: str = "") -> dict:
         """Валидирует JSON через контракт Pydantic и страхует фронтенд от краша"""
         content = raw_content.strip()
         if content.startswith("```"):
@@ -301,8 +524,44 @@ class DynamicChartEngine:
             }
         except Exception as e:
             logger.warning(f"⚠️ [PYDANTIC VALIDATION ERROR]: {e}")
-            return {
-                "type": "chart_error",
-                "message": "⚠️ Не удалось извлечь структуру данных для графика. Попробуйте переформулировать запрос.",
-                "raw": content[:200]
-            }
+            # 1. Пытаемся достать данные из сырого JSON модели
+            extracted = self._extract_from_raw_json(content, user_query)
+
+            # 2. Если парсер вернул что-то, проверяем — не мусор ли это?
+            if extracted:
+                # Очищаем категории от остатков нумерации списков ("1) ", "1. ")
+                for i, cat in enumerate(extracted.get("x_axis", [])):
+                    if isinstance(cat, str):
+                        extracted["x_axis"][i] = re.sub(r'^[\d\s]*[\.\)]\s*', '', cat).strip()
+                # Мусорные признаки: длинные категории (как целые предложения) или стоп-слова
+                x_str = " ".join(str(x) for x in extracted.get("x_axis", [])).lower()
+                is_garbage = (
+                    len(x_str) > 80 or  # слишком длинные категории
+                    any(w in x_str for w in ["source", "type", "предоставляется", "устанавливается", "указом", "федеральн"])
+                )
+
+                if is_garbage and rag_context:
+                    # Мусор — даем шанс умному парсеру контекста
+                    context_extracted = self._extract_table_from_context(rag_context, user_query)
+                    if context_extracted:
+                        logger.info(f"♻️ [CHART] Raw-парсер дал мусор, используем таблицу из контекста")
+                        return {"type": "chart", "data": context_extracted}
+                    else:
+                        # Если и контекст не спас — возвращаем ошибку (уйдет в текст)
+                        return {"type": "chart_error", "message": "Данные не найдены", "raw": content[:200]}
+
+                # Если не мусор — восстанавливаем unit из контекста и возвращаем
+                if extracted.get("unit") is None and rag_context:
+                    inferred = self._detect_unit_from_context(rag_context)
+                    if inferred:
+                        extracted["unit"] = inferred
+                logger.info(f"✅ [CHART] Универсальный парсер сработал: {extracted}")
+                return {"type": "chart", "data": extracted}
+
+            # 3. Если raw-парсер вообще ничего не нашел
+            if rag_context:
+                context_extracted = self._extract_table_from_context(rag_context, user_query)
+                if context_extracted:
+                    return {"type": "chart", "data": context_extracted}
+
+            return {"type": "chart_error", "message": "Не удалось извлечь структуру данных", "raw": content[:200]}

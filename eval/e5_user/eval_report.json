@@ -1,0 +1,62 @@
+{
+  "meta": {
+    "timestamp": "2026-10-28T15:23:26",
+    "qrels": "/home/amlin04/multik_bot/eval/manual/qrels_user_clean.jsonl",
+    "n_queries": 76,
+    "corpus_mode": "qdrant",
+    "corpus_size": 5446,
+    "match_level": "segment",
+    "device": "cpu",
+    "embed_device": "cpu",
+    "config_weights": {
+      "dense": "default"
+    },
+    "params": {
+      "vector_weight": 0.9,
+      "bm25_weight": 0.1,
+      "rrf_k": 30,
+      "initial_top_k": 30,
+      "bm25_top_k": 30,
+      "rerank_pool": 30,
+      "rerank_batch": 32,
+      "final_top_k": 5
+    },
+    "ragas": {
+      "status": "not_requested",
+      "reason": ""
+    }
+  },
+  "results": [
+    {
+      "config": "dense",
+      "weights": "default",
+      "n_queries": 76,
+      "metrics": {
+        "recall@1": 0.3574561403508772,
+        "recall@3": 0.5493421052631579,
+        "recall@5": 0.6506578947368421,
+        "recall@10": 0.7646929824561404,
+        "hit@1": 0.5921052631578947,
+        "hit@3": 0.7631578947368421,
+        "hit@5": 0.8157894736842105,
+        "hit@10": 0.868421052631579,
+        "map@1": 0.5921052631578947,
+        "map@3": 0.4872076023391813,
+        "map@5": 0.5217836257309941,
+        "map@10": 0.5470551378446116,
+        "mrr@10": 0.6875522138680034,
+        "ndcg@10": 0.639277096823121
+      },
+      "stage_latency_ms": {
+        "dense": 151.24006490781252,
+        "bm25": 0.0,
+        "rerank": 0.0
+      },
+      "latency_ms": {
+        "mean": 151.24390710513435,
+        "p50": 150.29715999844484,
+        "p95": 170.4749919990718
+      }
+    }
+  ]
+}

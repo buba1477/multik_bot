@@ -2,7 +2,7 @@
 
 Документ описывает фактическое состояние pipeline на момент последней проверки.
 
-Дата: 23.09.2026
+Дата: 23.10.2026
 
 ---
 
@@ -61,7 +61,7 @@ structure/<id>.json
     ▼
 app/chunking/legal_chunker.py
     │   Нарезка по article/paragraph/subparagraph
-    │   → FRIDA-токенизация (TARGET=450, MAX=512, MIN=40)
+    │   → FRIDA-токенизация (TARGET=450, MAX=465, MIN=40)
     │   → Редакционные блоки (преамбула) не дробятся
     ▼
 chunks/<id>.jsonl
@@ -72,13 +72,17 @@ app/chunking/create_index_qdrant_chunks.py
     │   → загрузка векторов в Qdrant fns_collection
     │   → спот-чек верификация 10 точек после загрузки
     ▼
-Qdrant vector DB (4294 уникальных чанка)
+Qdrant vector DB (5446 уникальных чанков, коллекция fns_collection)
     │
     ▼
-app/rag/engine_rag.py
-    │   Гибридный поиск (dense + BM25, weighted RRF)
-    │   → SentenceTransformerRerank (cross-encoder, top-10 → top-5)
-    │   → Ollama (yagpt5_fns:latest) / GigaChat
+app/rag/engine_rag.py (RerankedEngine)
+    │   Классификация запроса: classifier.py → режим EXACT / USER
+    │     - USER (1.0/0.0): FAST-TRACK — только DENSE top-30, BM25/RRF/rerank пропущены
+    │     - EXACT (0.5/0.5): BM25 top-30 + weighted RRF (k=30)
+    │       → SentenceTransformerRerank (bge-m3, /app/reranker, top-10 → top-5)
+    │   → Синтезатор: Compact (default) / Tree (сравни, обобщи, анализ...)
+    │   → LLM: GigaChat-3-Ultra (Settings.llm, temp=0.0) — генерация
+    │     Ollama (yagpt5_fns) — «мультик»-маршрут, chart-engine, классификатор
     │   → ChartEngine (ECharts JSON, опционально)
     │   → Автоподбор фотографий сотрудников
     ▼
@@ -111,6 +115,7 @@ venv/bin/python scripts/run_pipeline.py --all
 | `app/resolved_documents.json` | Кэш разрешений. Для каждого документа хранит method (publication/legacy), revision, pdf_path, html_path, html_sha256, pdf_size, pdf_pages. |
 | `app/rag/sources.py` | Дедупликация и форматирование источников ответа: группировка по URL, объединение структурных частей (пункты 8–10), без hardcode под документы. |
 | `app/rag/chart_engine.py` | DynamicChartEngine — детекция запросов на график, генерация ECharts JSON-конфигурации. |
+| `app/rag/classifier.py` | Классификатор запросов (EXACT vs USER): strong_exact → LLM → guard_fallback; единый источник RRF-весов WEIGHTS (exact 0.5/0.5, user 1.0/0.0); кэш `_mode_cache`. |
 | `app/logger.py` | Единый модуль логирования: ротация 10 MB / 5 бэкапов в `app_audit.log`, дублирование в stdout, ContextVar для request_id. |
 | `app/search_fragments.py` | Построение поисковых фрагментов названия (от специфичного к общему) для двухэтапного разрешения документов. |
 | `hf_cache/FRIDA/` | Локальный кэш модели Sber RoSBERTa (FRIDA) для embedding-векторов. Offline-режим. |
@@ -305,7 +310,7 @@ records (из structure JSON)
 | Параметр | Значение |
 |----------|----------|
 | TARGET_TOKENS | 450 |
-| MAX_TOKENS | 512 |
+| MAX_TOKENS | 465 |
 | MIN_CHUNK_TOKENS | 40 |
 
 Токенизация — FRIDA (Sber RoSBERTa) tokenizer. Offline. Если модель недоступна → эвристика (~4 символа на токен).
@@ -334,7 +339,7 @@ records (из structure JSON)
 ```
 1. Чтение и валидация всех chunks/*.jsonl
 2. Проверка дубликатов ID
-3. Проверка лимита токенов (≤512)
+3. Проверка лимита токенов (≤600)
 4. Загрузка FRIDA (SentenceTransformer: Transformer + Pooling(CLS), 1536-dim)
    → lru_cache для tokenizer (functools.lru_cache, _tokenize_chunk)
 5. Вычисление embeddings (batch=32, префикс "search_document:")
@@ -356,7 +361,7 @@ records (из structure JSON)
 | Batch size | 32 |
 | Префикс | `search_document:` |
 | TARGET_TOKENS | 450 |
-| MAX_TOKENS | 512 |
+| MAX_TOKENS | 600 |
 
 ### 7.3. Payload точки
 
@@ -378,26 +383,36 @@ records (из structure JSON)
 ### 8.1. Архитектура запроса
 
 ```
-Запрос пользователя
+Запрос пользователя (main_api.py: POST /api/v1/predict/stream)
   │
-  ├── is_chart → DynamicChartEngine (ECharts JSON)
+  ├── is_chart_request → пропуск WAF, идёт в RAG-путь
   │
-  └── Основной RAG-путь:
-        │
-        ├── 1. Гибридный поиск
-        │     ├── Векторный (FRIDA embedding → Qdrant, top_k=10)
-        │     ├── BM25 (rank_bm25, по всей коллекции, top_k=10)
-        │     └── Fusion: weighted sum (α=0.7 векторный, β=0.3 BM25)
-        │
-        ├── 2. Re-rank
-        │     └── SentenceTransformerRerank (FRIDA cross-encoder, top-10 → top-5)
-        │
-        ├── 3. Формирование контекста
-        │     └── Сбор текстов source-чанков
-        │
-        ├── 4. Генерация
-        │     ├── Ollama (модель "yagpt5_fns:latest") — основной LLM
-        │     └── GigaChat (через app/rag/gigachat_integration.py) — резерв/альтернатива
+  ├── WAF-проверка (is_malicious_query): длина > 2000, BAD_PATTERNS,
+  │     комбо-фильтры, анти-пробел, Unicode-омофоны → блокировка
+  │     (ответ "БАЗА_ПУСТА: Я эксперт по вопросам ФНС России.")
+  │
+  ├── "мультик" (без ФНС-ключевых слов) → Ollama напрямую
+  │     (yagpt5_fns:latest, num_ctx=4096, temperature=0.8, num_predict=250)
+  │
+  └── Redis-кэш (ключ = lower(normalized_query), TTL 86400)
+        └── промах → get_ai_streaming_response() → RerankedEngine._sync_query():
+
+            1. DENSE top-30: FRIDA embedding → Qdrant fns_collection
+            2. Классификация: classify_mode() (strong_exact → LLM → guard_fallback)
+               → get_weights(): USER = (1.0, 0.0), EXACT = (0.5, 0.5)
+            3. FAST-TRACK USER (1.0/0.0):
+                 чистый DENSE, BM25/RRF/rerank пропущены,
+                 chunk_id восстановлены из node_map
+               ИЛИ HYBRID EXACT (0.5/0.5):
+                 BM25 top-30 (rank_bm25) + weighted RRF (k=30)
+                 → rerank только здесь: SentenceTransformerRerank
+                   (bge-m3, /app/reranker, top-10 → top-5)
+            4. Синтезатор: Compact (default) / Tree (сравни, обобщи,
+                 анализ, синтезируй...)
+            5. Генерация: Settings.llm = LlamaGigaChat (GigaChat-3-Ultra,
+                 temperature=0.0, API_KEY_GIGACHAT)
+            6. Источники: app/rag/sources.py (дедупликация, максимум 3),
+                 автоподбор фото, стриминг JSON
         │
         ├── 5. Дедупликация и форматирование источников
         │     └── app/rag/sources.py — группировка по URL, объединение структурных частей
@@ -416,7 +431,15 @@ records (из structure JSON)
 - Формат: **жирный** для ключевых терминов, маркированные/нумерованные списки, таблицы Markdown.
 - Запрет: вымышленных норм, нецензурной лексики, советов по уклонению.
 - При нехватке данных: вежливый отказ ("В моих регламентах про это ни слова").
-- `num_ctx=4096`, `temperature=0.8` (Ollama); `temperature=0.1` (GigaChat).
+
+Параметры LLM (различаются по пути):
+| Путь | Модель | temperature | num_ctx | num_predict | Место вызова |
+|------|--------|-------------|---------|-------------|--------------|
+| Основная RAG-генерация | GigaChat-3-Ultra | 0.0 | 8096 (default) | 512 (default) | `Settings.llm = LlamaGigaChat()` в engine_rag.py |
+| «Мультик» (без ФНС-тем) | yagpt5_fns:latest (Ollama) | 0.8 | 4096 | 250 | main_api.py |
+| Классификатор (ollama backend) | yagpt5_fns:latest | 0.0 | 512 | 5 | classifier._ollama_generate() |
+| Классификатор (gigachat backend) | GigaChat-2-Max | 0.0 | — | 5 | classifier._gigachat_generate() |
+| Chart engine (ECharts JSON) | yagpt5_fns:latest (Ollama) | 0.0 (по умолч.) | — | — | chart_engine → httpx POST |
 
 ### 8.3. Потоковый ответ
 
@@ -431,15 +454,15 @@ records (из structure JSON)
 - `is_chart_request()` — определяет запросы на графики (по ключевым словам).
 - Генерирует ECharts JSON-конфигурацию → рендерится на фронтенде.
 
-### 8.5. GigaChat интеграция
+### 8.5. GigaChat — основной LLM для RAG
 
-Модуль: `app/rag/gigachat_integration.py`
+Модуль: `app/rag/engine_rag.py` (класс `LlamaGigaChat(CustomLLM)`)
 
-- Использует библиотеку `gigachat` (GigaChat API).
-- Аутентификация через OAuth 2.0 (client_id / client_secret из .env).
-- Модель: `GigaChat:latest` (или указанная в переменной `GIGACHAT_MODEL`).
-- Потоковый режим: `generate()`.
-- Fallback: если GigaChat недоступен — возврат к Ollama.
+- **Основной LLM для генерации RAG-ответов** (Settings.llm = LlamaGigaChat()).
+- Модель: `GigaChat-3-Ultra`, temperature=0.0.
+- Аутентификация через API-ключ (`API_KEY_GIGACHAT` из .env, Bearer-токен).
+- Потоковый и не-потоковый режимы через `gigachat` SDK (GigaChat).
+- **Зависимость**: при отсутствии `API_KEY_GIGACHAT` генерация невозможна (ошибка).
 
 ### 8.6. Дедупликация источников
 
@@ -467,34 +490,36 @@ records (из structure JSON)
 
 | Путь | Метод | Описание |
 |------|-------|----------|
-| `/` | GET | HTML-страница чата (Jinja2, templates/base.html) |
-| `/chat` | GET | HTML-страница чата (та же) |
-| `/ask` | POST | Streaming-ответ (SSE, JSON lines). Параметр: `query`. |
-| `/ask_history` | POST | Streaming-ответ с историей диалога. Параметры: `query`, `history` (массив сообщений). |
-| `/ask_cache` | POST | Непотоковый ответ (JSON) с приоритетным кэшем. |
+| `/` | GET | HTML-страница чата (Jinja2, templates/index.html) |
+| `/api/v1/predict/stream` | POST | Streaming-ответ (JSON lines, type: text/metadata/error/end). Параметр JSON: `query`. |
 
 ### 9.2. Маршрутизация запросов
 
 ```
-POST /ask  { query: "..." }
+POST /api/v1/predict/stream  { query: "..." }
   │
-  ├── is_chart_request() → True → DynamicChartEngine (ECharts JSON)
+  ├── is_chart_request() → True → пропуск WAF
   │
-  ├── "мультик" + не ФНС-ключевые → Ollama (yagpt5_fns, num_ctx=4096, temp=0.8)
+  ├── WAF (is_malicious_query)
+  │   └── True → "БАЗА_ПУСТА: Я эксперт по вопросам ФНС России."
+  │
+  ├── "мультик" + не ФНС-ключевые → Ollama напрямую
+  │   (yagpt5_fns:latest, num_ctx=4096, temp=0.8, num_predict=250)
   │
   └── ФНС-запрос / чарт:
         │
         ├── Redis-кэш (ключ: lower(query), TTL: 86400 сек)
         │   └── попали → stream из кэша
         │
-        ├── Ollama (yagpt5_fns:latest) — основной LLM
-        │   └── недоступен → GigaChat (gigachat_integration, fallback)
+        ├── get_ai_streaming_response(query) → RerankedEngine._sync_query()
+        │   ├── DENSE top-30 (FRIDA → Qdrant)
+        │   ├── classify_mode() → EXACT/USER → get_weights()
+        │   ├── FAST-TRACK USER (dense only) / HYBRID EXACT (BM25+RRF+rerank)
+        │   ├── Синтезатор (Compact/Tree)
+        │   └── GigaChat-3-Ultra (LlamaGigaChat, temp=0.0)
         │
         └── успех → кэшируем полный ответ
-
-POST /ask_history  { query: "...", history: [...] }
-  │
-  └── То же, но с history в системном промпте (контекст диалога).
+          (фильтр: не кэшируются пустые/ошибки/заглушки)
 ```
 
 ### 9.3. Middleware
@@ -525,6 +550,13 @@ POST /ask_history  { query: "...", history: [...] }
 | `GIGACHAT_CLIENT_SECRET` | Client Secret для GigaChat OAuth 2.0 |
 | `GIGACHAT_MODEL` | Модель GigaChat (по умолч. `GigaChat:latest`) |
 | `GIGACHAT_SCOPE` | Scope авторизации GigaChat |
+| `CLASSIFIER_BACKEND` | Бэкенд классификатора (ollama / gigachat, по умолч. ollama) |
+| `CLASSIFIER_MODEL` | Модель классификатора (по умолч. yagpt5_fns:latest для ollama) |
+| `GIGACHAT_MODEL` | Модель GigaChat для классификатора (по умолч. GigaChat-2-Max) |
+| `API_KEY_GIGACHAT` | API-ключ GigaChat (Bearer-токен, для LlamaGigaChat в engine_rag.py и классификатора) |
+| `QDRANT_COLLECTION` | Имя коллекции Qdrant (по умолч. fns_collection) |
+| `RERANKER_DEVICE` | Устройство для bge-m3 reranker (None → CPU, "cuda" → GPU, только eval) |
+| `DEBUG_MODE` | Включение диагностического дампа (True/False, по умолч. False) |
 
 ### 10.2. Сервисы Docker Compose
 
@@ -615,34 +647,73 @@ curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" -d '{
 
 Офлайн-харнесс для оценки качества поиска (retrieval). Не требует запуска LLM.
 
-### 12.2. Golden set
+### 12.2. Golden set (актуальное состояние)
 
-- **Основной**: `eval/qrels100.jsonl` (99 запросов, 196 qrels, дата: 23.09.2026).
-- **Формат**: JSONL, каждое сообщение — `{"question": "...", "relevant_chunk_ids": [...]}`.
-- **Метрики**: Recall@k, MRR, nDCG.
-- **Варианты**: `dense` (только векторный), `bm25` (только BM25), `hybrid` (weighted RRF), `hybrid_rerank` (с cross-encoder).
+Основной набор — два раздельных golden set, полученных после чистки sig-match шума:
 
-### 12.3. Результаты (best — hybrid_rerank)
+| Файл | Запросов | Пар (query, chunk) | Описание | Дата фиксации |
+|------|---------|-------------------|----------|--------------|
+| `eval/manual/qrels_user_clean.jsonl` | 156 | 339 | Смысловые USER-запросы, очищены от мусора sig-match (см. док. `docs/RAG_EVAL_SUMMARY_2026.md`) | 2026-10-14 |
+| `eval/manual/qrels_exact_clean.jsonl` | 30 | 88+ | Точные реквизиты (статья, пункт), очищены от over-теггинга больших статей | 2026-10-14 |
 
-| Метрика | hybrid_rerank |
-|---------|--------------|
-| R@3 | 0.828 |
-| R@5 | 0.879 |
-| MRR@10 | 0.892 |
-| nDCG@10 | 0.792 |
+**Формат**: JSONL, каждое сообщение — `{"question": "...", "relevant_chunk_ids": [...]}`.
+**Корпус**: Qdrant `fns_collection`, 5446 чанков.
+**Метрики**: Recall@k, Hit@k, MAP@10, MRR@10, nDCG@10.
+**Варианты**: `dense` (векторный FRIDA), `bm25` (ранговая модель), `hybrid` (weighted RRF, α/β), `hybrid_rerank` (reranker bge-m3).
 
-(Источник: `eval/eval_report.md` от 23.09.2026, run100.)
+### 12.3. Результаты eval
+
+#### БЛОК A: Изолированный dense-прогон (ROOT_CAUSE_TABLE.md, 2026-10-21)
+
+Запуск `scripts/eval_retrieval.py --mode dense` на исправленных qrels (191 запрос, корпус 5446 чанков, Qdrant read-only).
+
+| Метрика | dense |
+|---------|-------|
+| R@5 | **0.748** |
+| Hit@5 | **0.838** |
+| MRR@10 | **0.739** |
+| nDCG@10 | **0.711** |
+| Провалов (hit@5=0) | 25 / 191 (13.1%) |
+
+(Источник: `eval/manual/ROOT_CAUSE_TABLE.md`, файл закоммичен в репозиторий. Параметры: match-level = segment, top-k = {1,3,5,10}.)
+
+#### БЛОК B: Прогоны полного набора (198 запросов) — сведения из eval-контейнера
+
+> **⚠️ Важно:** первичные отчёты (`eval/eval_report.*`) на хосте **отсутствуют**.  
+> Числа ниже восстановлены из логов ранее выполненных eval-прогонов (контейнерная среда) и  
+> **не являются независимо верифицируемыми** без перезапуска.  
+> Сопоставимость qrels/наборов/параметров между строками таблицы — **не проверена**,  
+> поэтому вывод «dense лучше hybrid» (или наоборот) из этих цифр — **неправомерен**.
+
+| Конфиг | R@5 | nDCG@10 | MRR@10 | Hit@5 | Lat mean (ms) | Lat p95 (ms) |
+|--------|-----|---------|--------|-------|:-------------:|:------------:|
+| **dense** (1.0/0.0) | **0.7309** | **0.7213** | **0.7803** | **0.8535** | 260 | 350 |
+| hybrid 0.5/0.5 | 0.6730 | 0.6599 | 0.6891 | 0.8232 | 265 | 354 |
+| hybrid\_rerank russian-msmarco | 0.6638 | 0.6450 | 0.6886 | 0.8182 | 4763 | 5400 |
+| **exact-30:** hybrid\_rerank russian-msmarco | 0.6389 | 0.5829 | 0.5537 | 0.6667 | 4660 | 5300 |
+
+> **Ключевой вывод (предварительный):** на полном наборе (198 запросов) **dense** (1.0/0.0, без BM25/rerank)  
+> показал лучшие метрики по всем показателям при латентности ~260 мс. Reranker (bge-m3) даёт прирост точности  
+> только на EXACT-подмножестве (30 запросов), но ценой ~4.5 с. Для USER-запросов reranker не улучшает  
+> результат, поэтому отключён в FAST-TRACK USER (см. секцию 8.1).
 
 ### 12.4. Запуск
 
 ```bash
-venv/bin/python scripts/eval_retrieval.py
-```
+# Основной eval-харнесс (офлайн, без LLM)
+venv/bin/python scripts/eval_retrieval.py --mode dense --top-k 10
 
-- Читает `eval/qrels100.jsonl`.
-- Опции: `--mode` (dense/bm25/hybrid/hybrid_rerank), `--top-k`.
-- Результат: `eval/eval_report.json` + `eval/eval_report.md`.
+# Изолированный анализ провалов (dense coverage top-30)
+venv/bin/python scripts/eval_retrieval_dense_detailed.py
+
+# Доступные режимы: dense, bm25, hybrid (weighted RRF), hybrid_rerank (reranker)
+# Результат: eval/eval_report.json + eval/eval_report.md
+```
 
 ### 12.5. Вспомогательные утилиты
 
-- `scripts/build_eval_set.py` — утилита для сборки golden set (не является способом формирования основного набора; для будущего расширения).
+| Скрипт | Назначение |
+|--------|-----------|
+| `scripts/build_eval_set.py` | Сборка golden set (для будущего расширения) |
+| `scripts/clean_user_qrels.py` | Чистка USER-блока: удаление шумных срабатываний sig-match |
+| `scripts/clean_exact_qrels.py` | Чистка EXACT-блока: устранение over-теггинга больших статей |

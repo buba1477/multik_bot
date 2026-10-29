@@ -154,7 +154,7 @@ BAD_PATTERNS = [
     # Оригинальные и системные
     r"игнорируй.{0,50}инструкции", r"forget.{0,50}instructions",
     r"выведи.{0,50}системные", r"system.{0,50}prompt",
-    r"я (твой )?разработчик", r"я сотрудник",
+    r"\bя( твой)?\s*разработчик\b", r"\bя\s+сотрудник\b",
     r"### system override ###", r"base64", r"rot13",
     r"<system>", r"\{role:", r"admin:reset",
     
@@ -238,6 +238,7 @@ def is_malicious_query(query: str) -> bool:
     cleaned_q_norm = q_norm
     for safe in SAFE_PHRASES:
         cleaned_q_norm = cleaned_q_norm.replace(safe, "")
+    logger.info(f"🔍 WAF input: {cleaned_q_norm!r} | request_id={request_id}")
 
     # 4. Комбо-фильтр (ищет строго по очищенной строке cleaned_q_norm)
     dangerous_combos = [
@@ -268,8 +269,14 @@ def is_malicious_query(query: str) -> bool:
             return True
 
     # 6. Вместо цикла СТАВИМ СВЕРХБЫСТРУЮ ПРОВЕРКУ ПО ОЧИЩЕННОЙ СТРОКЕ
-    if WAF_COMPILED_PATTERN.search(cleaned_q_norm):
-        logger.warning(f"⚠️ REGEX-БАН | request_id={request_id}")
+    matched = WAF_COMPILED_PATTERN.search(cleaned_q_norm)
+    if matched:
+        logger.warning(
+            f"🚨 REGEX-БАН: matched={matched.group(0)!r} | "
+            f"query={cleaned_q_norm!r} | "
+            f"pattern_pos={matched.start()}-{matched.end()} | "
+            f"request_id={request_id}"
+        )
         return True
     
     # 7. Защита от Unicode-омофонов (проверяет очищенную строку)
@@ -296,6 +303,8 @@ async def ask_stream(request: ChatRequest):
     user_query = request.query
     if not user_query or not user_query.strip():
         return StreamingResponse(iter([json.dumps({"type": "text", "content": ""})]), media_type="text/event-stream")
+
+    logger.info(f"📥 Received query: {user_query!r} | request_id={get_request_id()}")
 
     normalized_query = user_query.strip()
     query_lower = normalized_query.lower()
@@ -324,10 +333,13 @@ async def ask_stream(request: ChatRequest):
                     model="yagpt5_fns:latest",
                     messages=[{"role": "user", "content": normalized_query}],
                     stream=True,
+                    keep_alive=-1,
                     options={
-                        'num_ctx': 4096,
-                        'temperature': 0.8,
-                        'num_predict': 250
+                        'num_ctx': 8144,
+                        'temperature': 0.0,
+                        'num_predict': 512,
+                        'seed': 42,
+                        'repeat_penalty': 1.05,
                     }
                 )
                 async for chunk in stream:

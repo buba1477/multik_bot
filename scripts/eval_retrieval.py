@@ -86,7 +86,7 @@ BM25_WEIGHT = 0.1
 RRF_K = 30
 INITIAL_TOP_K = 30
 BM25_TOP_K = 30
-RERANK_POOL = 10
+RERANK_POOL = 30
 RERANK_BATCH = 32  # батч cross-encoder'а (как в sentence-transformers по умолчанию)
 FINAL_TOP_K = 5
 EMB_QUERY_PREFIX = "search_query: "
@@ -584,6 +584,9 @@ def run_config(cfg: str, qrels: list[dict], corpus: list[dict],
                     + [f"mrr@{max_k}", f"ndcg@{max_k}"])
     acc: dict[str, list[float]] = {m: [] for m in metric_names}
     latencies: list[float] = []
+    stage_dense: list[float] = []
+    stage_bm25: list[float] = []
+    stage_rerank: list[float] = []
     per_query: list[dict] = []
     adaptive_exact = 0  # для adaptive: сколько запросов ушло в exact-ветку весов
 
@@ -599,29 +602,37 @@ def run_config(cfg: str, qrels: list[dict], corpus: list[dict],
             if _are_exact_weights(query_weights):
                 adaptive_exact += 1
         dense_ids = None
+        t_dense = 0.0
+        t_bm25 = 0.0
+        t_rerank = 0.0
         if cfg in ("dense", "dense_rerank", "hybrid", "hybrid_rerank", "adaptive", "adaptive_rerank"):
+            _ts = time.perf_counter()
             dense_ids = dense.top_ids(norm_q, limit if cfg == "dense" else INITIAL_TOP_K)
+            t_dense = time.perf_counter() - _ts
         if cfg == "dense":
             ranked = dense_ids
         elif cfg == "dense_rerank":
-            ranked = rerank_rank(q, dense_ids, corpus_by_id, ce)
+            _ts = time.perf_counter(); ranked = rerank_rank(q, dense_ids, corpus_by_id, ce); t_rerank = time.perf_counter() - _ts
         elif cfg == "bm25":
-            ranked = bm25_top_ids(bm25, q, corpus, top_k=BM25_TOP_K)
+            _ts = time.perf_counter(); ranked = bm25_top_ids(bm25, q, corpus, top_k=BM25_TOP_K); t_bm25 = time.perf_counter() - _ts
         elif cfg in ("hybrid", "adaptive"):
-            ranked = rrf_rank(dense_ids, bm25_top_ids(bm25, q, corpus), query_weights)
+            _ts = time.perf_counter(); _bm = bm25_top_ids(bm25, q, corpus); t_bm25 = time.perf_counter() - _ts; _ts = time.perf_counter(); ranked = rrf_rank(dense_ids, _bm, query_weights); t_rrf_ = time.perf_counter() - _ts
         elif cfg == "hybrid_rerank":
-            fused = rrf_rank(dense_ids, bm25_top_ids(bm25, q, corpus), query_weights)
-            ranked = rerank_rank(q, fused, corpus_by_id, ce)
+            _ts = time.perf_counter(); _bm = bm25_top_ids(bm25, q, corpus); t_bm25 = time.perf_counter() - _ts; _ts = time.perf_counter(); fused = rrf_rank(dense_ids, _bm, query_weights); t_rrf_ = time.perf_counter() - _ts
+            _ts = time.perf_counter(); ranked = rerank_rank(q, fused, corpus_by_id, ce); t_rerank = time.perf_counter() - _ts
         elif cfg == "adaptive_rerank":
             fused = rrf_rank(dense_ids, bm25_top_ids(bm25, q, corpus), query_weights)
             if _are_exact_weights(query_weights):
-                ranked = rerank_rank(q, fused, corpus_by_id, ce)
+                _ts = time.perf_counter(); ranked = rerank_rank(q, fused, corpus_by_id, ce); t_rerank = time.perf_counter() - _ts
             else:
                 ranked = fused
         else:
             raise ValueError(f"Неизвестная конфигурация: {cfg}")
         dt = (time.perf_counter() - t0) * 1000.0
         latencies.append(dt)
+        stage_dense.append(t_dense * 1000.0)
+        stage_bm25.append(t_bm25 * 1000.0)
+        stage_rerank.append(t_rerank * 1000.0)
 
         m = query_metrics(ranked, rel_keys, level, ks)
         for name in metric_names:
@@ -646,6 +657,11 @@ def run_config(cfg: str, qrels: list[dict], corpus: list[dict],
         "weights": weights_label,
         "n_queries": len(qrels),
         "metrics": {m: (statistics.fmean(v) if v else 0.0) for m, v in acc.items()},
+        "stage_latency_ms": {
+            "dense": (statistics.fmean(stage_dense) if stage_dense else 0.0),
+            "bm25": (statistics.fmean(stage_bm25) if stage_bm25 else 0.0),
+            "rerank": (statistics.fmean(stage_rerank) if stage_rerank else 0.0),
+        },
         "latency_ms": {
             "mean": statistics.fmean(latencies) if latencies else 0.0,
             "p50": _pct(latencies, 50),
@@ -783,9 +799,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--collection", default=os.getenv("QDRANT_COLLECTION", "fns_collection"))
     p.add_argument("--model-path", default=str(PROJECT_DIR / "hf_cache" / "FRIDA"))
     p.add_argument("--device", default="cpu")
+    p.add_argument("--embed-device", default="cpu",
+                   help="Устройство FRIDA-эмбеддера (default cpu; GPU приоритетно отдаётся реранкеру)")
     p.add_argument("--reranker-path", default=str(PROJECT_DIR / "reranker"))
     p.add_argument("--rerank-batch", type=int, default=None,
                    help="Батч cross-encoder'а (для GPU-прогонов на малой VRAM; None = дефолт ST)")
+    p.add_argument("--rerank-pool", type=int, default=None,
+                   help="Пул реранкера (сколько кандидатов пререскаривается; дефолт RERANK_POOL=30, прод-подобный топ-10)")
+    p.add_argument("--rerank-max-length", type=int, default=None,
+                   help="Обрезка контекста реранкера в токенах (bge-m3 дефолт 8192; 512 — классика для скорости)")
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--warmup", type=int, default=1)
     p.add_argument("--out", default=str(PROJECT_DIR / "eval"))
@@ -801,7 +823,7 @@ def main() -> None:
         log(f"❌ Golden set не найден: {qrels_path}")
         sys.exit(1)
 
-    global VECTOR_WEIGHT, BM25_WEIGHT, RERANK_BATCH
+    global VECTOR_WEIGHT, BM25_WEIGHT, RERANK_BATCH, RERANK_POOL
 
     ks = sorted({int(x) for x in args.top_k.split(",") if x.strip()})
     if args.vector_weight is not None or args.bm25_weight is not None:
@@ -814,6 +836,9 @@ def main() -> None:
     if args.rerank_batch is not None:
         RERANK_BATCH = args.rerank_batch
         log(f"⚙️  Батч cross-encoder'а: {RERANK_BATCH} (для GPU на малой VRAM)")
+    if args.rerank_pool is not None:
+        RERANK_POOL = args.rerank_pool
+        log(f"⚙️  Пул реранкера: {RERANK_POOL}")
     try:
         specs = [parse_config_spec(c) for c in args.configs.split(",") if c.strip()]
     except ValueError as e:  # noqa: BLE001
@@ -839,7 +864,7 @@ def main() -> None:
     log(f"📄 Golden set: {len(qrels)} запросов  ({qrels_path})")
     log_gold_stats(qrels)
     log(f"🎯 match-level: {args.match_level} | top-k: {ks} | configs: {', '.join(labels)}")
-    log(f"🖥  device: {args.device}")
+    log(f"🖥  device: {args.device} | embed-device (FRIDA): {args.embed_device}")
 
     log("\n📦 Загрузка корпуса...")
     if args.corpus == "qdrant":
@@ -853,7 +878,7 @@ def main() -> None:
     log(f"✅ Корпус: {len(corpus)} чанков (уникальных id)")
 
     log("\n🧠 Загрузка FRIDA...")
-    encoder = FridaEncoder(Path(args.model_path), device=args.device)
+    encoder = FridaEncoder(Path(args.model_path), device=args.embed_device)
     log(f"✅ FRIDA загружена (dim={encoder.dim})")
 
     log("🔎 Построение BM25...")
@@ -869,7 +894,19 @@ def main() -> None:
     if RERANK_CONFIGS & set(configs):
         try:
             from sentence_transformers import CrossEncoder
-            ce = CrossEncoder(args.reranker_path, device=args.device)
+            reranker_kwargs: dict = {}
+            if args.device == "cuda":
+                # На 6ГБ VRAM FRIDA (3.3ГБ fp32) + реранкер (2.3ГБ fp32) физически
+                # не помещаются вместе -> CUDA OOM. Реранкер в fp16 (1.1ГБ) —
+                # штатный режим cross-encoder; CPU-прогоны не затрагиваются.
+                import torch
+                # ST 3.1.1: dtype задаётся через automodel_args (model_kwargs появился в 4.x)
+                reranker_kwargs["automodel_args"] = {"torch_dtype": torch.float16}
+                log("⚙️  CUDA: реранкер загружается в fp16 (экономия ~1.2ГБ VRAM)")
+            if args.rerank_max_length is not None:
+                reranker_kwargs["max_length"] = args.rerank_max_length
+                log(f"⚙️  max_length реранкера: {args.rerank_max_length}")
+            ce = CrossEncoder(args.reranker_path, device=args.device, **reranker_kwargs)
             log(f"✅ Reranker загружен: {args.reranker_path}")
         except Exception as e:  # noqa: BLE001
             log(f"⚠️ Reranker не загрузился ({e}); hybrid_rerank будет пропущен")
@@ -886,6 +923,7 @@ def main() -> None:
         "corpus_size": len(corpus),
         "match_level": args.match_level,
         "device": args.device,
+        "embed_device": args.embed_device,
         "config_weights": {label: (list(w) if w else "default")
                            for (_name, w), label in zip(specs, labels, strict=True)},
         "params": {
