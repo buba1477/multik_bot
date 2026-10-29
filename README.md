@@ -1,4 +1,5 @@
 # 🦾 Multik-RAG — Enterprise RAG для НПА РФ
+**Автор исследования и архитектуры:** Абазов А.А. (buba1477), 2026.
 
 RAG (Retrieval-Augmented Generation) для работы с нормативно-правовыми актами РФ.
 Локальный ИИ-ассистент на базе **yagpt5_fns:latest** (Q4_K_M, Ollama).
