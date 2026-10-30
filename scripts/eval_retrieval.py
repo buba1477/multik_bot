@@ -612,18 +612,18 @@ def run_config(cfg: str, qrels: list[dict], corpus: list[dict],
         if cfg == "dense":
             ranked = dense_ids
         elif cfg == "dense_rerank":
-            _ts = time.perf_counter(); ranked = rerank_rank(q, dense_ids, corpus_by_id, ce); t_rerank = time.perf_counter() - _ts
+            _ts = time.perf_counter(); ranked = rerank_rank(q, dense_ids, corpus_by_id, ce, pool=RERANK_POOL); t_rerank = time.perf_counter() - _ts
         elif cfg == "bm25":
             _ts = time.perf_counter(); ranked = bm25_top_ids(bm25, q, corpus, top_k=BM25_TOP_K); t_bm25 = time.perf_counter() - _ts
         elif cfg in ("hybrid", "adaptive"):
             _ts = time.perf_counter(); _bm = bm25_top_ids(bm25, q, corpus); t_bm25 = time.perf_counter() - _ts; _ts = time.perf_counter(); ranked = rrf_rank(dense_ids, _bm, query_weights); t_rrf_ = time.perf_counter() - _ts
         elif cfg == "hybrid_rerank":
             _ts = time.perf_counter(); _bm = bm25_top_ids(bm25, q, corpus); t_bm25 = time.perf_counter() - _ts; _ts = time.perf_counter(); fused = rrf_rank(dense_ids, _bm, query_weights); t_rrf_ = time.perf_counter() - _ts
-            _ts = time.perf_counter(); ranked = rerank_rank(q, fused, corpus_by_id, ce); t_rerank = time.perf_counter() - _ts
+            _ts = time.perf_counter(); ranked = rerank_rank(q, fused, corpus_by_id, ce, pool=RERANK_POOL); t_rerank = time.perf_counter() - _ts
         elif cfg == "adaptive_rerank":
             fused = rrf_rank(dense_ids, bm25_top_ids(bm25, q, corpus), query_weights)
             if _are_exact_weights(query_weights):
-                _ts = time.perf_counter(); ranked = rerank_rank(q, fused, corpus_by_id, ce); t_rerank = time.perf_counter() - _ts
+                _ts = time.perf_counter(); ranked = rerank_rank(q, fused, corpus_by_id, ce, pool=RERANK_POOL); t_rerank = time.perf_counter() - _ts
             else:
                 ranked = fused
         else:
