@@ -301,3 +301,71 @@ venv/bin/python scripts/eval_retrieval.py   --qrels eval/manual/qrels_user_clean
 |---|---|---|
 | BM25 ≥ 5/25 top-5 | 4/25 (16%) | ❌ Не достигнут (но близко) |
 | Hybrid+Rerank ≥ 10/25 top-5 | 11/25 (44%) | ✅ Достигнут |
+
+
+---
+
+## 12. EXACT-датасеты: комплексная оценка (dense, hybrid, hybrid_rerank)
+
+Прогоны на трёх подмножествах EXACT (ноябрь 2026). Ранжирование — hybrid 0.5/0.5,
+реранкер BAAI/bge-m3, GPU GTX 1660 Ti, batch=32, pool=30.
+
+### 12.1 Обзор датасетов
+
+| Датасет | n | Описание | Источник qrels |
+|---|---|---|---|
+| **exact_clean** (полный) | 145 | Весь EXACT после чистки | `eval/manual/qrels_exact_clean.jsonl` |
+| **exact_citation** (STRONG) | 33 | Точные реквизиты НПА (статья, ФЗ) | `eval/manual/qrels_strong_exact.jsonl` |
+| **complex_exact** (COMPLEX) | 112 | Казуистика / этика госслужбы | подмножество exact_clean |
+
+### 12.2 Сводная таблица метрик
+
+| Конфигурация | exact_clean (145) | exact_citation (33) | complex_exact (112) |
+|---|---|---|---|
+| | R@5 / Hit@5 / nDCG@10 | R@5 / Hit@5 / nDCG@10 | R@5 / Hit@5 / nDCG@10 |
+| **Dense** | 0.670 / 0.738 / 0.616 | — / 0.485¹ / — | 0.732 / 0.821 / 0.690 |
+| **Hybrid 0.5/0.5** | 0.666 / 0.759 / 0.620 | 0.727 / 0.758 / 0.624 | 0.652 / 0.768 / 0.619 |
+| **Hybrid 0.5/0.5 + Rerank (pool=30)** | **0.751 / 0.862 / 0.692** | —² | **0.727 / 0.866 / 0.678** |
+
+> ¹ dense Hit@5 на exact_citation — из METRICS_SUMMARY (разбивка STRONG); полных метрик нет.
+> ² rerank на STRONG standalone не прогонялся; на полном exact_clean уже покрывает.
+
+### 12.3 Ключевые наблюдения
+
+1. **Reranker — единственный способ превзойти dense на complex_exact.**
+   - Dense (Hit@5=0.821) → hybrid 0.5/0.5 (0.768, −5.3 п.п.) → hybrid_rerank (0.866, **+4.5 п.п. от dense**).
+   - BM25 «вредит» complex_exact в гибриде без реранка: лексический шум снижает точность.
+
+2. **exact_citation (STRONG) — гибрид без реранка достаточен.**
+   - Dense Hit@5=0.485 → hybrid 0.5/0.5 Hit@5=0.758 (+27.3 п.п.).
+   - BM25 отлично поднимает точные номера статей; rerank не нужен.
+
+3. **exact_clean (145 q) — reranker даёт максимум: Hit@5=0.862.**
+   - Прирост +10.3 п.п. от hybrid, +12.4 п.п. от dense.
+   - Цена: lat_mean=20.2 с на GPU GTX 1660 Ti, pool=30.
+
+4. **11 «неспасённых» запросов (9.8 % complex_exact) — фундаментальная граница.**
+   - Ни dense, ни BM25, ни reranker не находят релевантный чанк (пул 30).
+   - Основной источник: 79‑ФЗ (этика госслужащих, ст. 14–18) с разговорной формулировкой.
+   - Решение: query expansion или fine-tune (см. RETRIEVAL_ISSUES.md, Problem 9).
+
+### 12.4 Сравнение с гибридной ablation на USER
+
+| Параметр | USER (dense+hybrid) | EXACT (exact_clean+rerank) |
+|---|---|---|
+| Best Hit@5 | Dense: **0.881** | Hybrid+Rerank: **0.862** |
+| Прирост от rerank | −1.3 п.п. (не нужен) | +12.4 п.п. от dense |
+| Латентность rerank | ~20 с (не нужен) | ~20 с (окупается) |
+| «Глухие» провалы | 9 / 191 (4.7 %) — Problem 4 | 11 / 112 (9.8 %) — Problem 9 |
+
+**Вывод:** reranker критичен только для EXACT; для USER он не улучшает и не нужен.
+Архитектурное решение (классификатор → dense для USER, hybrid_rerank для EXACT)
+полностью подтверждено.
+
+### 12.5 Источники
+
+- exact_clean: `eval/exact_new/eval_report.json`
+- exact_citation: `eval/research_strong_hybrid/eval_report.json`
+- complex_exact (dense/hybrid): сессионный референс, 2026-11-02
+- complex_exact (hybrid_rerank): `eval/eval_complex_hybrid_rerank_gpu/eval_report.json`
+- Сводка по подгруппам: `eval/METRICS_SUMMARY.md` (разбивка STRONG / COMPLEX)
