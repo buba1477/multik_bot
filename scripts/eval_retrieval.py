@@ -86,7 +86,7 @@ BM25_WEIGHT = 0.1
 RRF_K = 30
 INITIAL_TOP_K = 30
 BM25_TOP_K = 30
-RERANK_POOL = 30
+RERANK_POOL = 10  # синхронно с engine_rag.py: combined_nodes[:10] перед postprocess_nodes
 RERANK_BATCH = 32  # батч cross-encoder'а (как в sentence-transformers по умолчанию)
 FINAL_TOP_K = 5
 EMB_QUERY_PREFIX = "search_query: "
@@ -815,7 +815,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rerank-batch", type=int, default=None,
                    help="Батч cross-encoder'а (для GPU-прогонов на малой VRAM; None = дефолт ST)")
     p.add_argument("--rerank-pool", type=int, default=None,
-                   help="Пул реранкера (сколько кандидатов пререскаривается; дефолт RERANK_POOL=30, прод-подобный топ-10)")
+                   help="Пул реранкера (сколько кандидатов пререскаривается; дефолт RERANK_POOL=10 (синхронно с продом))")
     p.add_argument("--rerank-max-length", type=int, default=None,
                    help="Обрезка контекста реранкера в токенах (bge-m3 дефолт 8192; 512 — классика для скорости)")
     p.add_argument("--limit", type=int, default=0)
